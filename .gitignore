@@ -5,3 +5,4 @@
 # Stray artifacts from running a local `ironforge serve` with cwd here
 ironforge.db*
 repos/
+dist/
