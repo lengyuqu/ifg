@@ -38,7 +38,14 @@ jobs:
   # variable IFG_E2E_ENABLED=true and providing the IFG_E2E_URL / IFG_E2E_PAT
   # secrets; the runner must carry the `ifg-e2e` label (see scripts/e2e.sh).
   e2e:
-    if: ${{ vars.IFG_E2E_ENABLED == 'true' }}
+    # Self-hosted runners must never execute code from forks: this job only
+    # runs for pushes to main on the owning repository, even though the
+    # rest of the workflow also triggers on pull_request.
+    if: >-
+      ${{ vars.IFG_E2E_ENABLED == 'true'
+          && github.event_name == 'push'
+          && github.ref == 'refs/heads/main'
+          && github.repository_owner == 'lengyuqu' }}
     runs-on: [self-hosted, ifg-e2e]
     steps:
       - uses: actions/checkout@v4
