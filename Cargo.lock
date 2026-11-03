@@ -780,7 +780,7 @@ dependencies = [
 
 [[package]]
 name = "ifg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "ifg-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "reqwest",
  "serde",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "ifg-e2e"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "ifg-client",

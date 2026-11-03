@@ -2,7 +2,7 @@
 
 IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
 
-> 状态：v0.1.0 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
+> 状态：v0.2.0 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
 
 与 IronForge 自带的 `ironforge` 二进制不同，`ifg` 不连数据库、不做运维，只用个人访问令牌（PAT）调用公开 API，可以装在任何机器上。
 
@@ -23,7 +23,7 @@ brew install lengyuqu/ifg/ifg
 ```bash
 # 下载对应架构的 tar.gz 与 SHA256SUMS 后先校验
 shasum -a 256 -c SHA256SUMS 2>/dev/null || shasum -a 256 ifg-*.tar.gz
-tar xzf ifg-0.1.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
+tar xzf ifg-0.2.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
 ```
 
 从源码（musl 交叉编译需 `zig` + `cargo-zigbuild`）：
