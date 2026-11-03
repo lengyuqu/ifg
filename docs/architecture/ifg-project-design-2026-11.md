@@ -3,7 +3,7 @@
 > **状态**：草案（Proposed） ｜ **日期**：2026-11-03 ｜ **前置文档**：[客户端 CLI 设计草案](client-cli-design-2026-11.md)（下称「草案」）
 > **可信度**：标 `确认` 的条目已对照 IronForge 源码（本地 `ironforge` 仓库 `ce4834f`）；其余为设计提议，待评审。
 
-草案假设 CLI 放在 IronForge 主仓库的 Cargo workspace 里（`crates/rg-client`、`crates/rg-cli-user`）。现在 `ifg` 是一个**独立仓库**（`aicodeing/ifg`），本文说明由此带来的变化，并把草案细化到可以直接开工的程度：仓库结构、crate 边界、关键决策、客户端库与 CLI 的内部设计、API 契约管理、测试、CI 与发布、里程碑。
+草案假设 CLI 放在 IronForge 主仓库的 Cargo workspace 里（`crates/rg-client`、`crates/rg-cli-user`）。现在 `ifg` 是一个**独立仓库**（`aicodeing/ifg`），本文说明由此带来的变化，并把草案细化到可以直接开工的程度：仓库结构、crate 边界、关键决策、客户端库与 CLI 的内部设计、API 契约管理、测试、本地检查与发布、里程碑。
 
 草案中的命令设计（§4）、配置格式（§5）、输出约定（§6）、服务端缺口（§7）仍然有效，本文只写增量和修正，不重复。
 
@@ -26,7 +26,7 @@
 ```
 ifg/
 ├── Cargo.toml                 # workspace，统一依赖版本与 lint
-├── rust-toolchain.toml        # 固定 stable 版本，避免 CI 与本地漂移
+├── rust-toolchain.toml        # 固定 stable 版本，避免不同机器间漂移
 ├── crates/
 │   ├── ifg-client/            # 库：类型化 REST 客户端，无 CLI 依赖
 │   │   ├── src/
@@ -47,14 +47,15 @@ ifg/
 │       │   ├── exit.rs        # 错误 → 退出码
 │       │   └── cmd/           # auth / api / repo / issue / pr / ci / release
 │       └── tests/             # assert_cmd 驱动的 CLI 测试（打 mock server）
-├── tests/e2e/                 # 对真实 ironforge 的端到端测试（独立 crate，默认不跑）
+├── tests/e2e/                 # 对本地 Docker 中 ironforge 的端到端测试（独立 crate，默认不跑）
 ├── fixtures/
 │   ├── openapi/               # 从 IronForge 拉取的 openapi.json 快照
 │   └── responses/             # 真实响应样本，供 DTO 反序列化测试
 ├── docs/
 │   ├── architecture/          # 设计文档（本文、草案）
 │   └── adr/                   # 单条决策记录（后续按需补）
-└── .gitea/workflows/          # CI（git233 是否开启 Actions 待确认，见 §8）
+├── scripts/                   # check.sh（提交前检查）、e2e.sh、sync-openapi.sh
+└── LICENSE                    # MIT，与 IronForge 一致
 ```
 
 **crate 依赖方向**：`ifg` → `ifg-client`，反向禁止；`ifg-client` 不依赖 clap、终端、配置文件，保证它也能被 `rg-mcp` 或别的工具直接用。
@@ -67,6 +68,7 @@ ifg/
 
 | # | 决策 | 建议 | 理由 |
 |---|------|------|------|
+| D0 | 实现语言：Rust 还是 Go | Rust | 与 IronForge 同一语言、同一套工具（cargo、clippy、cargo-deny），维护者无需切换；保留日后与 `rg-mcp` 共享 `ifg-client` 的可能（D3）；`serde` 适合按需声明部分字段的 DTO（D4）。Go 的优势（交叉编译简单、编译快、`gh`/`tea` 均为 Go）真实但有限：交叉编译用 `cargo zigbuild` 可解决（§8.2），而 `tea` 面向 Gitea API，代码无法直接复用 |
 | D1 | 二进制名 | `ifg` | 短、好打。Homebrew 和 crates.io 的查重放到 M4 发布前做；若撞名，备选 `ironforge-cli`，命令内部不受影响 |
 | D2 | crate 名 | `ifg-client`（库）、`ifg`（二进制） | 与仓库同名，不占 IronForge 的 `rg-` 前缀 |
 | D3 | 是否与 `rg-mcp` 共享客户端 | 暂不共享 | 共享的收益（省掉 57 行）小于跨仓库版本耦合的代价。`ifg-client` 1.0 之后再提议 `rg-mcp` 通过 git tag 依赖 |
@@ -206,10 +208,10 @@ host 的优先级不变：`--host` > `IRONFORGE_URL` + `IRONFORGE_PAT` > git rem
 
 客户端与服务端分仓库发布后，最大的风险是服务端改了字段而 CLI 不知道。措施：
 
-1. **契约快照**：`fixtures/openapi/openapi-<ironforge 版本>.json` 存一份服务端 `GET /api-docs/openapi.json`（`确认`：路由存在）。脚本 `scripts/sync-openapi.sh <url>` 拉取新快照；CI 中的测试遍历 `ifg-client` 用到的每个路径和字段，检查它们仍存在于最新快照里。OpenAPI 覆盖不全的接口登记在 `fixtures/openapi/uncovered.txt`，由端到端测试兜底。
+1. **契约快照**：`fixtures/openapi/openapi-<ironforge 版本>.json` 存一份服务端 `GET /api-docs/openapi.json`（`确认`：路由存在）。脚本 `scripts/sync-openapi.sh <url>` 拉取新快照；`cargo test` 中的契约测试遍历 `ifg-client` 用到的每个路径和字段，检查它们仍存在于最新快照里。OpenAPI 覆盖不全的接口登记在 `fixtures/openapi/uncovered.txt`，由端到端测试兜底。
 2. **响应样本**：`fixtures/responses/` 存真实响应，DTO 测试直接反序列化这些文件。样本从 e2e 测试中录制，避免手写样本与现实不符。
 3. **运行时探测**：`ifg auth status` 与 `ifg version` 调 `GET /health` 显示服务端版本；低于 `MIN_SERVER_VERSION` 时提示升级（D10）。注意 OpenAPI 文档中的 `info.version` 是硬编码的 `0.1.0`（`确认`：`rg-http/src/openapi.rs`），与实际版本 `0.2.0` 不一致，不能用它判断版本，应以 `/health` 为准（这一点值得在 IronForge 侧顺手修掉）。
-4. **固定基线**：`Cargo.toml` 的 `[workspace.metadata.ifg]` 里写 `ironforge_rev = "<commit>"`，e2e 测试和契约快照都以这个提交为准；升级基线是一次显式的 PR。
+4. **固定基线**：`Cargo.toml` 的 `[workspace.metadata.ifg]` 里写 `ironforge_rev = "<commit>"`，即本地 Docker 镜像所用的 IronForge 提交；契约快照取自同一提交。升级基线是一次显式的提交：重建镜像 → 同步快照 → 跑 e2e。
 
 ---
 
@@ -222,26 +224,50 @@ host 的优先级不变：`--host` > `IRONFORGE_URL` + `IRONFORGE_PAT` > git rem
 | CLI | `assert_cmd` + `wiremock` + `insta` 快照 | 参数解析、上下文优先级、表格与 JSON 输出、退出码 | 每次 |
 | remote 推断 | 表驱动单测 | `/git/` 前缀、scp 写法、自定义端口、`.git` 后缀、未匹配 host | 每次 |
 | 契约 | 快照比对（§6.1） | 用到的路径/字段仍存在 | 每次 |
-| 端到端 | 真实 `ironforge serve` | 草案 §8 的全链路 | 手动 / 夜间 / 升级基线时 |
+| 端到端 | 本地 Docker 中的 `ironforge` | 草案 §8 的全链路 | 手动：改动 API 调用或升级基线时 |
 
-### 7.1 端到端测试的服务端引导
+### 7.1 端到端测试环境：本地 Docker
 
-1. 按 `ironforge_rev` 构建或下载 `ironforge` 二进制（CI 缓存产物，避免每次编译服务端）。
-2. 临时目录 + SQLite 启动：`ironforge serve --repo-root <tmp>/repos --db-url "sqlite://<tmp>/ifg.db?mode=rwc" --http-addr 127.0.0.1:<随机端口> --ssh-addr 127.0.0.1:<随机端口> --jwt-secret <随机串>`，轮询 `/health` 直到就绪。
-3. 经公开 API 拿到 PAT（路由均 `确认` 存在于 `rg-http/src/lib.rs`）：
+开发期的对接测试统一打本地 Docker 中的 IronForge，测试本身不负责启动服务端。
+
+**启动服务端**（在 IronForge 仓库根目录，`确认`：`deploy/docker-compose.yml`）：
+
+```bash
+cp deploy/.env.example deploy/.env   # 填 IRONFORGE_JWT_SECRET（openssl rand -hex 32）
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命名卷 `ironforge-data` 里，重启容器后仍保留。
+
+**运行测试**：`scripts/e2e.sh`，本质是 `cargo test -p ifg-e2e -- --ignored`。
+
+| 环境变量 | 默认值 | 作用 |
+|----------|--------|------|
+| `IFG_E2E_URL` | `http://localhost:8080` | 被测实例 |
+| `IFG_E2E_PAT` | 无 | 提供则直接使用，跳过注册；用于关闭了注册的实例 |
+| `IFG_E2E_SSH` | `ssh://git@localhost:2222` | `repo clone --ssh` 用例 |
+
+**流程**
+
+1. 轮询 `GET /health`（最多 30 秒）；连不上就失败，并在报错里提示上面的 `docker compose` 命令。同时打印服务端 `version`，便于对照基线。
+2. 没有 `IFG_E2E_PAT` 时，经公开 API 拿到 PAT（路由均 `确认` 存在于 `rg-http/src/lib.rs`）：
    `POST /api/v1/users/register` → `POST /api/v1/users/login`（得 JWT）→ `POST /api/v1/users/tokens`（用 JWT，scope 选 `repo` 与 `user`）。
-4. 用 `IRONFORGE_URL` / `IRONFORGE_PAT` 驱动 `ifg` 跑全链路，不写配置文件；另有一个用例专测 `auth login --with-token` 写配置。
-5. 涉及 commit 的步骤显式设置 `GIT_AUTHOR_*` / `GIT_COMMITTER_*`（草案 §8）。
+3. 用 `IRONFORGE_URL` / `IRONFORGE_PAT` 驱动 `ifg` 跑全链路，不写用户的配置文件（`XDG_CONFIG_HOME` 指向临时目录）；另有一个用例专测 `auth login --with-token` 写配置。
+4. 涉及 commit 的步骤显式设置 `GIT_AUTHOR_*` / `GIT_COMMITTER_*`（草案 §8）。
 
-需要验证的点：注册是否默认开放、第一个用户是否需要邮件激活。若不开放，退路是让 `ironforge` 运维 CLI 增加一个 `create-user` 子命令（目前没有，`确认`：`rg-cli/src/main.rs` 的子命令列表），登记为上游需求。
+**数据隔离**：因为数据卷会保留，每次运行的用户名和仓库名都带上运行 ID（如 `e2e-<unix 时间戳>`），互不冲突；测试结束时用 `DELETE /repos/{owner}/{name}`（`确认`：路由存在）删除本次建的仓库。测试用户会逐渐累积，需要清空时执行 `docker compose -f deploy/docker-compose.yml down -v`。
+
+**与自建实例的分工**：本地 Docker 用于跑 e2e；你正在部署的自建 IronForge 用于手工验证（真实域名、TLS、反向代理下的行为），不对它跑会写数据的自动化测试。
+
+需要验证的点：注册是否默认开放、第一个用户是否需要邮件激活。若不开放，先用 `IFG_E2E_PAT` 绕过；长期退路是让 `ironforge` 运维 CLI 增加一个 `create-user` 子命令（目前没有，`确认`：`rg-cli/src/main.rs` 的子命令列表），登记为上游需求。
 
 ---
 
-## 8. CI 与发布
+## 8. 本地检查与发布
 
-### 8.1 CI
+### 8.1 本地检查（暂不做 CI）
 
-git233 是 Gitea 实例，是否启用了 Gitea Actions、有无可用 runner **待确认**。若可用，`.gitea/workflows/ci.yml` 跑：
+当前阶段不搭 CI；等仓库上传到 GitHub 后再接 GitHub Actions。在此之前，`scripts/check.sh` 在提交前手动跑：
 
 1. `cargo fmt --check`
 2. `cargo clippy --workspace --all-targets -- -D warnings`
@@ -249,12 +275,13 @@ git233 是 Gitea 实例，是否启用了 Gitea Actions、有无可用 runner **
 4. `cargo deny check`（许可证与安全公告；IronForge 已在用同类检查）
 5. 依赖边界检查：`cargo tree -p ifg-client` 中不得出现 `clap`、`comfy-table` 等 CLI 依赖
 
-若没有 Actions，先用本地 `scripts/check.sh` 打包上述步骤，在提交前手动跑。
+脚本只调用 cargo 和 shell，不绑定任何 CI 平台，日后接 GitHub Actions 时 workflow 直接调用它即可。e2e 依赖本地 Docker，不放进 `check.sh`。
 
 ### 8.2 发布
 
 - 目标平台：`aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`。Linux 用 musl 静态链接，配合 D7 的 rustls 即可不依赖系统 OpenSSL。
-- 产物：`ifg-<version>-<target>.tar.gz` + `SHA256SUMS`，上传到 git233 的 Release。
+- 没有 CI 时在本机构建：macOS 两个目标原生编译；Linux 目标用 `cargo zigbuild` 交叉编译，不需要 Docker 或 Linux 机器。打包成 `scripts/release.sh`，上 GitHub 后改由 Actions 调用。
+- 产物：`ifg-<version>-<target>.tar.gz` + `SHA256SUMS`，上传到仓库所在平台的 Release（目前是 git233，迁到 GitHub 后改为 GitHub Release）。
 - 版本号：`ifg` 独立 semver，1.0 之前允许命令行为变动；`--json` 输出的字段即 API 字段，不另作承诺。
 - Homebrew tap 与 crates.io 发布放在 M4，发布前完成 D1 查重。
 
@@ -264,11 +291,12 @@ git233 是 Gitea 实例，是否启用了 Gitea Actions、有无可用 runner **
 
 | 里程碑 | 内容 | 验收 |
 |--------|------|------|
-| M0 脚手架 | workspace、两个 crate 空壳、toolchain、`scripts/check.sh`、CI（若可用） | `cargo test` 与检查脚本通过 |
-| M1 客户端与骨架 | `ifg-client` 的 HTTP 层、错误、分页、重试；`ifg auth login/status/logout/token`、`ifg api`、配置文件、上下文解析、`--json` | 对真实实例 `ifg api users/me` 成功；wiremock 测试覆盖 §4.2–4.4 |
-| M2 核心协作 | `repo`、`issue`、`pr`（不含 checkout）；契约快照与漂移检查；e2e 引导脚本 | e2e：建仓 → Issue → PR → 合并 |
-| M3 CI 与发布物 | `ci`（轮询日志）、`release`（流式上传、校验下载）、`pr checkout`、`auth git-credential`、keyring 后端（可选） | e2e 全链路；手工对 git233 以外的真实 IronForge 实例验证 |
-| M4 发布 | 交叉编译、Release 产物、名称查重、Homebrew tap | 从 Release 下载的二进制在干净机器上可运行 |
+| M0 脚手架 | workspace、两个 crate 空壳、toolchain、`scripts/check.sh` | `cargo test` 与检查脚本通过 |
+| M1 客户端与骨架 | `ifg-client` 的 HTTP 层、错误、分页、重试；`ifg auth login/status/logout/token`、`ifg api`、配置文件、上下文解析、`--json` | 对本地 Docker 实例 `ifg api users/me` 成功；wiremock 测试覆盖 §4.2–4.4 |
+| M2 核心协作 | `repo`、`issue`、`pr`（不含 checkout）；契约快照与漂移检查；`scripts/e2e.sh` 与引导流程 | e2e：建仓 → Issue → PR → 合并 |
+| M3 流水线与 Release | `ci`（轮询日志）、`release`（流式上传、校验下载）、`pr checkout`、`auth git-credential`、keyring 后端（可选） | e2e 全链路；在自建 IronForge 实例上手工验证 |
+| M4 发布 | `scripts/release.sh` 交叉编译、Release 产物、名称查重、Homebrew tap | 从 Release 下载的二进制在干净机器上可运行 |
+| 后续 | 上传 GitHub，接 GitHub Actions（调用 `check.sh` / `release.sh`） | 不在当前范围 |
 
 ### 9.1 需要 IronForge 上游配合的事项
 
@@ -282,8 +310,13 @@ git233 是 Gitea 实例，是否启用了 Gitea Actions、有无可用 runner **
 
 ---
 
-## 10. 仍待决定
+## 10. 已定事项（2026-11-03）
 
-1. git233 是否开启 Gitea Actions，runner 是否支持 macOS（影响 §8 的 CI 与 macOS 产物能否自动构建）。
-2. e2e 测试用的 `ironforge` 二进制从哪来：每次从源码构建（慢、无需外部产物），还是 IronForge 发布预编译产物（快、要求上游先有发布流程）。
-3. 许可证：IronForge 为 MIT（`确认`：根 `Cargo.toml` 的 `workspace.package`），`ifg` 是否同样用 MIT。
+1. **许可证**：MIT，与 IronForge 一致，见根目录 `LICENSE`。
+2. **CI**：当前不做；上传 GitHub 后再接 GitHub Actions（§8.1）。
+3. **对接测试环境**：本地 Docker 中的 IronForge（§7.1）；自建实例用于手工验证。
+
+## 11. 仍待决定
+
+1. 二进制名查重（D1），M4 发布前完成。
+2. 本地 Docker 实例的注册是否默认开放（§7.1），M2 开工前验证。

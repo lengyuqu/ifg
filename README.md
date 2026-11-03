@@ -10,3 +10,7 @@ IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Iss
 
 - [ifg 项目设计](docs/architecture/ifg-project-design-2026-11.md)：独立仓库的结构、关键决策、内部设计、测试、发布与里程碑
 - [客户端 CLI 设计草案](docs/architecture/client-cli-design-2026-11.md)：命令设计、配置格式、输出约定、服务端缺口
+
+## 许可证
+
+[MIT](LICENSE)，与 IronForge 一致。
