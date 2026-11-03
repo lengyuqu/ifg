@@ -10,6 +10,7 @@
 pub const USED_PATHS: &[(&str, &str)] = &[
     // users
     ("GET", "/users/me"),
+    ("GET", "/users/{username}"),
     ("GET", "/users/tokens"),
     ("POST", "/users/register"),
     ("POST", "/users/login"),
@@ -57,6 +58,9 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     // releases (M3)
     ("GET", "/repos/{owner}/{name}/releases"),
     ("POST", "/repos/{owner}/{name}/releases"),
+    ("GET", "/repos/{owner}/{name}/releases/tags/{tag}"),
+    ("PATCH", "/repos/{owner}/{name}/releases/{id}"),
+    ("DELETE", "/repos/{owner}/{name}/releases/{id}"),
     ("GET", "/repos/{owner}/{name}/releases/{id}"),
     ("GET", "/repos/{owner}/{name}/releases/{release_id}/assets"),
     ("POST", "/repos/{owner}/{name}/releases/{release_id}/assets"),

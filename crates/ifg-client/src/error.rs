@@ -7,6 +7,7 @@
 //! then reports the status code only.
 
 use serde::Deserialize;
+use serde_json::Value;
 
 /// Everything that can go wrong in a request.
 #[derive(Debug, thiserror::Error)]
@@ -107,6 +108,14 @@ pub(crate) fn api_error(status: u16, body: &[u8]) -> Error {
 pub(crate) fn snippet(body: &[u8]) -> String {
     let cut = &body[..body.len().min(SNIPPET_BYTES)];
     String::from_utf8_lossy(cut).trim().to_string()
+}
+
+/// Decode a body that may be empty (204) or JSON; empty becomes `null`.
+pub(crate) fn json_or_null(bytes: &[u8]) -> Value {
+    if bytes.is_empty() {
+        return Value::Null;
+    }
+    serde_json::from_slice(bytes).unwrap_or(Value::Null)
 }
 
 #[cfg(test)]

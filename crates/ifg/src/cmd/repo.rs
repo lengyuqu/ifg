@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::{bootstrap, CommandContext};
 use crate::cli::{Cli, RepoCommand};
-use crate::context::resolve_repo;
+use crate::context::{resolve_repo, RepoContext};
 use crate::error::AppError;
 use crate::output;
 
@@ -40,7 +40,11 @@ pub async fn run(command: &RepoCommand, cli: &Cli) -> Result<(), AppError> {
             };
             create(&ctx, cli, &args).await
         }
-        RepoCommand::Clone { target, dir } => clone(&ctx, target, dir.clone()),
+        RepoCommand::Clone { target, dir, ssh } => clone(&ctx, target, dir.clone(), *ssh),
+        RepoCommand::Delete { target, yes } => {
+            let repo = resolve_target(cli, &ctx, target.clone())?;
+            delete(&ctx, &repo, *yes).await
+        }
     }
 }
 
@@ -205,9 +209,18 @@ async fn create(ctx: &CommandContext, cli: &Cli, args: &CreateArgs) -> Result<()
     Ok(())
 }
 
-fn clone(ctx: &CommandContext, repo: &str, dir: Option<String>) -> Result<(), AppError> {
-    let repo = resolve_repo(Some(repo), &ctx.host)?;
-    let url = format!("{}/git/{}.git", ctx.host.url, repo);
+fn clone(
+    ctx: &CommandContext,
+    target: &str,
+    dir: Option<String>,
+    ssh: bool,
+) -> Result<(), AppError> {
+    let repo = resolve_repo(Some(target), &ctx.host)?;
+    let url = if ssh {
+        ssh_clone_url(&ctx.host.url, &repo)?
+    } else {
+        format!("{}/git/{}.git", ctx.host.url, repo)
+    };
     println!("Cloning {url}");
     let status = std::process::Command::new("git")
         .arg("clone")
@@ -218,6 +231,47 @@ fn clone(ctx: &CommandContext, repo: &str, dir: Option<String>) -> Result<(), Ap
     if !status.success() {
         return Err(AppError::Other(format!("git clone failed for {url}")));
     }
+    Ok(())
+}
+
+/// `ssh://git@HOST:PORT/OWNER/NAME` — the server's SSH clone form
+/// (IronForge serves git over SSH with the `git` user; port defaults to
+/// 2222, override with `IRONFORGE_SSH_PORT`).
+fn ssh_clone_url(host_url: &str, repo: &RepoContext) -> Result<String, AppError> {
+    let parsed = url::Url::parse(host_url)
+        .map_err(|e| AppError::Other(format!("invalid host URL {host_url}: {e}")))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::Other("host URL has no host".into()))?;
+    let host = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]") // IPv6 literal
+    } else {
+        host.to_string()
+    };
+    let port = std::env::var("IRONFORGE_SSH_PORT").unwrap_or_else(|_| "2222".into());
+    let port_part = if port.is_empty() {
+        String::new()
+    } else {
+        format!(":{port}")
+    };
+    Ok(format!(
+        "ssh://git@{host}{port_part}/{}/{}",
+        repo.owner, repo.name
+    ))
+}
+
+/// `repo delete`: the server soft-deletes and the name becomes reusable.
+async fn delete(ctx: &CommandContext, repo: &RepoContext, yes: bool) -> Result<(), AppError> {
+    if !yes
+        && !super::confirm(&format!(
+            "Delete {repo}? This removes the repository for everyone."
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    ctx.client.repos().delete(&repo.owner, &repo.name).await?;
+    println!("Deleted {repo}.");
     Ok(())
 }
 

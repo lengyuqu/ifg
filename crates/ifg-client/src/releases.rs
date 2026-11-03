@@ -30,6 +30,19 @@ pub struct Release {
     pub updated_at: Option<String>,
 }
 
+/// `PATCH …/releases/{id}` body (all fields optional).
+#[derive(Debug, Default, Serialize)]
+pub struct UpdateReleaseOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_draft: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_prerelease: Option<bool>,
+}
+
 /// `POST …/releases` request body.
 #[derive(Debug, Default, Serialize)]
 pub struct CreateReleaseOptions {
@@ -124,11 +137,63 @@ impl Releases<'_> {
             .await
     }
 
-    /// Walk all pages and match `tag_name` (no by-tag route on the server,
-    /// design doc §7.3).
+    /// `GET …/releases/tags/{tag}`. Servers without the route answer 404,
+    /// so a miss falls back to paging through the listing (older behavior).
+    pub async fn get_by_tag(&self, tag: &str) -> Result<Option<Release>, Error> {
+        let path = format!("{}/tags/{tag}", self.releases_path());
+        match self
+            .client
+            .send::<Release>(crate::Method::GET, &path, None)
+            .await
+        {
+            Ok(release) => Ok(Some(release)),
+            Err(Error::Api { status: 404, .. }) => {
+                let releases = self.list().collect().await?;
+                Ok(releases.into_iter().find(|release| release.tag_name == tag))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Alias kept for call sites that predate the by-tag route.
     pub async fn find_by_tag(&self, tag: &str) -> Result<Option<Release>, Error> {
-        let releases = self.list().collect().await?;
-        Ok(releases.into_iter().find(|release| release.tag_name == tag))
+        self.get_by_tag(tag).await
+    }
+
+    /// `PATCH …/releases/{id}`.
+    pub async fn update(&self, id: i64, options: &UpdateReleaseOptions) -> Result<Release, Error> {
+        self.client
+            .send(
+                crate::Method::PATCH,
+                &self.release_path(id),
+                Some(&to_body(options)?),
+            )
+            .await
+    }
+
+    /// Raw JSON twin of [`Releases::update`].
+    pub async fn update_raw(
+        &self,
+        id: i64,
+        options: &UpdateReleaseOptions,
+    ) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::PATCH,
+                &self.release_path(id),
+                Some(&to_body(options)?),
+            )
+            .await
+    }
+
+    /// `DELETE …/releases/{id}`. Handlers may answer 204 with no body, so
+    /// the response is decoded tolerantly (`null` for empty).
+    pub async fn delete(&self, id: i64) -> Result<Value, Error> {
+        let bytes = self
+            .client
+            .raw(crate::Method::DELETE, &self.release_path(id), None)
+            .await?;
+        Ok(crate::error::json_or_null(&bytes))
     }
 
     /// `POST …/releases`.

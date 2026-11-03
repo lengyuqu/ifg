@@ -48,6 +48,28 @@ pub async fn run(command: &ReleaseCommand, cli: &Cli) -> Result<(), AppError> {
             )
             .await
         }
+        ReleaseCommand::Edit {
+            tag,
+            title,
+            notes,
+            notes_file,
+            draft,
+            prerelease,
+        } => {
+            edit(
+                &ctx,
+                cli,
+                &repo,
+                tag,
+                title.clone(),
+                notes.clone(),
+                notes_file.clone(),
+                *draft,
+                *prerelease,
+            )
+            .await
+        }
+        ReleaseCommand::Delete { tag, yes } => delete(&ctx, &repo, tag, *yes).await,
         ReleaseCommand::Upload { tag, files } => upload(&ctx, &repo, tag, files).await,
         ReleaseCommand::Download {
             tag,
@@ -446,6 +468,84 @@ fn guess_content_type(path: &std::path::Path) -> String {
         },
         None => "application/octet-stream".into(),
     }
+}
+
+/// `release edit <tag>`: patch the fields that were given.
+#[allow(clippy::too_many_arguments)]
+async fn edit(
+    ctx: &super::CommandContext,
+    cli: &Cli,
+    repo: &RepoContext,
+    tag: &str,
+    title: Option<String>,
+    notes: Option<String>,
+    notes_file: Option<String>,
+    draft: Option<bool>,
+    prerelease: Option<bool>,
+) -> Result<(), AppError> {
+    let body = match (notes, notes_file) {
+        (Some(_), Some(_)) => {
+            return Err(AppError::Usage(
+                "-n and --notes-file are mutually exclusive".into(),
+            ))
+        }
+        (Some(notes), None) => Some(notes),
+        (None, Some(file)) => Some(
+            std::fs::read_to_string(&file)
+                .map_err(|e| AppError::Other(format!("could not read {file}: {e}")))?,
+        ),
+        (None, None) => None,
+    };
+    if title.is_none() && body.is_none() && draft.is_none() && prerelease.is_none() {
+        return Err(AppError::Usage(
+            "nothing to edit: pass --title, -n/--notes-file, --draft or --prerelease".into(),
+        ));
+    }
+    let releases = ctx.client.releases(&repo.owner, &repo.name);
+    let release = releases
+        .get_by_tag(tag)
+        .await?
+        .ok_or_else(|| not_found(tag))?;
+    let options = ifg_client::UpdateReleaseOptions {
+        title,
+        body,
+        is_draft: draft,
+        is_prerelease: prerelease,
+    };
+    if cli.json {
+        let value = releases.update_raw(release.id, &options).await?;
+        output::print_json(&value);
+        return Ok(());
+    }
+    let updated = releases.update(release.id, &options).await?;
+    println!("Updated release {} ({}).", updated.tag_name, updated.title);
+    Ok(())
+}
+
+/// `release delete <tag>`.
+async fn delete(
+    ctx: &super::CommandContext,
+    repo: &RepoContext,
+    tag: &str,
+    yes: bool,
+) -> Result<(), AppError> {
+    let releases = ctx.client.releases(&repo.owner, &repo.name);
+    let release = releases
+        .get_by_tag(tag)
+        .await?
+        .ok_or_else(|| not_found(tag))?;
+    if !yes
+        && !super::confirm(&format!(
+            "Delete release {} ({} assets) from {repo}?",
+            release.tag_name, release.tag_name
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    releases.delete(release.id).await?;
+    println!("Deleted release {}.", release.tag_name);
+    Ok(())
 }
 
 #[cfg(test)]

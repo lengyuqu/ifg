@@ -302,11 +302,13 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 
 按对 CLI 的影响排序，均应在 IronForge 仓库单独立项：
 
-1. WebSocket `/ws/job/{job_id}` 接受 PAT（草案 §7.1-B），让 `ci logs --follow` 不再轮询全量日志。
-2. `GET releases/tags/{tag}`（草案 §7.3）。
-3. 维护 `refs/pull/<n>/head`（草案 §7.2）。
-4. OpenAPI `info.version` 改为读 `CARGO_PKG_VERSION`（§6.3）。
-5. 视 §7.1 验证结果，增加 `ironforge create-user` 运维命令。
+1. WebSocket `/ws/job/{job_id}` 接受 PAT（草案 §7.1-B），让 `ci logs --follow` 不再轮询全量日志。**未做**
+2. ~~`GET releases/tags/{tag}`~~ —— **已完成**（ironforge `a8b8103`，客户端 `releases::get_by_tag` 带翻页兜底）。
+3. ~~维护 `refs/pull/<n>/head`~~ —— **已完成**（ironforge `a8b8103`：PR 创建时写入、push 时随 head 同步；客户端 checkout 在分支缺失时回退）。
+4. ~~OpenAPI `info.version` 改为读 `CARGO_PKG_VERSION`~~ —— **已完成**（ironforge `a8b8103`，快照生成时验证为 `0.2.0`）。
+5. 视 §7.1 验证结果，增加 `ironforge create-user` 运维命令。**未做**
+6. `GET /users/{username}`（公开资料）—— **已完成**（ironforge `4cb2b06`，`--assignee` 名字解析用）。
+7. label PATCH 静默不生效（SeaORM ActiveModel 全 Unchanged）—— **已修复**（ironforge `4cb2b06`）。
 
 ---
 

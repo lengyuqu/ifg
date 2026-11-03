@@ -69,6 +69,18 @@ pub enum Command {
         #[command(subcommand)]
         command: ReleaseCommand,
     },
+    /// Work with repository labels
+    Label {
+        #[command(subcommand)]
+        command: LabelCommand,
+    },
+    /// Work with repository milestones
+    Milestone {
+        #[command(subcommand)]
+        command: MilestoneCommand,
+    },
+    /// Show the current branch's pull request and recent pipeline runs
+    Status,
     /// Print the client version and (when reachable) the server version
     Version,
     /// Print a shell completion script (bash / zsh / fish / powershell)
@@ -158,13 +170,25 @@ pub enum RepoCommand {
         #[arg(long, value_name = "BRANCH")]
         default_branch: Option<String>,
     },
-    /// Clone a repository over HTTPS
+    /// Clone a repository (HTTPS by default)
     Clone {
         /// OWNER/NAME
         #[arg(value_name = "OWNER/NAME")]
         target: String,
         /// Target directory (default: the repository name)
         dir: Option<String>,
+        /// Clone over SSH (ssh://git@HOST:PORT/OWNER/NAME; port from
+        /// IRONFORGE_SSH_PORT, default 2222)
+        #[arg(long)]
+        ssh: bool,
+    },
+    /// Delete a repository (asks for confirmation unless --yes)
+    Delete {
+        /// OWNER/NAME; defaults to the current repository context
+        #[arg(value_name = "OWNER/NAME")]
+        target: Option<String>,
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -214,13 +238,22 @@ pub enum IssueCommand {
     Close { number: i64 },
     /// Reopen an issue
     Reopen { number: i64 },
-    /// Edit an issue's title or body
+    /// Edit an issue's title, body, labels, assignee or milestone
     Edit {
         number: i64,
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
         body: Option<String>,
+        /// Replace the label set (repeatable)
+        #[arg(long)]
+        label: Vec<String>,
+        /// Assign a user by name
+        #[arg(long)]
+        assignee: Option<String>,
+        /// Attach a milestone by title
+        #[arg(long)]
+        milestone: Option<String>,
     },
 }
 
@@ -241,6 +274,9 @@ pub enum PrCommand {
         /// Open the pull request page in the browser
         #[arg(long)]
         web: bool,
+        /// Include inline review comments
+        #[arg(long)]
+        comments: bool,
     },
     /// Print the diff of a pull request
     Diff { number: i64 },
@@ -359,6 +395,28 @@ pub enum ReleaseCommand {
     },
     /// Upload files as assets of a release
     Upload { tag: String, files: Vec<String> },
+    /// Edit a release's title, notes or flags
+    Edit {
+        tag: String,
+        #[arg(short = 't', long)]
+        title: Option<String>,
+        #[arg(short = 'n', long)]
+        notes: Option<String>,
+        #[arg(long, value_name = "FILE")]
+        notes_file: Option<String>,
+        /// --draft / --draft=false
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        draft: Option<bool>,
+        /// --prerelease / --prerelease=false
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        prerelease: Option<bool>,
+    },
+    /// Delete a release (asks for confirmation unless --yes)
+    Delete {
+        tag: String,
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
     /// Download release assets (SHA-256 verified) into the current directory
     Download {
         tag: String,
@@ -368,5 +426,70 @@ pub enum ReleaseCommand {
         /// Overwrite files that already exist in the current directory
         #[arg(long)]
         clobber: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LabelCommand {
+    /// List labels
+    List,
+    /// Create a label
+    Create {
+        name: String,
+        /// Hex color without the leading '#'
+        #[arg(short = 'c', long)]
+        color: Option<String>,
+        #[arg(short = 'd', long)]
+        description: Option<String>,
+    },
+    /// Edit a label identified by its current name
+    Edit {
+        name: String,
+        #[arg(long)]
+        new_name: Option<String>,
+        #[arg(short = 'c', long)]
+        color: Option<String>,
+        #[arg(short = 'd', long)]
+        description: Option<String>,
+    },
+    /// Delete a label (asks for confirmation unless --yes)
+    Delete {
+        name: String,
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MilestoneCommand {
+    /// List milestones
+    List,
+    /// Create a milestone
+    Create {
+        title: String,
+        #[arg(short = 'd', long)]
+        description: Option<String>,
+        /// Due date, YYYY-MM-DD
+        #[arg(long)]
+        due: Option<String>,
+    },
+    /// Edit a milestone identified by its current title
+    Edit {
+        title: String,
+        #[arg(long)]
+        new_title: Option<String>,
+        #[arg(short = 'd', long)]
+        description: Option<String>,
+        /// open / closed
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        due: Option<String>,
+    },
+    /// Delete a milestone (asks for confirmation unless --yes)
+    Delete {
+        title: String,
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }

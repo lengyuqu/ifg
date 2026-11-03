@@ -66,7 +66,23 @@ pub async fn run(command: &IssueCommand, cli: &Cli) -> Result<(), AppError> {
             number,
             title,
             body,
-        } => edit(&ctx, cli, &repo, *number, title.clone(), body.clone()).await,
+            label,
+            assignee,
+            milestone,
+        } => {
+            edit(
+                &ctx,
+                cli,
+                &repo,
+                *number,
+                title.clone(),
+                body.clone(),
+                label,
+                assignee.clone(),
+                milestone.clone(),
+            )
+            .await
+        }
     }
 }
 
@@ -261,6 +277,7 @@ async fn set_state(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn edit(
     ctx: &super::CommandContext,
     cli: &Cli,
@@ -268,16 +285,63 @@ async fn edit(
     number: i64,
     title: Option<String>,
     body: Option<String>,
+    labels: &[String],
+    assignee: Option<String>,
+    milestone: Option<String>,
 ) -> Result<(), AppError> {
-    if title.is_none() && body.is_none() {
+    if title.is_none()
+        && body.is_none()
+        && labels.is_empty()
+        && assignee.is_none()
+        && milestone.is_none()
+    {
         return Err(AppError::Usage(
-            "nothing to edit: pass --title or --body".into(),
+            "nothing to edit: pass --title, --body, --label, --assignee or --milestone".into(),
         ));
     }
+    // Names to ids where the server wants ids.
+    let assignee_id = match &assignee {
+        Some(username) => Some(
+            ctx.client
+                .users()
+                .get(username)
+                .await
+                .map_err(|e| AppError::Usage(format!("unknown assignee '{username}': {e}")))?
+                .id,
+        ),
+        None => None,
+    };
+    let milestone_id = match &milestone {
+        Some(title) => {
+            let found = ctx
+                .client
+                .milestones(&repo.owner, &repo.name)
+                .list()
+                .collect()
+                .await?
+                .into_iter()
+                .find(|milestone| milestone.title == *title);
+            Some(
+                found
+                    .ok_or_else(|| {
+                        AppError::Usage(format!("no milestone '{title}'; run `ifg milestone list`"))
+                    })?
+                    .id,
+            )
+        }
+        None => None,
+    };
     let options = UpdateIssueOptions {
         title,
         body,
         state: None,
+        labels: if labels.is_empty() {
+            None
+        } else {
+            Some(labels.to_vec())
+        },
+        assignee_id,
+        milestone_id,
     };
     let issues = ctx.client.issues(&repo.owner, &repo.name);
     if cli.json {

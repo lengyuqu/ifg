@@ -96,6 +96,15 @@ pub struct UpdateIssueOptions {
     /// `open` / `closed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
+    /// Replace the label set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+    /// Assign a user by id (the CLI resolves names).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignee_id: Option<i64>,
+    /// Attach a milestone by id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestone_id: Option<i64>,
 }
 
 /// Issue comment (plain JSON array endpoint, not paginated).

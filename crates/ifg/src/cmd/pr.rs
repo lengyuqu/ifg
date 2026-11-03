@@ -16,11 +16,15 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
     let repo = resolve_repo(cli.repo.as_deref(), &ctx.host)?;
     match command {
         PrCommand::List { state, limit } => list(&ctx, cli, &repo, state.clone(), *limit).await,
-        PrCommand::View { number, web } => {
+        PrCommand::View {
+            number,
+            web,
+            comments,
+        } => {
             if *web {
                 return crate::web::open(&crate::web::pr_url(&ctx.host.url, &repo, *number));
             }
-            view(&ctx, cli, &repo, *number).await
+            view(&ctx, cli, &repo, *number, *comments).await
         }
         PrCommand::Diff { number } => diff(&ctx, &repo, *number).await,
         PrCommand::Create {
@@ -122,10 +126,15 @@ async fn view(
     cli: &Cli,
     repo: &RepoContext,
     number: i64,
+    comments: bool,
 ) -> Result<(), AppError> {
     let pulls = ctx.client.pulls(&repo.owner, &repo.name);
     if cli.json {
-        let value = pulls.get_raw(number).await?;
+        let mut value = pulls.get_raw(number).await?;
+        if comments {
+            let list = pulls.comments_raw(number).await?;
+            value["comments"] = list;
+        }
         output::print_json(&value);
         return Ok(());
     }
@@ -148,6 +157,32 @@ async fn view(
         vec!["body".into(), pr.body.clone().unwrap_or_default()],
     ];
     output::print_table(&["FIELD", "VALUE"], &rows);
+
+    if comments {
+        let list = pulls.comments(number).await?;
+        if list.is_empty() {
+            println!("\nNo inline review comments.");
+        } else {
+            println!();
+            for comment in &list {
+                let location = match (&comment.path, comment.line) {
+                    (Some(path), Some(line)) => format!("{path}:{line}"),
+                    (Some(path), None) => path.clone(),
+                    _ => "general".to_string(),
+                };
+                println!(
+                    "{} (author {}, {}):\n  {}\n",
+                    location,
+                    comment
+                        .author_id
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "—".into()),
+                    short_date(comment.created_at.as_deref()),
+                    comment.body.trim().replace('\n', "\n  ")
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -266,7 +301,7 @@ async fn create(
 }
 
 /// Current branch via `git symbolic-ref --short HEAD`.
-fn current_branch() -> Result<String, AppError> {
+pub(crate) fn current_branch() -> Result<String, AppError> {
     let output = std::process::Command::new("git")
         .args(["symbolic-ref", "--short", "HEAD"])
         .output()
@@ -443,24 +478,18 @@ async fn checkout(
         },
     };
 
-    let mut fetch = std::process::Command::new("git");
-    fetch.args(["fetch", &clone_url, &branch]);
-    if let Some(token) = &ctx.host.token {
-        // Hand git the auth header through GIT_CONFIG_* instead of argv, so
-        // the PAT never shows up in `ps` output.
-        let existing = std::env::var("GIT_CONFIG_COUNT").ok();
-        for (key, value) in crate::git::bearer_header_env(token.expose(), existing.as_deref()) {
-            fetch.env(key, value);
+    // Try the head branch first (always fresh). When it is gone — deleted
+    // after merge, the usual case for re-checkouts — fall back to the
+    // server's refs/pull/<n>/head mirror.
+    let branch_error = fetch_ref(ctx, &clone_url, &branch).err();
+    if let Some(branch_error) = branch_error {
+        let pull_ref = format!("refs/pull/{number}/head");
+        match fetch_ref(ctx, &clone_url, &pull_ref) {
+            Ok(()) => eprintln!(
+                "ifg: note: branch '{branch}' is gone; fetched {pull_ref} instead (server mirror)"
+            ),
+            Err(_) => return Err(branch_error),
         }
-    }
-    let output = fetch
-        .output()
-        .map_err(|e| AppError::Other(format!("could not run git fetch: {e}")))?;
-    if !output.status.success() {
-        return Err(AppError::Other(format!(
-            "git fetch {clone_url} {branch} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
     }
 
     if branch_exists(&local) {
@@ -481,6 +510,30 @@ async fn checkout(
         println!("{repo}#{number} '{branch}' checked out as {local} (from {origin_label})");
     }
     Ok(())
+}
+
+/// `git fetch <url> <refspec>` with the PAT passed through GIT_CONFIG_* so it
+/// never lands in argv or a stored remote URL.
+fn fetch_ref(ctx: &super::CommandContext, url: &str, refspec: &str) -> Result<(), AppError> {
+    let mut fetch = std::process::Command::new("git");
+    fetch.args(["fetch", url, refspec]);
+    if let Some(token) = &ctx.host.token {
+        let existing = std::env::var("GIT_CONFIG_COUNT").ok();
+        for (key, value) in crate::git::bearer_header_env(token.expose(), existing.as_deref()) {
+            fetch.env(key, value);
+        }
+    }
+    let output = fetch
+        .output()
+        .map_err(|e| AppError::Other(format!("could not run git fetch: {e}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(AppError::Other(format!(
+            "git fetch {url} {refspec} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
 }
 
 /// Whether a local branch with this name exists.

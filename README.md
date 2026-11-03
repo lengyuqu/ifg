@@ -18,6 +18,8 @@ brew tap lengyuqu/ifg https://github.com/lengyuqu/homebrew-ifg.git
 brew install lengyuqu/ifg/ifg
 ```
 
+SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端口可用 `IRONFORGE_SSH_PORT` 覆盖）。
+
 手动安装：
 
 ```bash
@@ -40,10 +42,16 @@ ifg auth login --host https://your-forge.example.com   # 粘贴 Web 端创建的
 ifg version                                            # 客户端 + 服务端版本
 ifg repo create demo --init
 ifg issue list -R yourname/demo
-ifg pr checkout 12                                     # 同仓或 fork PR 都可用，重复执行会快进更新
+ifg pr checkout 12                                     # 同仓或 fork PR 都可用，重复执行会快进更新；分支已删时走 refs/pull
+ifg pr view 12 --comments                              # 含行内评审评论
 ifg pr create -t "标题"                                 # head 默认当前分支，未推送会拦截
 ifg ci logs 7 --follow                                 # 轮询增量打印日志
+ifg label create bug -c ff0000 -d "坏了"                # 标签
+ifg milestone create v1 --due 2026-12-31               # 里程碑
+ifg issue edit 3 --label bug --milestone v1 --assignee alice
+ifg status                                             # 当前分支的 PR + 最近流水线
 ifg release create v1.0.0 -n "说明" dist/pkg.tar.gz     # 建 Release 并流式上传
+ifg release edit v1.0.0 -n "修订说明" --prerelease       # 改发布说明/标记
 ifg release download v1.0.0 -p 'pkg*'                   # SHA-256 校验后落盘
 git config --global credential.https://your-forge.example.com.helper "!ifg auth git-credential"   # git clone/push 免密
 ```

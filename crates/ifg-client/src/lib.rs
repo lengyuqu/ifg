@@ -11,6 +11,8 @@ mod contract;
 mod error;
 mod http;
 mod issues;
+mod labels;
+mod milestones;
 mod pagination;
 mod pulls;
 mod releases;
@@ -23,9 +25,13 @@ pub use contract::USED_PATHS;
 pub use error::Error;
 pub use http::{Client, ClientBuilder, DEFAULT_BACKOFF, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT};
 pub use issues::{Comment, CreateIssueOptions, Issue, IssueListFilter, Issues, UpdateIssueOptions};
+pub use labels::{Label, LabelOptions, Labels};
+pub use milestones::{Milestone, MilestoneOptions, Milestones};
 pub use pagination::{Page, PaginationMeta, Paginator, PER_PAGE};
-pub use pulls::{CreatePrOptions, MergeOutcome, MergeStrategy, PullRequest, Pulls, ReviewAction};
-pub use releases::{Asset, CreateReleaseOptions, Release, Releases};
+pub use pulls::{
+    CreatePrOptions, MergeOutcome, MergeStrategy, PullRequest, Pulls, ReviewAction, ReviewComment,
+};
+pub use releases::{Asset, CreateReleaseOptions, Release, Releases, UpdateReleaseOptions};
 pub use repos::{CreateRepoOptions, Repo, Repos};
 pub use reqwest::Method;
 pub use secret::Secret;

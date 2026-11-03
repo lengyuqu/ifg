@@ -1,12 +1,16 @@
-//! Subcommand implementations (M1: `auth`, `api`; M2: `repo`, `issue`, `pr`).
+//! Subcommand implementations (M1: `auth`, `api`; M2: `repo`, `issue`, `pr`;
+//! M3: `ci`, `release`; M5: `label`, `milestone`, `status`).
 
 pub mod api;
 pub mod auth;
 pub mod ci;
 pub mod issue;
+pub mod label;
+pub mod milestone;
 pub mod pr;
 pub mod release;
 pub mod repo;
+pub mod status;
 pub mod version;
 
 use ifg_client::Client;
@@ -42,4 +46,25 @@ pub(crate) fn bootstrap(cli: &Cli) -> Result<CommandContext, AppError> {
         host,
         client,
     })
+}
+
+/// Yes/no prompt on a terminal; `--yes` skips it and non-interactive runs
+/// refuse rather than assume.
+pub(crate) fn confirm(question: &str) -> Result<bool, AppError> {
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return Err(AppError::Usage(format!(
+            "{question} — rerun with --yes to confirm non-interactively"
+        )));
+    }
+    eprint!("{question} [y/N] ");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| AppError::Other(format!("could not read the answer: {e}")))?;
+    Ok(matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
 }

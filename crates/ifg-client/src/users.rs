@@ -54,6 +54,13 @@ impl Client {
 
 impl Users<'_> {
     /// `GET /users/me` — requires the `user` PAT scope.
+    /// `GET /users/{username}` — public profile (no email).
+    pub async fn get(&self, username: &str) -> Result<UserProfile, Error> {
+        self.client
+            .send(crate::Method::GET, &format!("users/{username}"), None)
+            .await
+    }
+
     pub async fn me(&self) -> Result<UserProfile, Error> {
         self.client
             .send(reqwest::Method::GET, "users/me", None)

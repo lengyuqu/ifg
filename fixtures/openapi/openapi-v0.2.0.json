@@ -11,7 +11,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "paths": {
     "/admin/audit/logs": {
@@ -11822,6 +11822,63 @@
         }
       }
     },
+    "/repos/{owner}/{name}/releases/tags/{tag}": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "GET /api/v1/repos/:owner/:name/releases/tags/{tag}",
+        "description": "Clients need a by-tag lookup that does not page through every release\n(the client design doc listed this as an upstream need).",
+        "operationId": "get_release_by_tag",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "description": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "path",
+            "description": "release tag",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/repos/{owner}/{name}/releases/{id}": {
       "get": {
         "tags": [
@@ -14360,6 +14417,45 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{username}": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "GET /api/v1/users/{username}",
+        "description": "Public profile lookup. The CLI resolves assignee names to ids with it\n(there is no by-name route equivalent otherwise).",
+        "operationId": "get_user",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "description": "username",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {}

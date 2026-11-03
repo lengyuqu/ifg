@@ -112,6 +112,25 @@ impl ReviewAction {
 }
 
 /// Accessor for pull-request endpoints of one repository.
+/// An inline review comment on a pull request.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReviewComment {
+    pub id: i64,
+    pub pr_id: i64,
+    pub review_id: i64,
+    #[serde(default)]
+    pub author_id: Option<i64>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub line: Option<i64>,
+    #[serde(default)]
+    pub side: Option<String>,
+    pub body: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
 pub struct Pulls<'a> {
     client: &'a Client,
     owner: String,
@@ -239,6 +258,33 @@ impl Pulls<'_> {
                 Some(&serde_json::json!({ "strategy": strategy.as_str() })),
             )
             .await
+    }
+
+    /// `GET …/pulls/{number}/comments` — inline review comments (plain array).
+    pub async fn comments(&self, number: i64) -> Result<Vec<ReviewComment>, Error> {
+        self.client
+            .send(
+                crate::Method::GET,
+                &format!("{}/{number}/comments", self.pulls_path()),
+                None,
+            )
+            .await
+    }
+
+    /// Raw JSON twin of [`Pulls::comments`].
+    pub async fn comments_raw(&self, number: i64) -> Result<Value, Error> {
+        let bytes = self
+            .client
+            .raw(
+                crate::Method::GET,
+                &format!("{}/{number}/comments", self.pulls_path()),
+                None,
+            )
+            .await?;
+        serde_json::from_slice(&bytes).map_err(|source| Error::Decode {
+            body_snippet: crate::error::snippet(&bytes),
+            source,
+        })
     }
 
     /// `POST …/pulls/{number}/reviews`. The response shape varies by action,

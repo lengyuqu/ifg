@@ -52,6 +52,9 @@ async fn run(cli: Cli) -> i32 {
         Command::Pr { command } => cmd::pr::run(command, &cli).await,
         Command::Ci { command } => cmd::ci::run(command, &cli).await,
         Command::Release { command } => cmd::release::run(command, &cli).await,
+        Command::Label { command } => cmd::label::run(command, &cli).await,
+        Command::Milestone { command } => cmd::milestone::run(command, &cli).await,
+        Command::Status => cmd::status::run(&cli).await,
         Command::Version => cmd::version::run(&cli).await,
         Command::Completions { .. } => unreachable!("handled before dispatch"),
     };

@@ -80,7 +80,7 @@ impl Harness {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let status = StdCommand::new("git")
+    let output = StdCommand::new("git")
         .args(args)
         .current_dir(dir)
         .envs([
@@ -89,9 +89,14 @@ fn git(dir: &Path, args: &[&str]) {
             ("GIT_COMMITTER_NAME", "ifg-e2e"),
             ("GIT_COMMITTER_EMAIL", "ifg-e2e@ifg.invalid"),
         ])
-        .status()
+        .output()
         .expect("git is installed");
-    assert!(status.success(), "git {args:?} failed in {}", dir.display());
+    assert!(
+        output.status.success(),
+        "git {args:?} failed in {}: {}",
+        dir.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
 }
 
 fn anonymous_client() -> Client {
@@ -166,21 +171,17 @@ async fn bootstrap() -> (String, String) {
         "email": format!("{username}@ifg.invalid"),
         "password": password,
     });
-    client
-        .raw(Method::POST, "users/register", Some(&register))
-        .await
-        .expect("registration works (open by default; else set IFG_E2E_PAT)");
-
-    let login = serde_json::json!({ "login": username, "password": password });
-    let login_body = json_of(
+    let registered = json_of(
         client
-            .raw(Method::POST, "users/login", Some(&login))
+            .raw(Method::POST, "users/register", Some(&register))
             .await
-            .expect("login works"),
+            .expect("registration works (open by default; else set IFG_E2E_PAT)"),
     );
-    let jwt = login_body["token"]
+    // The register response already carries a session JWT; /users/login is
+    // rate limited per IP and would make parallel e2e runs flaky.
+    let jwt = registered["token"]
         .as_str()
-        .expect("login returns a token")
+        .expect("register returns a token")
         .to_string();
 
     let token_request = serde_json::json!({
@@ -350,6 +351,19 @@ async fn full_chain(harness: &Harness, repo_arg: &str) -> Result<(), String> {
         .expect("git rev-parse");
     assert!(branch.status.success(), "branch pr-1 exists after checkout");
 
+    // 8b. The server mirrors every same-repo PR head into refs/pull/<n>/head
+    // (branch deletion over HTTP is rejected server-side, so assert the ref
+    // directly — it is what the CLI falls back to when a branch is gone).
+    let ls_remote = StdCommand::new("git")
+        .args(["ls-remote", &clone_url, "refs/pull/1/head"])
+        .output()
+        .expect("git ls-remote");
+    let listing = String::from_utf8_lossy(&ls_remote.stdout);
+    assert!(
+        listing.contains("refs/pull/1/head"),
+        "refs/pull mirror missing: {listing}"
+    );
+
     // 9. ci runs: the pipeline list renders (no runner in this setup, so an
     // empty list is the expected outcome).
     let out = harness.run_ok(&["-R", repo_arg, "ci", "runs"]);
@@ -405,18 +419,13 @@ async fn bootstrap_second(username: &str) -> (String, String) {
         "email": format!("{username}@ifg.invalid"),
         "password": password,
     });
-    client
-        .raw(Method::POST, "users/register", Some(&register))
-        .await
-        .expect("second registration works");
-    let login = serde_json::json!({ "login": username, "password": password });
     let body = json_of(
         client
-            .raw(Method::POST, "users/login", Some(&login))
+            .raw(Method::POST, "users/register", Some(&register))
             .await
-            .expect("second login works"),
+            .expect("second registration works"),
     );
-    let jwt = body["token"].as_str().expect("login token").to_string();
+    let jwt = body["token"].as_str().expect("register token").to_string();
     let token_request = serde_json::json!({
         "name": format!("{username}-pat"),
         "scopes": "repo,user",
@@ -512,4 +521,141 @@ async fn fork_chain(
 /// `git` wrapper without asserting silence (fork flow prints more).
 fn harness_git(dir: &Path, args: &[&str]) {
     git(dir, args);
+}
+
+/// Labels, milestones, issue metadata, release edit and status (M5 surface).
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn labels_milestones_issue_meta_and_status() {
+    let harness = harness().await;
+    let run_id = run_id();
+    let repo = format!("{run_id}-meta");
+    let repo_arg = format!("{}/{}", harness.user, repo);
+    let created = vec![repo.clone()];
+
+    let result = meta_chain(&harness, &repo_arg, &repo).await;
+    cleanup(&harness, &created).await;
+    result.expect("meta chain");
+}
+
+async fn meta_chain(harness: &Harness, repo_arg: &str, repo_name: &str) -> Result<(), String> {
+    let out = harness.run_ok(&["repo", "create", repo_name, "--init"]);
+    assert!(out.contains("Created"), "repo create: {out}");
+
+    // Label lifecycle.
+    let out = harness.run_ok(&[
+        "-R",
+        repo_arg,
+        "label",
+        "create",
+        "bug",
+        "-c",
+        "ff0000",
+        "-d",
+        "broken things",
+    ]);
+    assert!(out.contains("Created label bug"), "label create: {out}");
+    let out = harness.run_ok(&["-R", repo_arg, "label", "list"]);
+    assert!(out.contains("bug"), "label list: {out}");
+    let out = harness.run_ok(&[
+        "-R",
+        repo_arg,
+        "label",
+        "edit",
+        "bug",
+        "--new-name",
+        "defect",
+    ]);
+    assert!(out.contains("Updated label defect"), "label edit: {out}");
+
+    // Milestone lifecycle.
+    let out = harness.run_ok(&[
+        "-R",
+        repo_arg,
+        "milestone",
+        "create",
+        "v1",
+        "-d",
+        "first cut",
+        "--due",
+        "2026-12-31",
+    ]);
+    assert!(
+        out.contains("Created milestone 'v1'"),
+        "milestone create: {out}"
+    );
+    let out = harness.run_ok(&["-R", repo_arg, "milestone", "list"]);
+    assert!(out.contains("v1"), "milestone list: {out}");
+
+    // Issue metadata: labels + milestone + assignee by name.
+    let out = harness.run_ok(&["-R", repo_arg, "issue", "create", "-t", "needs labels"]);
+    assert!(out.contains("#1"), "issue create: {out}");
+    let out = harness.run_ok(&[
+        "-R",
+        repo_arg,
+        "issue",
+        "edit",
+        "1",
+        "--label",
+        "defect",
+        "--milestone",
+        "v1",
+        "--assignee",
+        &harness.user,
+    ]);
+    assert!(out.contains("Updated"), "issue edit: {out}");
+    let out = harness.run_ok(&["-R", repo_arg, "issue", "view", "1"]);
+    assert!(out.contains("defect"), "issue labels after edit: {out}");
+
+    // Release edit + delete (by-tag endpoint path).
+    let artifact = harness.home_path.join("meta.txt");
+    std::fs::write(&artifact, "meta artifact").expect("write artifact");
+    let out = harness.run_ok(&[
+        "-R",
+        repo_arg,
+        "release",
+        "create",
+        "v0.0.1",
+        "-n",
+        "draft notes",
+        artifact.to_str().unwrap(),
+    ]);
+    assert!(out.contains("v0.0.1"), "release create: {out}");
+    let out = harness.run_ok(&[
+        "-R",
+        repo_arg,
+        "release",
+        "edit",
+        "v0.0.1",
+        "-t",
+        "edited title",
+        "--prerelease",
+    ]);
+    assert!(out.contains("edited title"), "release edit: {out}");
+    let out = harness.run_ok(&["-R", repo_arg, "release", "view", "v0.0.1"]);
+    assert!(
+        out.contains("edited title"),
+        "release view after edit: {out}"
+    );
+    let out = harness.run_ok(&["-R", repo_arg, "release", "delete", "v0.0.1", "-y"]);
+    assert!(out.contains("Deleted release"), "release delete: {out}");
+
+    // status: outside a work tree it must explain itself, inside a clone it
+    // prints the branch block (no PR, no runs here).
+    let work = harness.home_path.join("statuswork");
+    std::fs::create_dir_all(&work).expect("worktree");
+    let clone_url = harness.clone_url(&harness.user, repo_name);
+    git(&work, &["clone", &clone_url, "clone"]);
+    let clone_dir = work.join("clone");
+    harness_git(&clone_dir, &["checkout", "-b", "status-branch"]);
+    let out = harness.run_in(&clone_dir, &["status"]);
+    assert!(
+        out.contains("branch  status-branch"),
+        "status output: {out}"
+    );
+
+    // Cleanup the metadata rows.
+    harness.run_ok(&["-R", repo_arg, "label", "delete", "defect", "-y"]);
+    harness.run_ok(&["-R", repo_arg, "milestone", "delete", "v1", "-y"]);
+    Ok(())
 }
