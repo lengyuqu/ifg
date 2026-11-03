@@ -17,6 +17,7 @@ pub async fn run(command: &AuthCommand, cli: &Cli) -> Result<(), AppError> {
         AuthCommand::Status => status(cli).await,
         AuthCommand::Logout => logout(cli),
         AuthCommand::Token => token(cli),
+        AuthCommand::GitCredential { action } => git_credential(action),
     }
 }
 
@@ -285,4 +286,54 @@ fn token(cli: &Cli) -> Result<(), AppError> {
             "no token for {host_label}; run `ifg auth login`"
         ))),
     }
+}
+
+/// git credential helper protocol (design doc §4.1, §5.3): answer `get`
+/// requests when — and only when — the requested host matches a configured
+/// IronForge host exactly; anything else stays silent so the PAT can never
+/// leak to another site. `store`/`erase` are no-ops.
+fn git_credential(action: &str) -> Result<(), AppError> {
+    use std::io::Read;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|e| AppError::Other(format!("could not read credential request: {e}")))?;
+    let mut host: Option<String> = None;
+    for line in input.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            if key == "host" {
+                host = Some(value.to_string());
+            }
+        }
+    }
+
+    if action != "get" {
+        return Ok(());
+    }
+    let Some(host) = host else {
+        return Ok(());
+    };
+
+    let config = config::load()?;
+    let matched = config.hosts.iter().find(|(_, entry)| {
+        crate::config::host_key_for_url(&entry.url).as_deref() == Some(host.as_str())
+    });
+    let Some((_, entry)) = matched else {
+        // Not our host: silence (git moves on to the next helper).
+        return Ok(());
+    };
+    let Some(token) = entry.token.clone() else {
+        return Ok(());
+    };
+    let username = entry.user.clone().unwrap_or_else(|| "ifg".into());
+    let protocol = if entry.url.starts_with("http://") {
+        "http"
+    } else {
+        "https"
+    };
+    print!("protocol={protocol}\nhost={host}\nusername={username}\npassword={token}\n\n");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    Ok(())
 }

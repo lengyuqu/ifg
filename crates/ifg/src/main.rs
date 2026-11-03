@@ -35,6 +35,8 @@ async fn run(cli: Cli) -> i32 {
         Command::Repo { command } => cmd::repo::run(command, &cli).await,
         Command::Issue { command } => cmd::issue::run(command, &cli).await,
         Command::Pr { command } => cmd::pr::run(command, &cli).await,
+        Command::Ci { command } => cmd::ci::run(command, &cli).await,
+        Command::Release { command } => cmd::release::run(command, &cli).await,
     };
     match result {
         Ok(()) => 0,

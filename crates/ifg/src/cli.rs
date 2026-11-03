@@ -54,10 +54,20 @@ pub enum Command {
         #[command(subcommand)]
         command: IssueCommand,
     },
-    /// Work with pull requests (checkout lands in M3)
+    /// Work with pull requests (`checkout` fetches the head branch)
     Pr {
         #[command(subcommand)]
         command: PrCommand,
+    },
+    /// Work with CI pipelines
+    Ci {
+        #[command(subcommand)]
+        command: CiCommand,
+    },
+    /// Work with releases and their assets
+    Release {
+        #[command(subcommand)]
+        command: ReleaseCommand,
     },
 }
 
@@ -75,6 +85,12 @@ pub enum AuthCommand {
     Logout,
     /// Print the token of the resolved host (for scripts)
     Token,
+    /// git credential helper: answer `get` for configured hosts only.
+    /// Configure with: git config --global credential.helper "!ifg auth git-credential"
+    GitCredential {
+        /// The helper action git asks for: get / store / erase
+        action: String,
+    },
 }
 
 #[derive(Debug, clap::Args)]
@@ -245,5 +261,85 @@ pub enum PrCommand {
         request_changes: bool,
         #[arg(short = 'b', long)]
         body: Option<String>,
+    },
+    /// Fetch the PR head branch and check it out as pr-<number>
+    Checkout { number: i64 },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CiCommand {
+    /// List pipeline runs
+    Runs {
+        /// Filter by ref (branch or tag), applied locally
+        #[arg(long, value_name = "BRANCH")]
+        branch: Option<String>,
+        /// Filter by status, applied locally
+        #[arg(long)]
+        status: Option<String>,
+        /// Stop after N entries (default 30)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Show a pipeline with its stages and jobs
+    View { id: i64 },
+    /// Print a job log; --follow polls until the job finishes
+    Logs {
+        id: i64,
+        /// Job id or name (default: the pipeline's only job)
+        #[arg(long, value_name = "ID|NAME")]
+        job: Option<String>,
+        /// Keep polling every 2s and print increments (§7.1-A)
+        #[arg(long)]
+        follow: bool,
+    },
+    /// Cancel a running pipeline
+    Cancel { id: i64 },
+    /// Retry a pipeline
+    Retry { id: i64 },
+    /// Approve an environment-gated job
+    Approve {
+        id: i64,
+        /// Job id or name
+        job: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReleaseCommand {
+    /// List releases
+    List {
+        /// Stop after N entries (default 30)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Show one release (by tag) with its assets
+    View { tag: String },
+    /// Create a release and optionally upload files
+    Create {
+        tag: String,
+        /// Release title (default: the tag)
+        #[arg(short = 't', long)]
+        title: Option<String>,
+        /// Release notes text
+        #[arg(short = 'n', long)]
+        notes: Option<String>,
+        /// Read release notes from a file
+        #[arg(long, value_name = "FILE")]
+        notes_file: Option<String>,
+        #[arg(long)]
+        draft: bool,
+        #[arg(long)]
+        prerelease: bool,
+        /// Files to upload as assets after creation
+        files: Vec<String>,
+    },
+    /// Upload files as assets of a release
+    Upload { tag: String, files: Vec<String> },
+    /// Download release assets (SHA-256 verified) into the current directory
+    Download {
+        tag: String,
+        /// Asset filename filter; `*` wildcards allowed (default: all)
+        #[arg(short = 'p', long, value_name = "PATTERN")]
+        pattern: Option<String>,
     },
 }

@@ -6,22 +6,26 @@
 //! `*_raw` JSON twins for `--json` (D5). DTOs are hand-written and only
 //! declare fields the client uses; unknown fields are ignored (D4).
 
+mod ci;
 mod contract;
 mod error;
 mod http;
 mod issues;
 mod pagination;
 mod pulls;
+mod releases;
 mod repos;
 mod secret;
 mod users;
 
+pub use ci::{Ci, Job, Pipeline, PipelineDetail, Stage, StageWithJobs};
 pub use contract::USED_PATHS;
 pub use error::Error;
 pub use http::{Client, ClientBuilder, DEFAULT_BACKOFF, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT};
 pub use issues::{Comment, CreateIssueOptions, Issue, IssueListFilter, Issues, UpdateIssueOptions};
 pub use pagination::{Page, PaginationMeta, Paginator, PER_PAGE};
 pub use pulls::{CreatePrOptions, MergeOutcome, MergeStrategy, PullRequest, Pulls, ReviewAction};
+pub use releases::{Asset, CreateReleaseOptions, Release, Releases};
 pub use repos::{CreateRepoOptions, Repo, Repos};
 pub use reqwest::Method;
 pub use secret::Secret;

@@ -28,11 +28,13 @@ ifg-client = { path = "crates/ifg-client" }
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-native-roots",
     "json",
+    "stream",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["rt", "macros", "time"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "fs"] }
+tokio-util = { version = "0.7", features = ["io"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
@@ -44,6 +46,8 @@ url = "2"
 # CLI
 clap = { version = "4", features = ["derive"] }
 comfy-table = "7"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+sha2 = "0.10"
 
 # Testing
 assert_cmd = "2"

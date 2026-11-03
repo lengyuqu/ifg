@@ -8,7 +8,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -286,6 +286,20 @@ impl Client {
         path: &str,
         body: Option<&Value>,
     ) -> Result<Vec<u8>, Error> {
+        let response = self.raw_response(method, path, body).await?;
+        let bytes = response.bytes().await.map_err(Error::Transport)?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Issue a request and return the un-read `reqwest::Response` — for
+    /// streaming bodies (release asset downloads). Error bodies are still
+    /// parsed into [`Error::Api`].
+    pub async fn raw_response(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<reqwest::Response, Error> {
         let url = join_path(&self.base, path);
         let idempotent = matches!(method, reqwest::Method::GET | reqwest::Method::HEAD);
         let mut attempt: u32 = 0;
@@ -326,11 +340,11 @@ impl Client {
                         continue;
                     }
                     tracing::debug!(headers = ?masked(response.headers()), "response headers");
-                    let bytes = response.bytes().await.map_err(Error::Transport)?;
                     if !status.is_success() {
+                        let bytes = response.bytes().await.map_err(Error::Transport)?;
                         return Err(error::api_error(status.as_u16(), &bytes));
                     }
-                    return Ok(bytes.to_vec());
+                    return Ok(response);
                 }
                 Err(e) => {
                     if idempotent && e.is_connect() && attempt < self.retry.max_retries {
@@ -349,6 +363,46 @@ impl Client {
                 }
             }
         }
+    }
+
+    /// Send a streaming request body (release asset upload, design doc
+    /// §4.5: never buffer the whole file in memory). Stream bodies cannot be
+    /// cloned, so there is no retry: a failure surfaces and the caller
+    /// retries explicitly.
+    pub(crate) async fn raw_with_stream_body(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: reqwest::Body,
+        content_type: &str,
+        extra_headers: &[(HeaderName, HeaderValue)],
+    ) -> Result<reqwest::Response, Error> {
+        let url = join_path(&self.base, path);
+        let started = std::time::Instant::now();
+        let mut request = self.http.request(method, url.clone());
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(token.expose());
+        }
+        request = request
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(body);
+        for (name, value) in extra_headers {
+            request = request.header(name, value);
+        }
+        let response = request.send().await.map_err(Error::Transport)?;
+        let status = response.status();
+        tracing::info!(
+            method = "upload",
+            url = %url,
+            status = status.as_u16(),
+            elapsed = ?started.elapsed(),
+            "request"
+        );
+        if !status.is_success() {
+            let bytes = response.bytes().await.map_err(Error::Transport)?;
+            return Err(error::api_error(status.as_u16(), &bytes));
+        }
+        Ok(response)
     }
 }
 

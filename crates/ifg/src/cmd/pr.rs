@@ -57,6 +57,7 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
             )
             .await
         }
+        PrCommand::Checkout { number } => checkout(&ctx, &repo, *number).await,
     }
 }
 
@@ -401,4 +402,61 @@ fn short_date(iso: Option<&str>) -> String {
         Some(iso) => iso.chars().take(10).collect(),
         None => "—".to_string(),
     }
+}
+
+/// `pr checkout <number>`: fetch the PR head branch (from the repo's clone
+/// URL, authenticated with a PAT when we have one) and create `pr-<number>`.
+/// Same-repo PRs only — the server does not maintain `refs/pull/<n>/head`
+/// and fork head repos have no by-id lookup (design doc §7.2).
+async fn checkout(
+    ctx: &super::CommandContext,
+    repo: &RepoContext,
+    number: i64,
+) -> Result<(), AppError> {
+    let pr = ctx
+        .client
+        .pulls(&repo.owner, &repo.name)
+        .get(number)
+        .await?;
+    if pr.head_repo_id.is_some() {
+        return Err(AppError::Other(
+            "fork PR checkout is not supported yet (no refs/pull and no head-repo lookup; §7.2)"
+                .into(),
+        ));
+    }
+    let branch = pr.head_branch.clone();
+    let local = format!("pr-{number}");
+
+    let clone_url = format!("{}/git/{}/{}.git", ctx.host.url, repo.owner, repo.name);
+    let mut fetch = std::process::Command::new("git");
+    if let Some(token) = &ctx.host.token {
+        // Bearer PAT over git-http; `-c` is a git *global* option (before the
+        // subcommand) and keeps the token out of any stored remote URL.
+        fetch.arg("-c").arg(format!(
+            "http.extraheader=Authorization: Bearer {}",
+            token.expose()
+        ));
+    }
+    fetch.args(["fetch", &clone_url, &branch]);
+    let output = fetch
+        .output()
+        .map_err(|e| AppError::Other(format!("could not run git fetch: {e}")))?;
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "git fetch {clone_url} {branch} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    let status = std::process::Command::new("git")
+        .args(["switch", "-c", &local, "FETCH_HEAD"])
+        .status()
+        .map_err(|e| AppError::Other(format!("could not run git switch: {e}")))?;
+    if !status.success() {
+        return Err(AppError::Other(format!(
+            "could not create branch {local} (it may already exist; try `git switch {local}`)"
+        )));
+    }
+    println!("{repo}#{number} '{branch}' checked out as {local}");
+    Ok(())
 }

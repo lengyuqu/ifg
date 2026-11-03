@@ -297,3 +297,60 @@ async fn raw_path_tolerates_leading_slash_and_api_v1_prefix() {
         assert!(!bytes.is_empty());
     }
 }
+
+#[tokio::test]
+async fn release_upload_streams_the_file_with_filename_header() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/repos/alice/demo/releases/1/assets"))
+        .and(header("x-asset-filename", "artifact.txt"))
+        .and(header("content-type", "text/plain"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "id": 5, "release_id": 1, "filename": "artifact.txt", "size": 12,
+            "content_type": "text/plain", "download_count": 0, "uploader_id": 1,
+            "sha256": null, "created_at": "2026-11-03T10:00:00Z"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("artifact.txt");
+    std::fs::write(&file, "artifact ok\n").unwrap();
+    let client = Client::builder(server.uri())
+        .token(Secret::new("ifp_testtoken"))
+        .build()
+        .unwrap();
+    let asset = client
+        .releases("alice", "demo")
+        .upload_file(1, &file, "text/plain")
+        .await
+        .unwrap();
+    assert_eq!(asset.filename, "artifact.txt");
+    assert_eq!(asset.size, 12);
+    assert_eq!(asset.sha256, None);
+}
+
+#[tokio::test]
+async fn release_download_returns_the_streaming_response() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/assets/5/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("binary-ish payload")
+                .insert_header("x-checksum-sha256", "deadbeef"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = Client::builder(server.uri()).build().unwrap();
+    let response = client.releases("alice", "demo").download(5).await.unwrap();
+    assert_eq!(
+        response.headers().get("x-checksum-sha256").unwrap(),
+        "deadbeef"
+    );
+    let body = response.bytes().await.unwrap();
+    assert_eq!(body.as_ref(), b"binary-ish payload");
+}

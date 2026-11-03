@@ -36,4 +36,32 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("PUT", "/repos/{owner}/{name}/pulls/{number}/auto-merge"),
     ("GET", "/repos/{owner}/{name}/pulls/{number}/reviews"),
     ("POST", "/repos/{owner}/{name}/pulls/{number}/reviews"),
+    // ci (M3)
+    ("GET", "/repos/{owner}/{name}/pipelines"),
+    ("GET", "/repos/{owner}/{name}/pipelines/{id}"),
+    ("POST", "/repos/{owner}/{name}/pipelines/{id}/retry"),
+    ("POST", "/repos/{owner}/{name}/pipelines/{id}/cancel"),
+    ("GET", "/repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}"),
+    (
+        "POST",
+        "/repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/play",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/rerun",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/approve",
+    ),
+    // releases (M3)
+    ("GET", "/repos/{owner}/{name}/releases"),
+    ("POST", "/repos/{owner}/{name}/releases"),
+    ("GET", "/repos/{owner}/{name}/releases/{id}"),
+    ("GET", "/repos/{owner}/{name}/releases/{release_id}/assets"),
+    ("POST", "/repos/{owner}/{name}/releases/{release_id}/assets"),
+    (
+        "GET",
+        "/repos/{owner}/{name}/releases/assets/{asset_id}/download",
+    ),
 ];

@@ -28,6 +28,9 @@ pub struct PullRequest {
     pub head_sha: Option<String>,
     #[serde(default)]
     pub merge_commit_sha: Option<String>,
+    /// Fork PRs point at another repo; `None` means same-repo.
+    #[serde(default)]
+    pub head_repo_id: Option<i64>,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]

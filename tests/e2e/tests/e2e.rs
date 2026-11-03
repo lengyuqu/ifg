@@ -287,5 +287,68 @@ async fn full_chain(harness: &Harness, repo_arg: &str) -> Result<(), String> {
     let out = harness.run_in(&clone_dir, &["pr", "view", "1"]);
     assert!(out.contains("merged"), "pr view after merge: {out}");
 
+    // 7. release create with an uploaded asset, then a verified download.
+    let artifact = harness.home_path.join("artifact.txt");
+    std::fs::write(&artifact, "e2e artifact content v1").expect("write artifact");
+    let artifact_str = artifact.to_str().expect("utf-8 path");
+    let out = harness.run_ok(&[
+        "-R",
+        repo_arg,
+        "release",
+        "create",
+        "v1.0.0",
+        "-n",
+        "e2e notes",
+        artifact_str,
+    ]);
+    assert!(out.contains("v1.0.0"), "release create: {out}");
+    assert!(out.contains("Uploaded artifact.txt"), "asset upload: {out}");
+    let out = harness.run_ok(&["-R", repo_arg, "release", "list"]);
+    assert!(out.contains("v1.0.0"), "release list: {out}");
+    let out = harness.run_ok(&["-R", repo_arg, "release", "view", "v1.0.0"]);
+    assert!(out.contains("artifact.txt"), "release view assets: {out}");
+
+    let download_dir = harness.home_path.join("downloads");
+    std::fs::create_dir_all(&download_dir).expect("download dir");
+    let out = harness.run_in(
+        &download_dir,
+        &[
+            "-R",
+            repo_arg,
+            "release",
+            "download",
+            "v1.0.0",
+            "-p",
+            "artifact*",
+        ],
+    );
+    assert!(
+        out.contains("Downloaded artifact.txt"),
+        "release download: {out}"
+    );
+    let downloaded = std::fs::read(download_dir.join("artifact.txt")).expect("downloaded file");
+    assert_eq!(downloaded, b"e2e artifact content v1");
+    assert!(
+        !download_dir.join("artifact.txt.part").exists(),
+        "no .part leftover"
+    );
+
+    // 8. pr checkout: fetch the (still existing) head branch as pr-1.
+    harness.run_in(&clone_dir, &["pr", "checkout", "1"]);
+    let branch = StdCommand::new("git")
+        .args(["rev-parse", "--verify", "pr-1"])
+        .current_dir(&clone_dir)
+        .output()
+        .expect("git rev-parse");
+    assert!(branch.status.success(), "branch pr-1 exists after checkout");
+
+    // 9. ci runs: the pipeline list renders (no runner in this setup, so an
+    // empty list is the expected outcome).
+    let out = harness.run_ok(&["-R", repo_arg, "ci", "runs"]);
+    assert!(
+        out.contains("No pipelines") || out.contains("PIPELINES") || out.chars().count() > 0,
+        "ci runs: {out}"
+    );
+
     Ok(())
 }

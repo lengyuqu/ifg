@@ -2,8 +2,10 @@
 
 pub mod api;
 pub mod auth;
+pub mod ci;
 pub mod issue;
 pub mod pr;
+pub mod release;
 pub mod repo;
 
 use ifg_client::Client;

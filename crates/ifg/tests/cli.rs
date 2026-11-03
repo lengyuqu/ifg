@@ -527,3 +527,233 @@ async fn pr_create_requires_pushed_branch() {
         "stderr: {stderr}"
     );
 }
+
+fn write_config(home: &TempDir, hosts_toml: &str) {
+    let dir = home.path().join("ironforge");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hosts.toml"), hosts_toml).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            dir.join("hosts.toml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+}
+
+/// `auth git-credential get` answers for a configured host, stays silent
+/// otherwise (the PAT must never leak to another site).
+#[tokio::test]
+async fn git_credential_answers_only_for_configured_hosts() {
+    let home = TempDir::new().unwrap();
+    write_config(
+        &home,
+        r#"
+[hosts."forge.example.com"]
+url = "https://forge.example.com"
+user = "alice"
+token = "ifp_secret_token"
+"#,
+    );
+
+    // Matching host: full credential answer.
+    let out = ifg()
+        .args(["auth", "git-credential", "get"])
+        .env("XDG_CONFIG_HOME", home.path())
+        .write_stdin("protocol=https\nhost=forge.example.com\npath=git/alice/demo.git\n\n")
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("protocol=https"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("host=forge.example.com"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("username=alice"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("password=ifp_secret_token"),
+        "stdout: {stdout}"
+    );
+
+    // Different host: silence.
+    let out = ifg()
+        .args(["auth", "git-credential", "get"])
+        .env("XDG_CONFIG_HOME", home.path())
+        .write_stdin("protocol=https\nhost=evil.example.com\n\n")
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.is_empty(),
+        "credentials leaked to another host: {stdout}"
+    );
+
+    // store/erase: no-op, no output.
+    let out = ifg()
+        .args(["auth", "git-credential", "store"])
+        .env("XDG_CONFIG_HOME", home.path())
+        .write_stdin("protocol=https\nhost=forge.example.com\n\n")
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.is_empty(), "stdout: {stdout}");
+}
+
+/// `ci logs` prints a job log without polling.
+#[tokio::test]
+async fn ci_logs_prints_the_job_log() {
+    let server = MockServer::start().await;
+    let detail = json!({
+        "pipeline": {"id": 1, "repo_id": 1, "commit_sha": "abc123", "ref_name": "main",
+                     "status": "running", "trigger_type": "push", "triggered_by": "alice",
+                     "started_at": "2026-11-03T10:00:00Z", "finished_at": null,
+                     "created_at": "2026-11-03T10:00:00Z"},
+        "stages": [{"stage": {"id": 1, "pipeline_id": 1, "name": "build", "stage_order": 1,
+                              "status": "running", "started_at": null, "finished_at": null},
+                    "jobs": [{"id": 9, "stage_id": 1, "name": "compile", "status": "running",
+                              "log": "compiling...\ndone 42%\n", "exit_code": null}]}]
+    });
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/pipelines/1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(detail))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let out = ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["-R", "alice/demo", "ci", "logs", "1"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("compiling..."), "stdout: {stdout}");
+}
+
+/// `release download` verifies the SHA-256 and deletes the partial file on
+/// mismatch.
+#[tokio::test]
+async fn release_download_verifies_checksum() {
+    use sha2::{Digest, Sha256};
+
+    let content = b"release payload bytes";
+    let checksum = format!("{:x}", Sha256::digest(content));
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"id": 1, "repo_id": 1, "tag_name": "v1", "target_commitish": "main",
+                      "title": "v1", "body": null, "is_draft": false, "is_prerelease": false,
+                      "author_id": 1, "created_at": "2026-11-03T10:00:00Z",
+                      "updated_at": "2026-11-03T10:00:00Z"}],
+            "pagination": {"page": 1, "per_page": 100, "total": 1, "total_pages": 1,
+                           "has_next": false, "has_prev": false}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/1/assets"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+            "id": 5, "release_id": 1, "filename": "pkg.bin", "size": content.len() as i64,
+            "content_type": "application/octet-stream", "download_count": 0,
+            "uploader_id": 1, "sha256": checksum, "created_at": "2026-11-03T10:00:00Z"
+        }])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/assets/5/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(content.to_vec())
+                .insert_header("x-checksum-sha256", checksum.as_str()),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/assets/6/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"tampered".to_vec())
+                .insert_header("x-checksum-sha256", checksum.as_str()),
+        )
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let download_dir = TempDir::new().unwrap();
+
+    // Good checksum: file lands with the asset name.
+    ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("XDG_CONFIG_HOME", home.path())
+        .current_dir(download_dir.path())
+        .args(["-R", "alice/demo", "release", "download", "v1"])
+        .assert()
+        .success();
+    let downloaded = std::fs::read(download_dir.path().join("pkg.bin")).unwrap();
+    assert_eq!(downloaded, content);
+}
+
+/// A tampered download is detected: exit 1, partial file deleted.
+#[tokio::test]
+async fn release_download_rejects_a_tampered_asset() {
+    use sha2::{Digest, Sha256};
+
+    let content = b"release payload bytes";
+    let checksum = format!("{:x}", Sha256::digest(content));
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"id": 1, "repo_id": 1, "tag_name": "v1", "target_commitish": "main",
+                      "title": "v1", "body": null, "is_draft": false, "is_prerelease": false,
+                      "author_id": 1, "created_at": "2026-11-03T10:00:00Z",
+                      "updated_at": "2026-11-03T10:00:00Z"}],
+            "pagination": {"page": 1, "per_page": 100, "total": 1, "total_pages": 1,
+                           "has_next": false, "has_prev": false}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/1/assets"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+            "id": 6, "release_id": 1, "filename": "pkg.bin", "size": 8,
+            "content_type": "application/octet-stream", "download_count": 0,
+            "uploader_id": 1, "sha256": checksum, "created_at": "2026-11-03T10:00:00Z"
+        }])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/assets/6/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(b"tampered".to_vec())
+                .insert_header("x-checksum-sha256", checksum.as_str()),
+        )
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let download_dir = TempDir::new().unwrap();
+    let out = ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("XDG_CONFIG_HOME", home.path())
+        .current_dir(download_dir.path())
+        .args(["-R", "alice/demo", "release", "download", "v1"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("SHA-256 mismatch"), "stderr: {stderr}");
+    assert!(!download_dir.path().join("pkg.bin").exists());
+    assert!(!download_dir.path().join("pkg.bin.part").exists());
+}
