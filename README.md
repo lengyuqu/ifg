@@ -2,7 +2,7 @@
 
 IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
 
-> 状态：v0.4.0 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
+> 状态：v0.5.0 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
 
 与 IronForge 自带的 `ironforge` 二进制不同，`ifg` 不连数据库、不做运维，只用个人访问令牌（PAT）调用公开 API，可以装在任何机器上。
 
@@ -25,7 +25,7 @@ SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端
 ```bash
 # 下载对应架构的 tar.gz 与 SHA256SUMS 后先校验
 shasum -a 256 -c SHA256SUMS 2>/dev/null || shasum -a 256 ifg-*.tar.gz
-tar xzf ifg-0.4.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
+tar xzf ifg-0.5.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
 ```
 
 从源码（musl 交叉编译需 `zig` + `cargo-zigbuild`）：
@@ -54,6 +54,7 @@ ifg search "登录 超时" --type issue                      # 全局搜索（re
 ifg notifications                                      # 通知列表；notifications count 只看未读
 ifg issue create --editor                              # 用 $EDITOR 写标题与正文
 ifg pr list -q '{{.number}} {{.title}}'                 # 轻量模板输出（列表逐行渲染）
+ifg issue view 3 -q '{{range .labels}}{{.}} {{end}}'    # range 遍历嵌套数组
 ifg release create v1.0.0 -n "说明" dist/pkg.tar.gz     # 建 Release 并流式上传
 ifg release edit v1.0.0 -n "修订说明" --prerelease       # 改发布说明/标记
 ifg release download v1.0.0 -p 'pkg*'                   # SHA-256 校验后落盘
@@ -73,7 +74,7 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 - 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`（0600；权限过宽会拒绝加载令牌）
 - 钥匙串（可选）：`token_store = "keyring"` 时 PAT 存系统钥匙串（macOS `security` / Linux `secret-tool`），不落文件
-- `--json` 输出服务端原始字段；`-q/--template` 走轻量子集（`{{.field}}`、`{{.a.b}}`，无 `{{range}}`——列表自动逐项渲染）
+- `--json` 输出服务端原始字段；`-q/--template` 走轻量子集（`{{.field}}`、`{{.a.b}}`、`{{range .list}}…{{end}}`，列表自动逐项渲染）
 - 管道输出自动关闭颜色与相对时间；`pr diff` 在终端里上色并走分页器
 
 ## 文档
@@ -92,6 +93,7 @@ scripts/check.sh    # fmt、clippy、test、audit、ifg-client 依赖边界（CI
 scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
                     # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
 scripts/release.sh  # 发布产物：四架构交叉编译 + SHA256SUMS
+scripts/bump-tap.sh <version> <formula>  # 发版后同步 Homebrew formula（读 SHA256SUMS）
 ```
 
 工具链版本固定在 `rust-toolchain.toml`（若设置了 `RUSTUP_TOOLCHAIN` 环境变量，它会覆盖该文件）。

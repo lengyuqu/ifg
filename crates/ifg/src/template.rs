@@ -1,16 +1,19 @@
-//! `--template` rendering (design doc §5.4): a deliberately small subset of
-//! `gh`'s Go templates — `{{.field}}`, `{{.nested.field}}`, `{{.array.0}}`
-//! and the literal escapes `\n` / `\t`.
+//! `--template` rendering (design doc §5.4): a small subset of `gh`'s Go
+//! templates — `{{.field}}`, `{{.nested.field}}`, `{{.array.0}}`,
+//! `{{range .list}}…{{end}}` (nestable; objects iterate their values), and
+//! the literal escapes `\n` / `\t`.
 //!
-//! No `{{range}}`: list commands render the template once per item instead,
-//! which covers the scripting cases without a template engine (and without
-//! the dependency it would drag in).
+//! Lists still render the template once per item; `range` exists for nested
+//! arrays such as an issue's labels.
 
 use serde_json::Value;
 
-/// Render `template` against `item`. Unknown paths render empty, mirroring
-/// how a missing field in `gh -q` yields nothing.
+/// Render `template` against `item`.
 pub fn render(template: &str, item: &Value) -> String {
+    render_inner(template, item)
+}
+
+fn render_inner(template: &str, ctx: &Value) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find("{{") {
@@ -22,40 +25,82 @@ pub fn render(template: &str, item: &Value) -> String {
             return out;
         };
         let action = after[..end].trim();
-        out.push_str(&render_action(action, item));
-        rest = &after[end + 2..];
+        let tail = &after[end + 2..];
+
+        if let Some(path) = action.strip_prefix("range ") {
+            let Some((body, remainder)) = split_block(tail) else {
+                // Missing {{end}}: render the rest literally.
+                out.push_str(&unescape(&rest[start..]));
+                return out;
+            };
+            match resolve(path.trim(), ctx) {
+                Some(Value::Array(items)) => {
+                    for item in items {
+                        out.push_str(&render_inner(&body, item));
+                    }
+                }
+                Some(Value::Object(map)) => {
+                    for value in map.values() {
+                        out.push_str(&render_inner(&body, value));
+                    }
+                }
+                Some(other) => out.push_str(&render_inner(&body, other)),
+                None => {} // missing path: behave like an empty array
+            }
+            rest = remainder;
+            continue;
+        }
+
+        out.push_str(&scalar(
+            &resolve(action, ctx).cloned().unwrap_or(Value::Null),
+        ));
+        rest = tail;
     }
     out.push_str(&unescape(rest));
     out
 }
 
-fn render_action(action: &str, item: &Value) -> String {
-    // `{{.this}}` is the item itself; `{{.}}` too.
-    let Some(path) = action.strip_prefix('.') else {
-        return String::new();
-    };
-    let path = path.trim();
-    if path.is_empty() || path == "this" {
-        return scalar(item);
+/// Split a block body from its matching `{{end}}`, respecting nesting.
+fn split_block(tail: &str) -> Option<(String, &str)> {
+    let mut depth = 1usize;
+    let mut cursor = 0usize;
+    while let Some(rel) = tail[cursor..].find("{{") {
+        let start = cursor + rel;
+        let after = &tail[start + 2..];
+        let end = after.find("}}")?;
+        let action = after[..end].trim();
+        let after_end = start + 2 + end + 2;
+        if action.starts_with("range ") {
+            depth += 1;
+            cursor = after_end;
+            continue;
+        }
+        if action == "end" {
+            depth -= 1;
+            if depth == 0 {
+                return Some((tail[..start].to_string(), &tail[after_end..]));
+            }
+        }
+        cursor = after_end;
     }
-    let mut current = item;
+    None
+}
+
+/// Resolve `.`, `.field` or `.nested.field` / `.array.0` against `ctx`.
+fn resolve<'a>(action: &str, ctx: &'a Value) -> Option<&'a Value> {
+    let path = action.strip_prefix('.')?.trim();
+    if path.is_empty() || path == "this" {
+        return Some(ctx);
+    }
+    let mut current = ctx;
     for segment in path.split('.') {
         current = match current {
-            Value::Object(map) => match map.get(segment) {
-                Some(value) => value,
-                None => return String::new(),
-            },
-            Value::Array(items) => match segment.parse::<usize>() {
-                Ok(index) => match items.get(index) {
-                    Some(value) => value,
-                    None => return String::new(),
-                },
-                Err(_) => return String::new(),
-            },
-            _ => return String::new(),
+            Value::Object(map) => map.get(segment)?,
+            Value::Array(items) => items.get(segment.parse::<usize>().ok()?)?,
+            _ => return None,
         };
     }
-    scalar(current)
+    Some(current)
 }
 
 /// Scalars print bare; objects/arrays print as compact JSON (useful enough
@@ -120,5 +165,48 @@ mod tests {
         assert_eq!(render("{{.}}", &json!("plain")), "plain");
         // Unterminated action stays literal.
         assert_eq!(render("oops {{.title", &item), "oops {{.title");
+    }
+
+    #[test]
+    fn ranges_over_arrays_and_objects() {
+        let item = json!({
+            "labels": ["bug", "p1"],
+            "meta": {"a": 1, "b": 2},
+        });
+        assert_eq!(
+            render("{{range .labels}}[{{.}}]{{end}}", &item),
+            "[bug][p1]"
+        );
+        assert_eq!(
+            render("labels: {{range .labels}}{{.}},{{end}}", &item),
+            "labels: bug,p1,"
+        );
+        // Objects iterate their values.
+        assert_eq!(render("{{range .meta}}{{.}}{{end}}", &item), "12");
+        // Missing path renders nothing.
+        assert_eq!(render("x{{range .nope}}y{{end}}z", &item), "xz");
+    }
+
+    #[test]
+    fn nested_ranges_and_fields() {
+        let item = json!({
+            "files": [
+                {"path": "a.rs", "labels": ["x"]},
+                {"path": "b.rs", "labels": []}
+            ]
+        });
+        assert_eq!(
+            render(
+                "{{range .files}}{{.path}}({{range .labels}}{{.}}{{end}}) {{end}}",
+                &item
+            ),
+            "a.rs(x) b.rs() "
+        );
+    }
+
+    #[test]
+    fn unterminated_range_stays_literal() {
+        let item = json!({"labels": ["a"]});
+        assert_eq!(render("{{range .labels}}x", &item), "{{range .labels}}x");
     }
 }

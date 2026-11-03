@@ -321,7 +321,7 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 ## 11. 已决事项（追加）
 
 0'. **v0.4 决策（2026-11-04）**：
-   - `--template` 只做子集（`{{.path}}` + `\n` 转义），**不做 `{{range}}`**：列表逐项渲染已覆盖脚本场景，避免引入模板引擎依赖。
+   - `--template` 做子集（`{{.path}}`、`\n` 转义、`{{range}}…{{end}}` 可嵌套）：列表仍逐项渲染，`range` 用于嵌套数组（如 issue 的 labels）；不引模板引擎依赖。
    - `search` 直接映射 `/search`（results/total/page 信封）；`notifications` 覆盖 list/read/delete/count。
    - `issue|pr create --editor`：文件首行标题、其余正文，`#` 开头行丢弃；`$VISUAL` 优先于 `$EDITOR`。
    - `pr diff` 复用输出层能力（TTY 上色 + `$PAGER`）。
