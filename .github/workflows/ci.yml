@@ -32,3 +32,26 @@ jobs:
 
       - name: checks (fmt, clippy, test, audit, dependency boundary)
         run: bash scripts/check.sh
+
+  # e2e drives the real `ifg` binary against a live IronForge instance, so it
+  # needs a runner that can reach one. Enable by setting the repository
+  # variable IFG_E2E_ENABLED=true and providing the IFG_E2E_URL / IFG_E2E_PAT
+  # secrets; the runner must carry the `ifg-e2e` label (see scripts/e2e.sh).
+  e2e:
+    if: ${{ vars.IFG_E2E_ENABLED == 'true' }}
+    runs-on: [self-hosted, ifg-e2e]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: build the CLI the tests drive
+        run: cargo build -p ifg --locked
+
+      - name: e2e (full chain, fork checkout, metadata + status)
+        run: cargo test -p ifg-e2e --locked -- --ignored
+        env:
+          IFG_E2E_URL: ${{ secrets.IFG_E2E_URL }}
+          IFG_E2E_PAT: ${{ secrets.IFG_E2E_PAT }}
