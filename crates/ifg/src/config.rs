@@ -14,8 +14,19 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_host: Option<String>,
+    /// Token storage backend: `"file"` (default) or `"keyring"` (D6 — the
+    /// PAT lives in the system keychain and never in this file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_store: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub hosts: BTreeMap<String, HostEntry>,
+}
+
+impl Config {
+    /// Whether tokens belong in the system keychain instead of the file.
+    pub fn uses_keyring(&self) -> bool {
+        self.token_store.as_deref() == Some("keyring")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +101,14 @@ pub fn load() -> Result<Config, ConfigError> {
         );
         for entry in config.hosts.values_mut() {
             entry.token = None;
+        }
+    }
+    // Keychain-backed tokens: the file only carries a marker-free entry.
+    if config.uses_keyring() {
+        for (key, entry) in config.hosts.iter_mut() {
+            if let Some(token) = crate::keyring::load(key) {
+                entry.token = Some(token);
+            }
         }
     }
     Ok(config)
@@ -202,6 +221,7 @@ mod tests {
     fn roundtrip_serialization() {
         let config = Config {
             default_host: Some("forge.example.com".into()),
+            token_store: None,
             hosts: [(
                 "forge.example.com".to_string(),
                 HostEntry {

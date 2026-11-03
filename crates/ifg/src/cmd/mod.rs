@@ -7,6 +7,7 @@ pub mod issue;
 pub mod pr;
 pub mod release;
 pub mod repo;
+pub mod version;
 
 use ifg_client::Client;
 

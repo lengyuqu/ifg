@@ -32,7 +32,16 @@ pub async fn run(command: &IssueCommand, cli: &Cli) -> Result<(), AppError> {
             )
             .await
         }
-        IssueCommand::View { number, comments } => view(&ctx, cli, &repo, *number, *comments).await,
+        IssueCommand::View {
+            number,
+            comments,
+            web,
+        } => {
+            if *web {
+                return crate::web::open(&crate::web::issue_url(&ctx.host.url, &repo, *number));
+            }
+            view(&ctx, cli, &repo, *number, *comments).await
+        }
         IssueCommand::Create {
             title,
             body,
@@ -282,8 +291,5 @@ async fn edit(
 }
 
 fn short_date(iso: Option<&str>) -> String {
-    match iso {
-        Some(iso) => iso.chars().take(10).collect(),
-        None => "—".to_string(),
-    }
+    crate::output::human_time(iso)
 }

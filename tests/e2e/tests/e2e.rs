@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use assert_cmd::Command as IfgCommand;
 use ifg_client::{Client, Method, Secret};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tempfile::TempDir;
 
 fn e2e_url() -> String {
@@ -25,12 +25,15 @@ fn e2e_url() -> String {
 }
 
 fn run_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     format!(
-        "e2e-{}",
+        "e2e-{}-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock after epoch")
-            .as_secs()
+            .as_secs(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
     )
 }
 
@@ -157,7 +160,7 @@ async fn bootstrap() -> (String, String) {
     let run_id = run_id();
     let client = anonymous_client();
     let username = format!("{run_id}-user");
-    let password = format!("{run_id}-Pass!X9");
+    let password = format!("Zq7!Pass-{}", run_id.replace("e2e-", ""));
     let register = serde_json::json!({
         "username": username,
         "email": format!("{username}@ifg.invalid"),
@@ -227,6 +230,11 @@ async fn full_chain_create_issue_pr_merge() {
 
 async fn full_chain(harness: &Harness, repo_arg: &str) -> Result<(), String> {
     let repo_name = repo_arg.split_once('/').expect("OWNER/NAME").1;
+
+    // 0. version: client line + server version from /health (D10).
+    let out = harness.run_ok(&["version"]);
+    assert!(out.contains("ifg "), "version client: {out}");
+    assert!(out.contains("server:"), "version server: {out}");
 
     // 1. auth login --with-token (writes the config from the env PAT).
     let output = harness
@@ -351,4 +359,157 @@ async fn full_chain(harness: &Harness, repo_arg: &str) -> Result<(), String> {
     );
 
     Ok(())
+}
+
+/// Fork PR checkout (design doc §7.2): fetch from the fork, and a second run
+/// fast-forwards instead of failing.
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn fork_pull_request_checkout_and_update() {
+    let harness = harness().await;
+    let run_id = run_id();
+    let upstream = format!("{run_id}-upstream");
+    let upstream_arg = format!("{}/{}", harness.user, upstream);
+
+    // Second identity: the fork owner.
+    let (fork_user, fork_pat) = bootstrap_second(&format!("{run_id}-forker")).await;
+
+    let result = fork_chain(&harness, &upstream_arg, &upstream, &fork_user, &fork_pat).await;
+
+    // Cleanup both repositories regardless of the outcome.
+    let own = pat_client(&harness.pat);
+    let _ = own
+        .raw(
+            Method::DELETE,
+            &format!("repos/{}/{}", harness.user, upstream),
+            None,
+        )
+        .await;
+    let forked = pat_client(&fork_pat);
+    let _ = forked
+        .raw(
+            Method::DELETE,
+            &format!("repos/{fork_user}/{upstream}"),
+            None,
+        )
+        .await;
+    result.expect("fork chain");
+}
+
+/// Register an extra user and mint a PAT for it.
+async fn bootstrap_second(username: &str) -> (String, String) {
+    let client = anonymous_client();
+    let password = format!("Zq7!Pass-{}", username.replace("e2e-", "x"));
+    let register = serde_json::json!({
+        "username": username,
+        "email": format!("{username}@ifg.invalid"),
+        "password": password,
+    });
+    client
+        .raw(Method::POST, "users/register", Some(&register))
+        .await
+        .expect("second registration works");
+    let login = serde_json::json!({ "login": username, "password": password });
+    let body = json_of(
+        client
+            .raw(Method::POST, "users/login", Some(&login))
+            .await
+            .expect("second login works"),
+    );
+    let jwt = body["token"].as_str().expect("login token").to_string();
+    let token_request = serde_json::json!({
+        "name": format!("{username}-pat"),
+        "scopes": "repo,user",
+    });
+    let body = json_of(
+        pat_client(&jwt)
+            .raw(Method::POST, "users/tokens", Some(&token_request))
+            .await
+            .expect("second PAT works"),
+    );
+    let pat = body["token"].as_str().expect("pat token").to_string();
+    (username.to_string(), pat)
+}
+
+async fn fork_chain(
+    harness: &Harness,
+    upstream_arg: &str,
+    upstream_name: &str,
+    fork_user: &str,
+    fork_pat: &str,
+) -> Result<(), String> {
+    // Upstream repo with an initial commit.
+    let out = harness.run_ok(&["repo", "create", upstream_name, "--init"]);
+    assert!(out.contains("Created"), "upstream create: {out}");
+
+    // Fork it under the second user.
+    let forker = pat_client(fork_pat);
+    let fork = forker
+        .raw(Method::POST, &format!("repos/{upstream_arg}/fork"), None)
+        .await
+        .expect("fork works");
+    let fork = json_of(fork);
+    assert_eq!(fork["name"], json!(upstream_name));
+
+    // Push a branch into the fork.
+    let worktree = harness.home_path.join("forkwork");
+    std::fs::create_dir_all(&worktree).expect("worktree");
+    let fork_url = format!("{}/git/{fork_user}/{upstream_name}.git", e2e_url()).replacen(
+        "://",
+        &format!("://{fork_user}:{fork_pat}@"),
+        1,
+    );
+    git(&worktree, &["clone", &fork_url, "clone"]);
+    let clone_dir = worktree.join("clone");
+    harness_git(&clone_dir, &["checkout", "-b", "fork-feature"]);
+    std::fs::write(clone_dir.join("fork.txt"), "from the fork").expect("write");
+    harness_git(&clone_dir, &["add", "."]);
+    harness_git(&clone_dir, &["commit", "-m", "feat: fork change"]);
+    harness_git(&clone_dir, &["push", "-q", "origin", "fork-feature"]);
+
+    // Open the PR from the fork (head = OWNER:branch).
+    let pr = json_of(
+        forker
+            .raw(
+                Method::POST,
+                &format!("repos/{upstream_arg}/pulls"),
+                Some(&serde_json::json!({
+                    "title": "fork PR",
+                    "head": format!("{fork_user}:fork-feature"),
+                    "base": "main",
+                })),
+            )
+            .await
+            .expect("fork PR creation"),
+    );
+    assert!(
+        pr["head_repo_id"].is_number(),
+        "fork PR records head_repo_id"
+    );
+
+    // The upstream owner checks it out through the CLI.
+    let upstream_work = harness.home_path.join("upstreamwork");
+    std::fs::create_dir_all(&upstream_work).expect("upstream worktree");
+    let own_url = harness.clone_url(&harness.user, upstream_name);
+    git(&upstream_work, &["clone", &own_url, "clone"]);
+    let upstream_clone = upstream_work.join("clone");
+
+    let out = harness.run_in(&upstream_clone, &["pr", "checkout", "1"]);
+    assert!(
+        out.contains("checked out") || out.contains("updated"),
+        "fork checkout: {out}"
+    );
+    let content =
+        std::fs::read_to_string(upstream_clone.join("fork.txt")).expect("fork file after checkout");
+    assert_eq!(content, "from the fork");
+
+    // Second run: fast-forward / already up to date, not an error.
+    let out = harness.run_in(&upstream_clone, &["pr", "checkout", "1"]);
+    assert!(out.contains("updated"), "second checkout: {out}");
+    Ok(())
+}
+
+/// `git` wrapper without asserting silence (fork flow prints more).
+fn harness_git(dir: &Path, args: &[&str]) {
+    git(dir, args);
 }

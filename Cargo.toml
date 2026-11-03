@@ -45,8 +45,10 @@ url = "2"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 comfy-table = "7"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+rpassword = "7"
 sha2 = "0.10"
 
 # Testing

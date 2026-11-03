@@ -16,7 +16,12 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
     let repo = resolve_repo(cli.repo.as_deref(), &ctx.host)?;
     match command {
         PrCommand::List { state, limit } => list(&ctx, cli, &repo, state.clone(), *limit).await,
-        PrCommand::View { number } => view(&ctx, cli, &repo, *number).await,
+        PrCommand::View { number, web } => {
+            if *web {
+                return crate::web::open(&crate::web::pr_url(&ctx.host.url, &repo, *number));
+            }
+            view(&ctx, cli, &repo, *number).await
+        }
         PrCommand::Diff { number } => diff(&ctx, &repo, *number).await,
         PrCommand::Create {
             base,
@@ -398,16 +403,12 @@ async fn review(
 }
 
 fn short_date(iso: Option<&str>) -> String {
-    match iso {
-        Some(iso) => iso.chars().take(10).collect(),
-        None => "—".to_string(),
-    }
+    crate::output::human_time(iso)
 }
 
-/// `pr checkout <number>`: fetch the PR head branch (from the repo's clone
-/// URL, authenticated with a PAT when we have one) and create `pr-<number>`.
-/// Same-repo PRs only — the server does not maintain `refs/pull/<n>/head`
-/// and fork head repos have no by-id lookup (design doc §7.2).
+/// `pr checkout <number>` (design doc §7.2): fetch the PR head branch — from
+/// the fork when the PR came from one — and bring `pr-<number>` up to date.
+/// Re-running on an existing branch fast-forwards it instead of failing.
 async fn checkout(
     ctx: &super::CommandContext,
     repo: &RepoContext,
@@ -418,26 +419,40 @@ async fn checkout(
         .pulls(&repo.owner, &repo.name)
         .get(number)
         .await?;
-    if pr.head_repo_id.is_some() {
-        return Err(AppError::Other(
-            "fork PR checkout is not supported yet (no refs/pull and no head-repo lookup; §7.2)"
-                .into(),
-        ));
-    }
     let branch = pr.head_branch.clone();
     let local = format!("pr-{number}");
 
-    let clone_url = format!("{}/git/{}/{}.git", ctx.host.url, repo.owner, repo.name);
+    // Fork PRs: fetch from the head repository (needs the enrichment added
+    // upstream — the PR row alone only knows head_repo_id).
+    let (clone_url, origin_label) = match pr.head_repo_id {
+        None => (
+            format!("{}/git/{}/{}.git", ctx.host.url, repo.owner, repo.name),
+            repo.to_string(),
+        ),
+        Some(_) => match (pr.head_repo_owner.as_deref(), pr.head_repo_name.as_deref()) {
+            (Some(owner), Some(name)) => (
+                format!("{}/git/{owner}/{name}.git", ctx.host.url),
+                format!("{owner}/{name}"),
+            ),
+            _ => {
+                return Err(AppError::Other(
+                    "fork PR checkout needs the head repository, which this server did not                      report (upgrade IronForge to a build with head_repo_owner)"
+                        .into(),
+                ))
+            }
+        },
+    };
+
     let mut fetch = std::process::Command::new("git");
-    if let Some(token) = &ctx.host.token {
-        // Bearer PAT over git-http; `-c` is a git *global* option (before the
-        // subcommand) and keeps the token out of any stored remote URL.
-        fetch.arg("-c").arg(format!(
-            "http.extraheader=Authorization: Bearer {}",
-            token.expose()
-        ));
-    }
     fetch.args(["fetch", &clone_url, &branch]);
+    if let Some(token) = &ctx.host.token {
+        // Hand git the auth header through GIT_CONFIG_* instead of argv, so
+        // the PAT never shows up in `ps` output.
+        let existing = std::env::var("GIT_CONFIG_COUNT").ok();
+        for (key, value) in crate::git::bearer_header_env(token.expose(), existing.as_deref()) {
+            fetch.env(key, value);
+        }
+    }
     let output = fetch
         .output()
         .map_err(|e| AppError::Other(format!("could not run git fetch: {e}")))?;
@@ -448,15 +463,53 @@ async fn checkout(
         )));
     }
 
-    let status = std::process::Command::new("git")
-        .args(["switch", "-c", &local, "FETCH_HEAD"])
-        .status()
-        .map_err(|e| AppError::Other(format!("could not run git switch: {e}")))?;
-    if !status.success() {
-        return Err(AppError::Other(format!(
-            "could not create branch {local} (it may already exist; try `git switch {local}`)"
-        )));
+    if branch_exists(&local) {
+        // Existing branch: switch and fast-forward. A diverged branch keeps
+        // the user's commits — we refuse rather than reset.
+        git_success(&["switch", &local])?;
+        match git_success(&["merge", "--ff-only", "FETCH_HEAD"]) {
+            Ok(()) => println!("{repo}#{number} updated ({origin_label}:{branch} → {local})"),
+            Err(_) => {
+                return Err(AppError::Other(format!(
+                    "local branch {local} has diverged from {origin_label}:{branch}; \
+                     resolve it by hand (git log {local}) or delete the branch and re-run"
+                )))
+            }
+        }
+    } else {
+        git_success(&["switch", "-c", &local, "FETCH_HEAD"])?;
+        println!("{repo}#{number} '{branch}' checked out as {local} (from {origin_label})");
     }
-    println!("{repo}#{number} '{branch}' checked out as {local}");
     Ok(())
+}
+
+/// Whether a local branch with this name exists.
+fn branch_exists(name: &str) -> bool {
+    std::process::Command::new("git")
+        .args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{name}"),
+        ])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Run a git command, erroring with its stderr when it fails.
+fn git_success(args: &[&str]) -> Result<(), AppError> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|e| AppError::Other(format!("could not run git: {e}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(AppError::Other(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
 }

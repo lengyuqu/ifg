@@ -197,6 +197,10 @@ async fn logs(
     if !follow || selected.is_terminal() {
         return Ok(());
     }
+    if selected.is_blocked() {
+        eprintln!("{}", blocked_hint(repo, id, &selected));
+        return Ok(());
+    }
     loop {
         tokio::time::sleep(POLL_INTERVAL).await;
         let job = ci.job(id, selected.id).await?;
@@ -205,7 +209,28 @@ async fn logs(
             eprintln!("==> job finished: {}", job.status);
             return Ok(());
         }
+        if job.is_blocked() {
+            eprintln!("{}", blocked_hint(repo, id, &job));
+            return Ok(());
+        }
     }
+}
+
+/// Why `--follow` stops on a job that cannot progress by itself, and how to
+/// unblock it.
+fn blocked_hint(repo: &RepoContext, pipeline: i64, job: &ifg_client::Job) -> String {
+    let action = if job.status == "waiting_approval" {
+        format!("approve it with `ifg ci approve {pipeline} {}`", job.id)
+    } else {
+        format!(
+            "start it with `ifg api -X POST repos/{}/{}/pipelines/{pipeline}/jobs/{}/play`",
+            repo.owner, repo.name, job.id
+        )
+    };
+    format!(
+        "==> job is {}; it will not progress on its own: {action}",
+        job.status
+    )
 }
 
 /// Print the whole log; returns how many chars were printed.
@@ -276,8 +301,5 @@ fn short_sha(sha: Option<&str>) -> String {
 }
 
 fn short_date(iso: Option<&str>) -> String {
-    match iso {
-        Some(iso) => iso.chars().take(10).collect(),
-        None => "—".to_string(),
-    }
+    crate::output::human_time(iso)
 }

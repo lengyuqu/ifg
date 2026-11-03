@@ -2,6 +2,8 @@
 //! status, forget a host, print the current token. No password login by
 //! design (MFA and login rate limiting make it a bad fit for a CLI).
 
+use std::io::IsTerminal;
+
 use ifg_client::{Client, Secret};
 use serde_json::json;
 
@@ -21,8 +23,8 @@ pub async fn run(command: &AuthCommand, cli: &Cli) -> Result<(), AppError> {
     }
 }
 
-/// Read the PAT: all of stdin with `--with-token`, otherwise one prompted
-/// line. The prompt echoes; point users at `--with-token` for secrecy.
+/// Read the PAT: all of stdin with `--with-token` (pipes), a no-echo prompt
+/// on a terminal, or stdin when it is redirected without the flag.
 fn read_token(with_token: bool) -> Result<String, AppError> {
     if with_token {
         use std::io::Read;
@@ -31,13 +33,21 @@ fn read_token(with_token: bool) -> Result<String, AppError> {
             .read_to_string(&mut buffer)
             .map_err(|e| AppError::Other(format!("could not read token from stdin: {e}")))?;
         Ok(buffer.trim().to_string())
-    } else {
-        eprintln!("Paste your personal access token (input is echoed; use --with-token to pipe):");
-        let mut line = String::new();
-        std::io::stdin()
-            .read_line(&mut line)
+    } else if std::io::stdin().is_terminal() {
+        // Interactive: never echo the token (§5.3). Ctrl-C leaves the
+        // terminal in its original state — rpassword restores it.
+        let prompt = "Paste your personal access token (input hidden): ";
+        let token = rpassword::prompt_password(prompt)
             .map_err(|e| AppError::Other(format!("could not read token: {e}")))?;
-        Ok(line.trim().to_string())
+        Ok(token.trim().to_string())
+    } else {
+        // Piped stdin: read the first line, echo is a non-issue.
+        use std::io::Read;
+        let mut buffer = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buffer)
+            .map_err(|e| AppError::Other(format!("could not read token from stdin: {e}")))?;
+        Ok(buffer.trim().to_string())
     }
 }
 
@@ -57,19 +67,36 @@ async fn login(cli: &Cli, with_token: bool) -> Result<(), AppError> {
         .build()?;
     let me = client.users().me().await?;
 
+    let uses_keyring = config.uses_keyring();
     let entry = config
         .hosts
         .entry(key.clone())
         .or_insert_with(|| HostEntry::new(url.clone()));
     entry.url = url.clone();
     entry.user = Some(me.username.clone());
-    entry.token = Some(token);
+    if uses_keyring {
+        match crate::keyring::store(&key, &token) {
+            Ok(()) => entry.token = None,
+            Err(error) => {
+                eprintln!(
+                    "ifg: warning: keychain unavailable ({error}); storing the token in the \
+                     config file instead"
+                );
+                entry.token = Some(token);
+            }
+        }
+    } else {
+        entry.token = Some(token);
+    }
     if config.default_host.is_none() {
-        config.default_host = Some(key);
+        config.default_host = Some(key.clone());
     }
     config::save(&config)?;
 
     println!("Logged in to {url} as {}", me.username);
+    if uses_keyring {
+        println!("Token stored in the system keychain (token_store = \"keyring\").");
+    }
     Ok(())
 }
 
@@ -177,6 +204,7 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
             .map(|token| Secret::new(token.clone()).redacted())
             .unwrap_or_else(|| "—".into());
 
+        let server = super::version::server_label(&client).await;
         rows.push(vec![
             name.clone(),
             entry.url.clone(),
@@ -184,6 +212,7 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
             token_display.clone(),
             repo_scope.glyph().to_string(),
             user_scope.glyph().to_string(),
+            server.clone(),
         ]);
         json_rows.push(json!({
             "host": name,
@@ -192,6 +221,7 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
             "token": if entry.token.is_some() { Some(token_display) } else { None },
             "repo_scope": repo_scope.label(),
             "user_scope": user_scope.label(),
+            "server_version": server,
         }));
     }
 
@@ -199,7 +229,15 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
         output::print_json(&serde_json::Value::Array(json_rows));
     } else {
         output::print_table(
-            &["HOST", "URL", "USER", "TOKEN", "REPO", "USER-SCOPE"],
+            &[
+                "HOST",
+                "URL",
+                "USER",
+                "TOKEN",
+                "REPO",
+                "USER-SCOPE",
+                "SERVER",
+            ],
             &rows,
         );
         eprintln!("(✓ scope works, ✗ scope denied, ? host unreachable)");
@@ -224,6 +262,9 @@ fn logout(cli: &Cli) -> Result<(), AppError> {
         config.default_host = config.hosts.keys().next().cloned();
     }
     config::save(&config)?;
+    if let Err(error) = crate::keyring::delete(&target) {
+        eprintln!("ifg: warning: could not remove the keychain entry: {error}");
+    }
     println!(
         "Removed credentials for {target}. The token remains valid server-side — revoke it in \
          the web UI (Settings → Tokens)."
@@ -289,9 +330,10 @@ fn token(cli: &Cli) -> Result<(), AppError> {
 }
 
 /// git credential helper protocol (design doc §4.1, §5.3): answer `get`
-/// requests when — and only when — the requested host matches a configured
-/// IronForge host exactly; anything else stays silent so the PAT can never
-/// leak to another site. `store`/`erase` are no-ops.
+/// requests when — and only when — both the protocol and the host match a
+/// configured IronForge host exactly; anything else stays silent so the PAT
+/// can never leak to another site, nor go out in cleartext over `http` for a
+/// host configured as `https`. `store`/`erase` are no-ops.
 fn git_credential(action: &str) -> Result<(), AppError> {
     use std::io::Read;
 
@@ -299,41 +341,88 @@ fn git_credential(action: &str) -> Result<(), AppError> {
     std::io::stdin()
         .read_to_string(&mut input)
         .map_err(|e| AppError::Other(format!("could not read credential request: {e}")))?;
-    let mut host: Option<String> = None;
-    for line in input.lines() {
-        if let Some((key, value)) = line.split_once('=') {
-            if key == "host" {
-                host = Some(value.to_string());
-            }
-        }
-    }
-
     if action != "get" {
         return Ok(());
     }
-    let Some(host) = host else {
-        return Ok(());
-    };
-
     let config = config::load()?;
-    let matched = config.hosts.iter().find(|(_, entry)| {
-        crate::config::host_key_for_url(&entry.url).as_deref() == Some(host.as_str())
-    });
-    let Some((_, entry)) = matched else {
-        // Not our host: silence (git moves on to the next helper).
-        return Ok(());
-    };
-    let Some(token) = entry.token.clone() else {
-        return Ok(());
-    };
-    let username = entry.user.clone().unwrap_or_else(|| "ifg".into());
-    let protocol = if entry.url.starts_with("http://") {
-        "http"
-    } else {
-        "https"
-    };
-    print!("protocol={protocol}\nhost={host}\nusername={username}\npassword={token}\n\n");
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
+    if let Some(answer) = credential_answer(&config, &input) {
+        print!("{answer}");
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+    }
     Ok(())
+}
+
+/// The helper's reply to a `get` request, or `None` to stay silent (git
+/// then moves on to the next helper).
+fn credential_answer(config: &Config, request: &str) -> Option<String> {
+    let mut protocol: Option<&str> = None;
+    let mut host: Option<&str> = None;
+    for line in request.lines() {
+        match line.split_once('=') {
+            Some(("protocol", value)) => protocol = Some(value),
+            Some(("host", value)) => host = Some(value),
+            _ => {}
+        }
+    }
+    let (protocol, host) = (protocol?, host?);
+
+    let entry = config.hosts.values().find(|entry| {
+        url::Url::parse(&entry.url).is_ok_and(|url| url.scheme() == protocol)
+            && config::host_key_for_url(&entry.url).as_deref() == Some(host)
+    })?;
+    let token = entry.token.as_deref()?;
+    let username = entry.user.as_deref().unwrap_or("ifg");
+    Some(format!(
+        "protocol={protocol}\nhost={host}\nusername={username}\npassword={token}\n\n"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config_with(url: &str) -> Config {
+        let mut config = Config::default();
+        let mut entry = HostEntry::new(url);
+        entry.user = Some("alice".into());
+        entry.token = Some("ifp_secret".into());
+        config
+            .hosts
+            .insert(config::host_key_for_url(url).unwrap(), entry);
+        config
+    }
+
+    #[test]
+    fn answers_matching_protocol_and_host() {
+        let config = config_with("https://forge.example.com");
+        let answer =
+            credential_answer(&config, "protocol=https\nhost=forge.example.com\n").unwrap();
+        assert!(answer.contains("username=alice\n"));
+        assert!(answer.contains("password=ifp_secret\n"));
+    }
+
+    #[test]
+    fn https_token_is_never_offered_over_http() {
+        let config = config_with("https://forge.example.com");
+        assert!(credential_answer(&config, "protocol=http\nhost=forge.example.com\n").is_none());
+    }
+
+    #[test]
+    fn other_hosts_ports_and_incomplete_requests_get_nothing() {
+        let config = config_with("https://forge.example.com");
+        assert!(credential_answer(&config, "protocol=https\nhost=evil.example.com\n").is_none());
+        assert!(
+            credential_answer(&config, "protocol=https\nhost=forge.example.com:8443\n").is_none()
+        );
+        assert!(credential_answer(&config, "host=forge.example.com\n").is_none());
+        assert!(credential_answer(&config, "protocol=https\n").is_none());
+    }
+
+    #[test]
+    fn plain_http_hosts_still_work_when_configured_as_http() {
+        let config = config_with("http://localhost:8080");
+        let answer = credential_answer(&config, "protocol=http\nhost=localhost:8080\n").unwrap();
+        assert!(answer.contains("password=ifp_secret\n"));
+    }
 }

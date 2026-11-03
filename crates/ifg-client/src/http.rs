@@ -5,6 +5,12 @@
 //! errors and on `429`/`502`/`503`/`504`, at most three times with
 //! exponential backoff plus jitter. A `Retry-After` response header wins
 //! over the computed backoff.
+//!
+//! Timeouts: ordinary API calls get a total per-request timeout. Release
+//! asset transfers must not, since a large file legitimately takes longer
+//! than any fixed total: downloads instead fail only when the connection
+//! stalls (no body bytes for one timeout period), and streamed uploads rely
+//! on the connect timeout alone.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -24,15 +30,30 @@ pub const DEFAULT_BACKOFF: Duration = Duration::from_millis(500);
 /// Upper bound for a single backoff, so a hostile `Retry-After` cannot stall
 /// the CLI for minutes.
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// Upper bound for establishing a connection (capped by the request timeout).
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A configured client for one IronForge instance. Cheap to clone: the
 /// connection pool and token are shared.
 #[derive(Clone)]
 pub struct Client {
     base: url::Url,
+    /// API calls; each request carries `timeout` as its total limit.
     http: reqwest::Client,
+    /// Asset downloads: no total limit, `timeout` as a per-read idle limit.
+    transfer_http: reqwest::Client,
     token: Option<Secret>,
     retry: RetryPolicy,
+    timeout: Duration,
+}
+
+/// How a request is bounded in time (see the module docs).
+#[derive(Clone, Copy)]
+enum Transfer {
+    /// Total timeout for the whole exchange, body included.
+    Api,
+    /// No total timeout; fails when the response body stalls.
+    Download,
 }
 
 #[derive(Clone, Debug)]
@@ -152,16 +173,29 @@ impl ClientBuilder {
         let user_agent = self
             .user_agent
             .unwrap_or_else(|| concat!("ifg-client/", env!("CARGO_PKG_VERSION")).to_string());
+        let timeout = self.timeout.unwrap_or(DEFAULT_TIMEOUT);
+        let connect_timeout = timeout.min(CONNECT_TIMEOUT);
         let http = reqwest::Client::builder()
+            .user_agent(user_agent.clone())
+            .connect_timeout(connect_timeout)
+            .build()
+            .map_err(Error::Transport)?;
+        // reqwest's read timeout resets on every body chunk, so a slow but
+        // moving download never trips it. It is not used for uploads: there
+        // it would bound the whole request phase like a total timeout.
+        let transfer_http = reqwest::Client::builder()
             .user_agent(user_agent)
-            .timeout(self.timeout.unwrap_or(DEFAULT_TIMEOUT))
+            .connect_timeout(connect_timeout)
+            .read_timeout(timeout)
             .build()
             .map_err(Error::Transport)?;
         Ok(Client {
             base,
             http,
+            transfer_http,
             token: self.token,
             retry: self.retry,
+            timeout,
         })
     }
 }
@@ -245,7 +279,13 @@ impl Client {
         path.push_str("health");
         let mut url = self.base.clone();
         url.set_path(&path);
-        let response = self.http.get(url).send().await.map_err(Error::Transport)?;
+        let response = self
+            .http
+            .get(url)
+            .timeout(self.timeout)
+            .send()
+            .await
+            .map_err(Error::Transport)?;
         let status = response.status();
         let bytes = response.bytes().await.map_err(Error::Transport)?;
         match serde_json::from_slice(&bytes) {
@@ -300,13 +340,37 @@ impl Client {
         path: &str,
         body: Option<&Value>,
     ) -> Result<reqwest::Response, Error> {
+        self.send_with_retry(method, path, body, Transfer::Api)
+            .await
+    }
+
+    /// `GET` a large body (release asset download) without a total timeout;
+    /// reading fails only if the body stalls for one timeout period.
+    pub(crate) async fn download_response(&self, path: &str) -> Result<reqwest::Response, Error> {
+        self.send_with_retry(reqwest::Method::GET, path, None, Transfer::Download)
+            .await
+    }
+
+    async fn send_with_retry(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+        transfer: Transfer,
+    ) -> Result<reqwest::Response, Error> {
         let url = join_path(&self.base, path);
         let idempotent = matches!(method, reqwest::Method::GET | reqwest::Method::HEAD);
         let mut attempt: u32 = 0;
 
         loop {
             let started = std::time::Instant::now();
-            let mut request = self.http.request(method.clone(), url.clone());
+            let mut request = match transfer {
+                Transfer::Api => self
+                    .http
+                    .request(method.clone(), url.clone())
+                    .timeout(self.timeout),
+                Transfer::Download => self.transfer_http.request(method.clone(), url.clone()),
+            };
             if let Some(token) = &self.token {
                 request = request.bearer_auth(token.expose());
             }
@@ -368,7 +432,8 @@ impl Client {
     /// Send a streaming request body (release asset upload, design doc
     /// §4.5: never buffer the whole file in memory). Stream bodies cannot be
     /// cloned, so there is no retry: a failure surfaces and the caller
-    /// retries explicitly.
+    /// retries explicitly. Only the connect timeout applies: the upload plus
+    /// the server's processing of a large file has no meaningful upper bound.
     pub(crate) async fn raw_with_stream_body(
         &self,
         method: reqwest::Method,

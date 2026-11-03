@@ -318,6 +318,9 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 
 ## 11. 已决事项（追加）
 
+0. **fork PR checkout（2026-11-03 M3 后续）**：服务端 PR 详情响应补
+   `head_repo_owner` / `head_repo_name`（ironforge 7c9f07e），客户端据此从
+   fork 仓库 fetch；重复 checkout 改为快进更新而非报错。e2e 双用户覆盖。
 1. **二进制名查重（D1，2026-11-03 M4 实测）**：`ifg` 在 crates.io（404）、
    Homebrew formula 与 cask（404）、Repology 各发行版包名（404）均未占用，
    本机 PATH 无冲突。名称 `ifg` 确认可用，无需备选。

@@ -11,13 +11,18 @@ mod config;
 mod context;
 mod error;
 mod git;
+mod keyring;
 mod output;
+mod time;
+mod version;
+mod web;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::{Cli, Command};
 
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    output::init(cli.no_color);
     init_tracing(cli.verbose);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -29,6 +34,16 @@ fn main() -> std::process::ExitCode {
 }
 
 async fn run(cli: Cli) -> i32 {
+    if let Command::Completions { shell } = &cli.command {
+        // Render into a buffer first: piping the script into `head` closes
+        // stdout early, and clap_complete panics on write errors.
+        let mut command = Cli::command();
+        let mut buffer = Vec::new();
+        clap_complete::generate(*shell, &mut command, "ifg", &mut buffer);
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(&buffer);
+        return 0;
+    }
     let result = match &cli.command {
         Command::Auth { command } => cmd::auth::run(command, &cli).await,
         Command::Api { args } => cmd::api::run(args, &cli).await,
@@ -37,6 +52,8 @@ async fn run(cli: Cli) -> i32 {
         Command::Pr { command } => cmd::pr::run(command, &cli).await,
         Command::Ci { command } => cmd::ci::run(command, &cli).await,
         Command::Release { command } => cmd::release::run(command, &cli).await,
+        Command::Version => cmd::version::run(&cli).await,
+        Command::Completions { .. } => unreachable!("handled before dispatch"),
     };
     match result {
         Ok(()) => 0,

@@ -66,12 +66,27 @@ pub struct Job {
 }
 
 impl Job {
-    /// Terminal job states: polling stops on these (§7.1-A).
+    /// Terminal job states: polling stops on these (§7.1-A). `error` is what
+    /// the runner records when a job could not run at all.
     pub fn is_terminal(&self) -> bool {
         matches!(
             self.status.as_str(),
-            "success" | "succeeded" | "failed" | "failure" | "canceled" | "cancelled" | "skipped"
+            "success"
+                | "succeeded"
+                | "failed"
+                | "failure"
+                | "error"
+                | "canceled"
+                | "cancelled"
+                | "skipped"
         )
+    }
+
+    /// States that never progress on their own: a `manual` job waits to be
+    /// played, a `waiting_approval` job for an environment approval.
+    /// Polling them would never end.
+    pub fn is_blocked(&self) -> bool {
+        matches!(self.status.as_str(), "manual" | "waiting_approval")
     }
 }
 
@@ -226,5 +241,34 @@ impl Ci<'_> {
                 None,
             )
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(status: &str) -> Job {
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "stage_id": 1, "name": "build", "status": status
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn error_is_terminal() {
+        assert!(job("error").is_terminal());
+        assert!(job("failed").is_terminal());
+        assert!(!job("running").is_terminal());
+        assert!(!job("pending").is_terminal());
+    }
+
+    #[test]
+    fn manual_and_waiting_approval_are_blocked_not_terminal() {
+        for status in ["manual", "waiting_approval"] {
+            assert!(job(status).is_blocked(), "{status}");
+            assert!(!job(status).is_terminal(), "{status}");
+        }
+        assert!(!job("running").is_blocked());
     }
 }

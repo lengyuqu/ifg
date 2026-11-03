@@ -1,0 +1,39 @@
+# Release: a `v*` tag builds the four artifacts and publishes them.
+#
+# The build needs macOS (apple targets) + zig (musl targets); the same
+# `scripts/release.sh` works locally, so the workflow only provides the
+# toolchain and uploads dist/.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  artifacts:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install zig and cargo-zigbuild
+        run: |
+          brew install zig
+          python3 -m pip install --user --break-system-packages cargo-zigbuild
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: build artifacts (adds rustup targets itself)
+        run: bash scripts/release.sh
+
+      - name: publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS

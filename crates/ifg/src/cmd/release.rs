@@ -19,7 +19,12 @@ pub async fn run(command: &ReleaseCommand, cli: &Cli) -> Result<(), AppError> {
     let repo = resolve_repo(cli.repo.as_deref(), &ctx.host)?;
     match command {
         ReleaseCommand::List { limit } => list(&ctx, cli, &repo, *limit).await,
-        ReleaseCommand::View { tag } => view(&ctx, cli, &repo, tag).await,
+        ReleaseCommand::View { tag, web } => {
+            if *web {
+                return crate::web::open(&crate::web::releases_url(&ctx.host.url, &repo));
+            }
+            view(&ctx, cli, &repo, tag).await
+        }
         ReleaseCommand::Create {
             tag,
             title,
@@ -44,7 +49,11 @@ pub async fn run(command: &ReleaseCommand, cli: &Cli) -> Result<(), AppError> {
             .await
         }
         ReleaseCommand::Upload { tag, files } => upload(&ctx, &repo, tag, files).await,
-        ReleaseCommand::Download { tag, pattern } => download(&ctx, &repo, tag, pattern).await,
+        ReleaseCommand::Download {
+            tag,
+            pattern,
+            clobber,
+        } => download(&ctx, &repo, tag, pattern, *clobber).await,
     }
 }
 
@@ -248,6 +257,7 @@ async fn download(
     repo: &RepoContext,
     tag: &str,
     pattern: &Option<String>,
+    clobber: bool,
 ) -> Result<(), AppError> {
     let releases = ctx.client.releases(&repo.owner, &repo.name);
     let release = releases
@@ -269,8 +279,20 @@ async fn download(
             pattern.clone().unwrap_or_else(|| "*".into())
         )));
     }
+    // Validate every target before downloading anything, so a bad name or
+    // an existing file fails fast instead of half-way through.
+    let mut targets = Vec::with_capacity(selected.len());
     for asset in selected {
-        download_asset(ctx, repo, asset).await?;
+        let target = local_filename(&asset.filename)?;
+        if !clobber && std::path::Path::new(&target).exists() {
+            return Err(AppError::Other(format!(
+                "{target} already exists; pass --clobber to overwrite"
+            )));
+        }
+        targets.push((asset, target));
+    }
+    for (asset, target) in targets {
+        download_asset(ctx, repo, asset, &target).await?;
     }
     Ok(())
 }
@@ -281,6 +303,7 @@ async fn download_asset(
     ctx: &super::CommandContext,
     repo: &RepoContext,
     asset: &ifg_client::Asset,
+    target: &str,
 ) -> Result<(), AppError> {
     use tokio::io::AsyncWriteExt;
 
@@ -296,7 +319,7 @@ async fn download_asset(
         .map(str::to_string)
         .or_else(|| asset.sha256.clone());
 
-    let part_path = std::path::PathBuf::from(format!("{}.part", asset.filename));
+    let part_path = std::path::PathBuf::from(format!("{target}.part"));
     let mut file = tokio::fs::File::create(&part_path)
         .await
         .map_err(|e| AppError::Other(format!("could not create {}: {e}", part_path.display())))?;
@@ -331,14 +354,36 @@ async fn download_asset(
         }
     }
 
-    let final_path = std::path::PathBuf::from(&asset.filename);
+    let final_path = std::path::PathBuf::from(target);
     tokio::fs::rename(&part_path, &final_path)
         .await
         .map_err(|e| {
             AppError::Other(format!("could not finalize {}: {e}", final_path.display()))
         })?;
-    println!("Downloaded {} ({size} bytes)", asset.filename);
+    println!("Downloaded {target} ({size} bytes)");
     Ok(())
+}
+
+/// The local name for a server-supplied asset filename. The server stores
+/// filenames verbatim, so a name like `../../.zshrc` or `/etc/x` must never
+/// reach the filesystem as a path: only a plain file name in the current
+/// directory is accepted.
+fn local_filename(server_name: &str) -> Result<String, AppError> {
+    let reject = || {
+        AppError::Other(format!(
+            "refusing to download asset with unsafe filename {server_name:?}"
+        ))
+    };
+    if server_name.contains(['/', '\\', '\0']) {
+        return Err(reject());
+    }
+    let mut components = std::path::Path::new(server_name).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(name)), None) => {
+            name.to_str().map(str::to_string).ok_or_else(reject)
+        }
+        _ => Err(reject()),
+    }
 }
 
 fn not_found(tag: &str) -> AppError {
@@ -356,10 +401,7 @@ fn yes_no(flag: bool) -> String {
 }
 
 fn short_date(iso: Option<&str>) -> String {
-    match iso {
-        Some(iso) => iso.chars().take(10).collect(),
-        None => "—".to_string(),
-    }
+    crate::output::human_time(iso)
 }
 
 /// Tiny glob: `*` matches any run of characters; everything else literal.
@@ -417,6 +459,33 @@ mod tests {
         assert!(glob_match("SHA256SUMS", "SHA256SUMS"));
         assert!(!glob_match("ifg-*", "other.txt"));
         assert!(glob_match("*", "anything"));
+    }
+
+    #[test]
+    fn plain_asset_names_are_kept() {
+        assert_eq!(
+            local_filename("ifg-0.1.0.tar.gz").unwrap(),
+            "ifg-0.1.0.tar.gz"
+        );
+        assert_eq!(local_filename("SHA256SUMS").unwrap(), "SHA256SUMS");
+        assert_eq!(local_filename(".hidden").unwrap(), ".hidden");
+    }
+
+    #[test]
+    fn traversal_and_absolute_asset_names_are_rejected() {
+        for name in [
+            "../evil",
+            "../../.zshrc",
+            "/etc/passwd",
+            "dir/file",
+            "..\\evil",
+            "..",
+            ".",
+            "",
+            "a\0b",
+        ] {
+            assert!(local_filename(name).is_err(), "{name:?} must be rejected");
+        }
     }
 
     #[test]

@@ -107,9 +107,57 @@ pub fn git_remotes() -> Vec<(String, Remote)> {
     remotes
 }
 
+/// Environment variables that hand git one extra config entry,
+/// `http.extraheader = Authorization: Bearer <token>`, through
+/// `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` (git ≥ 2.31).
+/// Unlike `git -c …`, this keeps the token out of the process arguments,
+/// which other local users can read with `ps`. Entries already present in
+/// the caller's environment (`existing_count`) are kept by appending after
+/// them.
+pub fn bearer_header_env(token: &str, existing_count: Option<&str>) -> Vec<(String, String)> {
+    let index: usize = existing_count
+        .and_then(|count| count.trim().parse().ok())
+        .unwrap_or(0);
+    vec![
+        ("GIT_CONFIG_COUNT".into(), (index + 1).to_string()),
+        (format!("GIT_CONFIG_KEY_{index}"), "http.extraheader".into()),
+        (
+            format!("GIT_CONFIG_VALUE_{index}"),
+            format!("Authorization: Bearer {token}"),
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bearer_header_env_starts_at_zero() {
+        let env = bearer_header_env("ifp_x", None);
+        assert_eq!(
+            env,
+            vec![
+                ("GIT_CONFIG_COUNT".to_string(), "1".to_string()),
+                (
+                    "GIT_CONFIG_KEY_0".to_string(),
+                    "http.extraheader".to_string()
+                ),
+                (
+                    "GIT_CONFIG_VALUE_0".to_string(),
+                    "Authorization: Bearer ifp_x".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn bearer_header_env_appends_after_existing_entries() {
+        let env = bearer_header_env("ifp_x", Some("2"));
+        assert_eq!(env[0], ("GIT_CONFIG_COUNT".into(), "3".into()));
+        assert_eq!(env[1].0, "GIT_CONFIG_KEY_2");
+        assert_eq!(env[2].0, "GIT_CONFIG_VALUE_2");
+    }
 
     fn parse(url: &str) -> Option<Remote> {
         parse_remote_url(url)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pre-commit checks (design doc §8.1). There is no CI yet; run this by hand
-# before committing. It only calls cargo and shell so a future GitHub Actions
-# workflow can run it unchanged. e2e tests need local Docker and are not here.
+# Pre-commit checks (design doc §8.1). .github/workflows/ci.yml runs this
+# unchanged; it only calls cargo and shell. e2e needs a live IronForge and is not here.
+# Run it by hand before committing.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

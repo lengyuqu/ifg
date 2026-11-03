@@ -2,33 +2,27 @@
 
 IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
 
-GitHub：[lengyuqu/ifg](https://github.com/lengyuqu/ifg)（公开镜像与 Release）
-
-> 状态：v0.1.0 已发布（M1–M4 交付）：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验与 git credential helper。
+> 状态：v0.1.0 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
 
 与 IronForge 自带的 `ironforge` 二进制不同，`ifg` 不连数据库、不做运维，只用个人访问令牌（PAT）调用公开 API，可以装在任何机器上。
 
 ## 安装
 
-发布产物：macOS（arm64/x86_64）与 Linux（musl 静态链接，arm64/x86_64）四架构 tar.gz + `SHA256SUMS`。
+发布产物：macOS（arm64/x86_64）与 Linux（musl 静态链接，arm64/x86_64）四架构 tar.gz + `SHA256SUMS`，见
+[Releases](https://github.com/lengyuqu/ifg/releases)。
 
-- GitHub（匿名可下载）：[Release v0.1.0](https://github.com/lengyuqu/ifg/releases/tag/v0.1.0)
-- 内网：[git233 Release](https://git233.phynews.com:18443/aicodeing/ifg/releases/tag/v0.1.0)（internal 可见性，下载需凭据）
-
-Homebrew（内网 tap；产物在 internal 仓库，下载需凭据——在 `~/.netrc` 加一行
-`machine git233.phynews.com login <user> password <gitea-token>`）：
+Homebrew：
 
 ```bash
-brew tap aicodeing/ifg https://git233.phynews.com:18443/aicodeing/homebrew-ifg.git
-brew trust aicodeing/ifg
-brew install aicodeing/ifg/ifg
+brew tap lengyuqu/ifg https://github.com/lengyuqu/homebrew-ifg.git
+brew install lengyuqu/ifg/ifg
 ```
 
 手动安装：
 
 ```bash
-# 下载后校验（见 Release 页 SHA256SUMS）
-shasum -a 256 -c <(grep "$(uname -m)" SHA256SUMS)   # 按架构选择对应行
+# 下载对应架构的 tar.gz 与 SHA256SUMS 后先校验
+shasum -a 256 -c SHA256SUMS 2>/dev/null || shasum -a 256 ifg-*.tar.gz
 tar xzf ifg-0.1.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
 ```
 
@@ -36,22 +30,40 @@ tar xzf ifg-0.1.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
 
 ```bash
 scripts/release.sh   # 构建四架构产物到 dist/
-cargo install --git https://git233.phynews.com:18443/aicodeing/ifg.git ifg
+cargo install --git https://github.com/lengyuqu/ifg.git ifg
 ```
 
 ## 快速上手
 
 ```bash
-ifg auth login --host https://your-forge.example.com   # 粘贴 Web 端创建的 PAT
+ifg auth login --host https://your-forge.example.com   # 粘贴 Web 端创建的 PAT（不回显）
+ifg version                                            # 客户端 + 服务端版本
 ifg repo create demo --init
 ifg issue list -R yourname/demo
-ifg pr create -t "标题"          # head 默认当前分支，未推送会拦截
+ifg pr checkout 12                                     # 同仓或 fork PR 都可用，重复执行会快进更新
+ifg pr create -t "标题"                                 # head 默认当前分支，未推送会拦截
+ifg ci logs 7 --follow                                 # 轮询增量打印日志
+ifg release create v1.0.0 -n "说明" dist/pkg.tar.gz     # 建 Release 并流式上传
+ifg release download v1.0.0 -p 'pkg*'                   # SHA-256 校验后落盘
 git config --global credential.helper "!ifg auth git-credential"   # git clone/push 免密
 ```
 
+命令补全：
+
+```bash
+ifg completions zsh  > ~/.zfunc/_ifg      # 或 bash / fish / powershell
+ifg completions bash > /etc/bash_completion.d/ifg
+```
+
+## 配置与凭据
+
+- 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`（0600；权限过宽会拒绝加载令牌）
+- 钥匙串（可选）：`token_store = "keyring"` 时 PAT 存系统钥匙串（macOS `security` / Linux `secret-tool`），不落文件
+- `--json` 输出服务端原始字段；管道输出自动关闭颜色与相对时间
+
 ## 文档
 
-- [ifg 项目设计](docs/architecture/ifg-project-design-2026-11.md)：独立仓库的结构、关键决策、内部设计、测试、发布与里程碑
+- [ifg 项目设计](docs/architecture/ifg-project-design-2026-11.md)：结构、关键决策、内部设计、测试、发布与里程碑
 - [客户端 CLI 设计草案](docs/architecture/client-cli-design-2026-11.md)：命令设计、配置格式、输出约定、服务端缺口
 
 ## 许可证
@@ -61,8 +73,8 @@ git config --global credential.helper "!ifg auth git-credential"   # git clone/p
 ## 开发
 
 ```bash
-scripts/check.sh    # 提交前检查：fmt、clippy、test、audit、ifg-client 依赖边界
-scripts/e2e.sh      # 端到端：需要本地 IronForge（默认 localhost:8080）
+scripts/check.sh    # fmt、clippy、test、audit、ifg-client 依赖边界（CI 同款）
+scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
 scripts/release.sh  # 发布产物：四架构交叉编译 + SHA256SUMS
 ```
 

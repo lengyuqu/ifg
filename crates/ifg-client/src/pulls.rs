@@ -31,6 +31,12 @@ pub struct PullRequest {
     /// Fork PRs point at another repo; `None` means same-repo.
     #[serde(default)]
     pub head_repo_id: Option<i64>,
+    /// Fork head repository namespace/name (enriched by the server on PR
+    /// detail; absent for same-repo PRs and older servers).
+    #[serde(default)]
+    pub head_repo_owner: Option<String>,
+    #[serde(default)]
+    pub head_repo_name: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]

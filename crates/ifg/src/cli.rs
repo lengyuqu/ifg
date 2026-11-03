@@ -69,6 +69,13 @@ pub enum Command {
         #[command(subcommand)]
         command: ReleaseCommand,
     },
+    /// Print the client version and (when reachable) the server version
+    Version,
+    /// Print a shell completion script (bash / zsh / fish / powershell)
+    Completions {
+        /// Target shell
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -85,8 +92,9 @@ pub enum AuthCommand {
     Logout,
     /// Print the token of the resolved host (for scripts)
     Token,
-    /// git credential helper: answer `get` for configured hosts only.
-    /// Configure with: git config --global credential.helper "!ifg auth git-credential"
+    /// git credential helper: answer `get` for configured hosts only
+    /// (protocol and host must both match). Configure it for your host only:
+    /// git config --global credential.https://HOST.helper "!ifg auth git-credential"
     GitCredential {
         /// The helper action git asks for: get / store / erase
         action: String,
@@ -131,6 +139,9 @@ pub enum RepoCommand {
         /// OWNER/NAME; defaults to the current repository context
         #[arg(value_name = "OWNER/NAME")]
         target: Option<String>,
+        /// Open the repository page in the browser
+        #[arg(long)]
+        web: bool,
     },
     /// Create a repository under your account (or an organization)
     Create {
@@ -178,6 +189,9 @@ pub enum IssueCommand {
         /// Include the comment thread
         #[arg(long)]
         comments: bool,
+        /// Open the issue page in the browser
+        #[arg(long)]
+        web: bool,
     },
     /// Create an issue
     Create {
@@ -222,7 +236,12 @@ pub enum PrCommand {
         limit: Option<u64>,
     },
     /// Show one pull request
-    View { number: i64 },
+    View {
+        number: i64,
+        /// Open the pull request page in the browser
+        #[arg(long)]
+        web: bool,
+    },
     /// Print the diff of a pull request
     Diff { number: i64 },
     /// Create a pull request (head defaults to the current branch)
@@ -313,7 +332,12 @@ pub enum ReleaseCommand {
         limit: Option<u64>,
     },
     /// Show one release (by tag) with its assets
-    View { tag: String },
+    View {
+        tag: String,
+        /// Open the releases page in the browser
+        #[arg(long)]
+        web: bool,
+    },
     /// Create a release and optionally upload files
     Create {
         tag: String,
@@ -341,5 +365,8 @@ pub enum ReleaseCommand {
         /// Asset filename filter; `*` wildcards allowed (default: all)
         #[arg(short = 'p', long, value_name = "PATTERN")]
         pattern: Option<String>,
+        /// Overwrite files that already exist in the current directory
+        #[arg(long)]
+        clobber: bool,
     },
 }

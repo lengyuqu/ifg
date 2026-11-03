@@ -233,8 +233,6 @@ impl Releases<'_> {
     /// renaming (design doc §4.5).
     pub async fn download(&self, asset_id: i64) -> Result<reqwest::Response, Error> {
         let path = format!("{}/download", self.asset_path(asset_id));
-        self.client
-            .raw_response(crate::Method::GET, &path, None)
-            .await
+        self.client.download_response(&path).await
     }
 }

@@ -15,8 +15,11 @@ pub async fn run(command: &RepoCommand, cli: &Cli) -> Result<(), AppError> {
     let ctx = bootstrap(cli)?;
     match command {
         RepoCommand::List { owner, limit } => list(&ctx, cli, owner.clone(), *limit).await,
-        RepoCommand::View { target } => {
+        RepoCommand::View { target, web } => {
             let repo = resolve_target(cli, &ctx, target.clone())?;
+            if *web {
+                return crate::web::open(&crate::web::repo_url(&ctx.host.url, &repo));
+            }
             view(&ctx, cli, &repo).await
         }
         RepoCommand::Create {
@@ -242,8 +245,5 @@ fn shorten(text: Option<&str>, max: usize) -> String {
 }
 
 fn short_date(iso: Option<&str>) -> String {
-    match iso {
-        Some(iso) => iso.chars().take(10).collect(),
-        None => "—".to_string(),
-    }
+    crate::output::human_time(iso)
 }

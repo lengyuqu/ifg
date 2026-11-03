@@ -757,3 +757,137 @@ async fn release_download_rejects_a_tampered_asset() {
     assert!(!download_dir.path().join("pkg.bin").exists());
     assert!(!download_dir.path().join("pkg.bin.part").exists());
 }
+
+/// `ci logs --follow` on a job waiting for approval stops right away with a
+/// hint instead of polling forever.
+#[tokio::test]
+async fn ci_logs_follow_stops_on_a_blocked_job() {
+    let server = MockServer::start().await;
+    let detail = json!({
+        "pipeline": {"id": 1, "repo_id": 1, "commit_sha": "abc123", "ref_name": "main",
+                     "status": "running", "trigger_type": "push", "triggered_by": "alice",
+                     "started_at": "2026-11-03T10:00:00Z", "finished_at": null,
+                     "created_at": "2026-11-03T10:00:00Z"},
+        "stages": [{"stage": {"id": 1, "pipeline_id": 1, "name": "deploy", "stage_order": 1,
+                              "status": "waiting_approval", "started_at": null, "finished_at": null},
+                    "jobs": [{"id": 9, "stage_id": 1, "name": "prod", "status": "waiting_approval",
+                              "log": null, "exit_code": null}]}]
+    });
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/pipelines/1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(detail))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/pipelines/1/jobs/9"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let out = ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["-R", "alice/demo", "ci", "logs", "1", "--follow"])
+        .timeout(std::time::Duration::from_secs(10))
+        .assert()
+        .success();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("ifg ci approve 1 9"), "stderr: {stderr}");
+}
+
+/// Mount a release `v1` with one asset named `filename` (id 7) whose
+/// download returns `content`.
+async fn mount_single_asset_release(server: &MockServer, filename: &str, content: &[u8]) {
+    use sha2::{Digest, Sha256};
+    let checksum = format!("{:x}", Sha256::digest(content));
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"id": 1, "repo_id": 1, "tag_name": "v1", "target_commitish": "main",
+                      "title": "v1", "body": null, "is_draft": false, "is_prerelease": false,
+                      "author_id": 1, "created_at": "2026-11-03T10:00:00Z",
+                      "updated_at": "2026-11-03T10:00:00Z"}],
+            "pagination": {"page": 1, "per_page": 100, "total": 1, "total_pages": 1,
+                           "has_next": false, "has_prev": false}
+        })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/1/assets"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+            "id": 7, "release_id": 1, "filename": filename, "size": content.len() as i64,
+            "content_type": "application/octet-stream", "download_count": 0,
+            "uploader_id": 1, "sha256": checksum, "created_at": "2026-11-03T10:00:00Z"
+        }])))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/assets/7/download"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(content.to_vec())
+                .insert_header("x-checksum-sha256", checksum.as_str()),
+        )
+        .mount(server)
+        .await;
+}
+
+/// A server-supplied asset name with path components is refused before any
+/// byte is downloaded, so nothing lands outside the current directory.
+#[tokio::test]
+async fn release_download_refuses_path_traversal_names() {
+    let server = MockServer::start().await;
+    mount_single_asset_release(&server, "../escaped.txt", b"payload").await;
+
+    let home = TempDir::new().unwrap();
+    let parent = TempDir::new().unwrap();
+    let download_dir = parent.path().join("downloads");
+    std::fs::create_dir(&download_dir).unwrap();
+    let out = ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("XDG_CONFIG_HOME", home.path())
+        .current_dir(&download_dir)
+        .args(["-R", "alice/demo", "release", "download", "v1"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("unsafe filename"), "stderr: {stderr}");
+    assert!(!parent.path().join("escaped.txt").exists());
+    assert!(!parent.path().join("escaped.txt.part").exists());
+}
+
+/// Existing files are kept unless `--clobber` is passed.
+#[tokio::test]
+async fn release_download_needs_clobber_to_overwrite() {
+    let server = MockServer::start().await;
+    mount_single_asset_release(&server, "pkg.bin", b"new bytes").await;
+
+    let home = TempDir::new().unwrap();
+    let download_dir = TempDir::new().unwrap();
+    let target = download_dir.path().join("pkg.bin");
+    std::fs::write(&target, b"old bytes").unwrap();
+
+    let out = ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("XDG_CONFIG_HOME", home.path())
+        .current_dir(download_dir.path())
+        .args(["-R", "alice/demo", "release", "download", "v1"])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("--clobber"), "stderr: {stderr}");
+    assert_eq!(std::fs::read(&target).unwrap(), b"old bytes");
+
+    ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("XDG_CONFIG_HOME", home.path())
+        .current_dir(download_dir.path())
+        .args(["-R", "alice/demo", "release", "download", "v1", "--clobber"])
+        .assert()
+        .success();
+    assert_eq!(std::fs::read(&target).unwrap(), b"new bytes");
+}
