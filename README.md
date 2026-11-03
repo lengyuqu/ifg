@@ -2,15 +2,20 @@
 
 IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
 
+GitHub：[lengyuqu/ifg](https://github.com/lengyuqu/ifg)（公开镜像与 Release）
+
 > 状态：v0.1.0 已发布（M1–M4 交付）：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验与 git credential helper。
 
 与 IronForge 自带的 `ironforge` 二进制不同，`ifg` 不连数据库、不做运维，只用个人访问令牌（PAT）调用公开 API，可以装在任何机器上。
 
 ## 安装
 
-发布产物在 [git233 Release](https://git233.phynews.com:18443/aicodeing/ifg/releases/tag/v0.1.0)：macOS（arm64/x86_64）与 Linux（musl 静态链接，arm64/x86_64）四架构 + `SHA256SUMS`。
+发布产物：macOS（arm64/x86_64）与 Linux（musl 静态链接，arm64/x86_64）四架构 tar.gz + `SHA256SUMS`。
 
-Homebrew（产物在 internal 可见性的内网仓库，下载需凭据——在 `~/.netrc` 加一行
+- GitHub（匿名可下载）：[Release v0.1.0](https://github.com/lengyuqu/ifg/releases/tag/v0.1.0)
+- 内网：[git233 Release](https://git233.phynews.com:18443/aicodeing/ifg/releases/tag/v0.1.0)（internal 可见性，下载需凭据）
+
+Homebrew（内网 tap；产物在 internal 仓库，下载需凭据——在 `~/.netrc` 加一行
 `machine git233.phynews.com login <user> password <gitea-token>`）：
 
 ```bash
