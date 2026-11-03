@@ -260,6 +260,48 @@ fn job_log_ws_url(host_url: &str, job_id: i64, since_lines: usize) -> String {
 /// Returns `false` when streaming is not available (older server, refused
 /// handshake, or a connection that dies before the job finishes) so the
 /// caller can fall back to polling.
+type JobLogSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Open the job-log socket, resuming at `since_lines` (line-based). `None`
+/// when the handshake fails — the caller treats that as "streaming
+/// unsupported" and polls instead.
+async fn connect_job_log(
+    host: &crate::context::ResolvedHost,
+    job_id: i64,
+    since_lines: usize,
+) -> Option<JobLogSocket> {
+    let url = job_log_ws_url(&host.url, job_id, since_lines);
+    let mut request = url.as_str().into_client_request().ok()?;
+    if let Some(token) = &host.token {
+        let header = format!("Bearer {}", token.expose());
+        let value = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&header).ok()?;
+        request.headers_mut().insert("authorization", value);
+    }
+    tokio_tungstenite::connect_async(request)
+        .await
+        .ok()
+        .map(|(socket, _)| socket)
+}
+
+/// Advance the line cursor after a chunk: the server appends each chunk as
+/// `"\n" + chunk`, so one line plus whatever newlines the chunk carries.
+fn advance_lines(lines_seen: usize, chunk: &str) -> usize {
+    lines_seen + 1 + chunk.matches('\n').count()
+}
+
+/// Backoff for reconnects: 250ms, 500ms, 1s, 2s, capped at 2s.
+fn reconnect_delay(failures: u32) -> std::time::Duration {
+    let millis = 250u64.saturating_mul(1u64 << failures.min(3));
+    std::time::Duration::from_millis(millis.min(2_000))
+}
+
+/// Stream a job log over `/api/v1/ws/job/{id}` until the job is terminal.
+///
+/// The first handshake decides availability: `false` means the caller should
+/// poll instead. Once streaming, an interrupted connection is **resumed**
+/// (`?since=<lines printed>`) rather than falling back — the server replays
+/// only the missing suffix, so nothing is printed twice.
 async fn follow_websocket(
     ctx: &super::CommandContext,
     repo: &RepoContext,
@@ -270,53 +312,69 @@ async fn follow_websocket(
     use futures_util::StreamExt;
     use std::io::Write as _;
 
-    let url = job_log_ws_url(&ctx.host.url, job_id, printed_lines);
-    let Ok(mut request) = url.as_str().into_client_request() else {
-        return false;
-    };
-    // Ask for the suffix we have not printed yet (line-based `since`).
-    if let Some(token) = &ctx.host.token {
-        let header = format!("Bearer {}", token.expose());
-        if let Ok(value) = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&header) {
-            request.headers_mut().insert("authorization", value);
-        }
-    }
-    let Ok((mut socket, _)) = tokio_tungstenite::connect_async(request).await else {
+    let Some(mut socket) = connect_job_log(&ctx.host, job_id, printed_lines).await else {
         return false;
     };
 
     let ci = ctx.client.ci(&repo.owner, &repo.name);
-    let mut ticker = tokio::time::interval(POLL_INTERVAL);
-    let mut finished = false;
+    let mut lines_seen = printed_lines;
+    let mut failures: u32 = 0;
     loop {
-        tokio::select! {
-            message = socket.next() => match message {
-                Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                    if let Some(chunk) = job_log_chunk(&text) {
-                        print!("{chunk}");
-                        let _ = std::io::stdout().flush();
+        let mut finished = false;
+        let mut ticker = tokio::time::interval(POLL_INTERVAL);
+        loop {
+            tokio::select! {
+                message = socket.next() => match message {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                        if let Some(chunk) = job_log_chunk(&text) {
+                            print!("{chunk}");
+                            let _ = std::io::stdout().flush();
+                            lines_seen = advance_lines(lines_seen, &chunk);
+                            failures = 0;
+                        }
                     }
-                }
-                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => break,
-                Some(Ok(_)) => {}
-                Some(Err(_)) => break,
-            },
-            _ = ticker.tick() => {
-                match ci.job(pipeline_id, job_id).await {
-                    Ok(job) if job.is_terminal() => {
-                        // Give in-flight chunks a moment to arrive.
-                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                        finished = true;
-                        break;
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => break,
+                    Some(Ok(_)) => {}
+                    Some(Err(_)) => break,
+                },
+                _ = ticker.tick() => {
+                    match ci.job(pipeline_id, job_id).await {
+                        Ok(job) if job.is_terminal() => {
+                            // Give in-flight chunks a moment to arrive.
+                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                            finished = true;
+                            break;
+                        }
+                        Ok(_) => {}
+                        Err(_) => break,
                     }
-                    Ok(_) => {}
-                    Err(_) => break,
                 }
             }
         }
+        let _ = socket.close(None).await;
+        if finished {
+            return true;
+        }
+
+        // Interrupted while the job is still running: resume where we left off.
+        failures += 1;
+        if failures > 10 {
+            eprintln!(
+                "ifg: note: log stream lost after 10 reconnect attempts; stopping the follow"
+            );
+            return true;
+        }
+        let delay = reconnect_delay(failures);
+        eprintln!(
+            "ifg: note: log stream interrupted; reconnecting in {}ms (resume at line {lines_seen})",
+            delay.as_millis()
+        );
+        tokio::time::sleep(delay).await;
+        match connect_job_log(&ctx.host, job_id, lines_seen).await {
+            Some(resumed) => socket = resumed,
+            None => continue,
+        }
     }
-    let _ = socket.close(None).await;
-    finished
 }
 
 /// Why `--follow` stops on a job that cannot progress by itself, and how to
@@ -409,7 +467,24 @@ fn short_date(iso: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{job_log_chunk, job_log_ws_url};
+    use super::{advance_lines, job_log_chunk, job_log_ws_url, reconnect_delay};
+
+    #[test]
+    fn line_cursor_advances_with_chunks() {
+        // "\n" + chunk with no inner newlines → one new line.
+        assert_eq!(advance_lines(0, "step 1"), 1);
+        // A chunk with two inner newlines adds three lines total.
+        assert_eq!(advance_lines(1, "a\nb\nc"), 4);
+        assert_eq!(advance_lines(4, ""), 5);
+    }
+
+    #[test]
+    fn reconnect_backoff_grows_then_caps() {
+        assert_eq!(reconnect_delay(1).as_millis(), 500);
+        assert_eq!(reconnect_delay(2).as_millis(), 1_000);
+        assert_eq!(reconnect_delay(3).as_millis(), 2_000);
+        assert_eq!(reconnect_delay(9).as_millis(), 2_000);
+    }
 
     #[test]
     fn job_log_frames_are_parsed_and_filtered() {

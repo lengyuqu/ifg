@@ -2,7 +2,7 @@
 
 IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
 
-> 状态：v0.7.0 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
+> 状态：v0.7.1 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
 
 与 IronForge 自带的 `ironforge` 二进制不同，`ifg` 不连数据库、不做运维，只用个人访问令牌（PAT）调用公开 API，可以装在任何机器上。
 
@@ -25,7 +25,7 @@ SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端
 ```bash
 # 下载对应架构的 tar.gz 与 SHA256SUMS 后先校验
 shasum -a 256 -c SHA256SUMS 2>/dev/null || shasum -a 256 ifg-*.tar.gz
-tar xzf ifg-0.7.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
+tar xzf ifg-0.7.1-<target>.tar.gz && sudo mv ifg /usr/local/bin/
 ```
 
 从源码（musl 交叉编译需 `zig` + `cargo-zigbuild`）：
@@ -45,7 +45,7 @@ ifg issue list -R yourname/demo
 ifg pr checkout 12                                     # 同仓或 fork PR 都可用，重复执行会快进更新；分支已删时走 refs/pull
 ifg pr view 12 --comments                              # 含行内评审评论
 ifg pr create -t "标题"                                 # head 默认当前分支，未推送会拦截
-ifg ci logs 7 --follow                                 # WebSocket 流式日志（不可用时自动退回轮询）
+ifg ci logs 7 --follow                                 # WebSocket 流式日志（断线自动续传；无 WS 时退回轮询）
 ifg label create bug -c ff0000 -d "坏了"                # 标签
 ifg milestone create v1 --due 2026-12-31               # 里程碑
 ifg issue edit 3 --label bug --milestone v1 --assignee alice

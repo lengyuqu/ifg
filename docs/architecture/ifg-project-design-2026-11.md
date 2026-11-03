@@ -325,7 +325,7 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
    - 团队（teams）暂不做：权限模型复杂、使用频率低，需要时走 `ifg api`。
 
 - **v0.6 决策（2026-11-04）**：
-   - `ci logs --follow` 首选 WebSocket（`?since=<已打印行数>` 只补增量），`tokio-tungstenite` 只进 CLI crate，不进 `ifg-client`（保持客户端无 WS 依赖）；握手失败/中途断开 → 退回原轮询并提示。
+   - `ci logs --follow` 首选 WebSocket（`?since=<已打印行数>` 只补增量），`tokio-tungstenite` 只进 CLI crate，不进 `ifg-client`（保持客户端无 WS 依赖）；首次握手失败 → 退回原轮询；已建立流后中途断开 → 带 `since=<已打印行数>` **自动续传**（250ms→2s 退避，最多 10 次），不会重复打印。
    - WS 鉴权四个来源：cookie → 子协议 → **Authorization 头** → `?token=`；JWT 校验失败时用 `pat_actor` 解析 PAT。e2e 断言"缺 job 返回 404 而非 401"以证明 PAT 生效。
 
 - **v0.4 决策（2026-11-04）**：
