@@ -20,10 +20,6 @@ pub async fn run(command: &AuthCommand, cli: &Cli) -> Result<(), AppError> {
     }
 }
 
-fn user_agent() -> String {
-    concat!("ifg/", env!("CARGO_PKG_VERSION")).to_string()
-}
-
 /// Read the PAT: all of stdin with `--with-token`, otherwise one prompted
 /// line. The prompt echoes; point users at `--with-token` for secrecy.
 fn read_token(with_token: bool) -> Result<String, AppError> {
@@ -56,7 +52,7 @@ async fn login(cli: &Cli, with_token: bool) -> Result<(), AppError> {
     // Validate before saving (design doc §4.1).
     let client = Client::builder(&url)
         .token(Secret::new(&token))
-        .user_agent(user_agent())
+        .user_agent(super::user_agent())
         .build()?;
     let me = client.users().me().await?;
 
@@ -148,7 +144,7 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
         // Build a client with the configured token (env PAT only applies to
         // the resolved host, which status does not know about).
         let mut builder = Client::builder(&entry.url)
-            .user_agent(user_agent())
+            .user_agent(super::user_agent())
             .max_retries(0);
         if let Some(token) = &entry.token {
             builder = builder.token(Secret::new(token.clone()));

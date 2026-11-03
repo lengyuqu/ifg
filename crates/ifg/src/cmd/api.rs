@@ -7,24 +7,17 @@
 //! strings. `--paginate` merges the `data` arrays of every page into one
 //! JSON array (D5: server field names, untouched).
 
-use ifg_client::{Client, Method};
+use ifg_client::Method;
 use serde_json::{Map, Value};
 
+use super::bootstrap;
 use crate::cli::{ApiArgs, Cli};
-use crate::config;
-use crate::context;
 use crate::error::AppError;
 use crate::output;
 
 pub async fn run(args: &ApiArgs, cli: &Cli) -> Result<(), AppError> {
-    let config = config::load()?;
-    let resolved = context::resolve_host(cli.host.as_deref(), cli.repo.as_deref(), &config)?;
-    let mut builder =
-        Client::builder(&resolved.url).user_agent(concat!("ifg/", env!("CARGO_PKG_VERSION")));
-    if let Some(token) = &resolved.token {
-        builder = builder.token(token.clone());
-    }
-    let client = builder.build()?;
+    let ctx = bootstrap(cli)?;
+    let client = &ctx.client;
 
     let method = parse_method(&args.method)?;
     let mut path = args.path.clone();

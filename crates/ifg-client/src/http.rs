@@ -231,6 +231,38 @@ impl Client {
         crate::pagination::Paginator::new_with_body(self, method, path, Some(body))
     }
 
+    /// `GET /health` — outside `/api/v1/`. Returns the parsed JSON body
+    /// (includes `version`; D10 uses it for server-version checks). A
+    /// degraded `503` still parses, because "server is up" is the signal
+    /// callers want.
+    pub async fn health(&self) -> Result<serde_json::Value, Error> {
+        // Build "/health" relative to the base path ("/" or "/forge"),
+        // avoiding the double slash that falls into the SPA catch-all.
+        let mut path = self.base.path().to_string();
+        if !path.ends_with('/') {
+            path.push('/');
+        }
+        path.push_str("health");
+        let mut url = self.base.clone();
+        url.set_path(&path);
+        let response = self.http.get(url).send().await.map_err(Error::Transport)?;
+        let status = response.status();
+        let bytes = response.bytes().await.map_err(Error::Transport)?;
+        match serde_json::from_slice(&bytes) {
+            Ok(value) => Ok(value),
+            Err(source) => {
+                if !status.is_success() {
+                    Err(error::api_error(status.as_u16(), &bytes))
+                } else {
+                    Err(Error::Decode {
+                        body_snippet: error::snippet(&bytes),
+                        source,
+                    })
+                }
+            }
+        }
+    }
+
     /// Issue a request and decode the JSON body into `T`.
     pub async fn send<T: DeserializeOwned>(
         &self,

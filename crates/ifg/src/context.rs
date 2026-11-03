@@ -154,3 +154,65 @@ fn configured_names(config: &Config) -> String {
         config.hosts.keys().cloned().collect::<Vec<_>>().join(", ")
     }
 }
+
+/// The repository a command operates on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoContext {
+    pub owner: String,
+    pub name: String,
+}
+
+impl std::fmt::Display for RepoContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.owner, self.name)
+    }
+}
+
+/// Resolve the repository context: `-R OWNER/NAME` (or a full remote URL),
+/// else the first git remote (origin first) whose host matches the resolved
+/// host (design doc §5.2).
+pub fn resolve_repo(
+    repo_arg: Option<&str>,
+    resolved_host: &ResolvedHost,
+) -> Result<RepoContext, crate::error::AppError> {
+    if let Some(repo_arg) = repo_arg {
+        if is_url(repo_arg) {
+            let remote = crate::git::parse_remote_url(repo_arg).ok_or_else(|| {
+                crate::error::AppError::Usage(format!(
+                    "cannot parse '{repo_arg}' as an IronForge repository URL \
+                     (expected https://host/git/OWNER/NAME)"
+                ))
+            })?;
+            return Ok(RepoContext {
+                owner: remote.owner,
+                name: remote.name,
+            });
+        }
+        let Some((owner, name)) = repo_arg.split_once('/') else {
+            return Err(crate::error::AppError::Usage(format!(
+                "expected OWNER/NAME, got '{repo_arg}'"
+            )));
+        };
+        if owner.is_empty() || name.is_empty() {
+            return Err(crate::error::AppError::Usage(format!(
+                "expected OWNER/NAME, got '{repo_arg}'"
+            )));
+        }
+        return Ok(RepoContext {
+            owner: owner.to_string(),
+            name: name.to_string(),
+        });
+    }
+
+    for (_, remote) in crate::git::git_remotes() {
+        if config::entry_matches_url(&resolved_host.url, &remote.host) {
+            return Ok(RepoContext {
+                owner: remote.owner,
+                name: remote.name,
+            });
+        }
+    }
+    Err(crate::error::AppError::Usage(
+        "no repository context: pass -R OWNER/NAME or run inside a git clone".into(),
+    ))
+}

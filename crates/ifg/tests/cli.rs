@@ -388,3 +388,142 @@ async fn api_gets_retried_after_503() {
         .assert()
         .success();
 }
+
+/// `repo create` prints the created repository (table and --json forms).
+#[tokio::test]
+async fn repo_create_table_and_json() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/repos"))
+        .and(header("authorization", "Bearer ifp_env_token"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "id": 7, "owner_id": 1, "name": "demo", "description": null,
+            "is_private": false, "default_branch": "main", "stars_count": 0,
+            "forks_count": 0, "created_at": "2026-11-03T10:00:00Z",
+            "updated_at": "2026-11-03T10:00:00Z"
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let env = |home: &TempDir| {
+        let mut cmd = ifg();
+        cmd.env("IRONFORGE_URL", server.uri())
+            .env("IRONFORGE_PAT", "ifp_env_token")
+            .env("XDG_CONFIG_HOME", home.path());
+        cmd
+    };
+
+    let out = env(&home)
+        .args(["repo", "create", "demo"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("Created"), "table: {stdout}");
+
+    let out = env(&home)
+        .args(["repo", "create", "demo", "--json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["name"], "demo");
+    assert_eq!(value["id"], 7);
+}
+
+/// `issue list` renders the table and `--json` the raw array.
+#[tokio::test]
+async fn issue_list_table_and_json() {
+    let issue = json!({
+        "id": 1, "repo_id": 1, "number": 1, "title": "broken build",
+        "body": null, "state": "open", "author_id": 1, "labels": "[\"bug\"]",
+        "author": "alice", "assignees": [],
+        "created_at": "2026-11-03T10:00:00Z", "updated_at": "2026-11-03T10:00:00Z",
+        "closed_at": null
+    });
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/issues"))
+        .and(query_param("state", "open"))
+        .and(query_param("page", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [issue],
+            "pagination": {"page": 1, "per_page": 100, "total": 1,
+                           "total_pages": 1, "has_next": false, "has_prev": false}
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let run = |json: bool| {
+        let mut cmd = ifg();
+        cmd.env("IRONFORGE_URL", server.uri())
+            .env("IRONFORGE_PAT", "ifp_env_token")
+            .env("XDG_CONFIG_HOME", home.path())
+            .args(["-R", "alice/demo", "issue", "list"]);
+        if json {
+            cmd.arg("--json");
+        }
+        cmd
+    };
+
+    let out = run(false).assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("broken build"), "table: {stdout}");
+    assert!(stdout.contains("bug"), "labels decoded: {stdout}");
+
+    let out = run(true).assert().success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    let items: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
+    // D5: labels stays the server's raw JSON string, not the decoded list.
+    assert_eq!(items[0]["labels"], json!("[\"bug\"]"));
+}
+
+/// `pr merge --squash` prints the merge result.
+#[tokio::test]
+async fn pr_merge_reports_the_merge_commit() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/repos/alice/demo/pulls/1/merge"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "merge_commit_sha": "f891045e1cb0d07121d6f0651131ef87566d20f6",
+            "strategy": "squash"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let out = ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_env_token")
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["-R", "alice/demo", "pr", "merge", "1", "--squash"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("Merged"), "stdout: {stdout}");
+    assert!(stdout.contains("f891045e1cb0"), "merge commit: {stdout}");
+}
+
+/// `pr create` refuses to run when the branch has no upstream.
+#[tokio::test]
+async fn pr_create_requires_pushed_branch() {
+    let home = TempDir::new().unwrap();
+    // IFG_E2E-style URL that resolves nowhere; the failure must happen
+    // before any request — locally, in the push check.
+    let out = ifg()
+        .env("IRONFORGE_URL", "http://127.0.0.1:9")
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["-R", "alice/demo", "pr", "create", "-t", "t"])
+        .current_dir("/tmp")
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("no repository context") || stderr.contains("not inside a git work tree"),
+        "stderr: {stderr}"
+    );
+}

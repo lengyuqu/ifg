@@ -32,6 +32,9 @@ async fn run(cli: Cli) -> i32 {
     let result = match &cli.command {
         Command::Auth { command } => cmd::auth::run(command, &cli).await,
         Command::Api { args } => cmd::api::run(args, &cli).await,
+        Command::Repo { command } => cmd::repo::run(command, &cli).await,
+        Command::Issue { command } => cmd::issue::run(command, &cli).await,
+        Command::Pr { command } => cmd::pr::run(command, &cli).await,
     };
     match result {
         Ok(()) => 0,
