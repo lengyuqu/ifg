@@ -1,0 +1,16 @@
+[package]
+name = "ifg-client"
+description = "Typed REST client for the IronForge API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# Boundary (design doc §2): no CLI, terminal or config-file dependencies here,
+# so the crate stays usable from rg-mcp or other tools. `scripts/check.sh`
+# enforces this with `cargo tree`.
+[dependencies]
+
+[lints]
+workspace = true

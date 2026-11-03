@@ -14,3 +14,11 @@ IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Iss
 ## 许可证
 
 [MIT](LICENSE)，与 IronForge 一致。
+
+## 开发
+
+```bash
+scripts/check.sh   # 提交前检查：fmt、clippy、test、audit、ifg-client 依赖边界
+```
+
+工具链版本固定在 `rust-toolchain.toml`（若设置了 `RUSTUP_TOOLCHAIN` 环境变量，它会覆盖该文件）。

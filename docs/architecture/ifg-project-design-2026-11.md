@@ -68,7 +68,7 @@ ifg/
 
 | # | 决策 | 建议 | 理由 |
 |---|------|------|------|
-| D0 | 实现语言：Rust 还是 Go | Rust | 与 IronForge 同一语言、同一套工具（cargo、clippy、cargo-deny），维护者无需切换；保留日后与 `rg-mcp` 共享 `ifg-client` 的可能（D3）；`serde` 适合按需声明部分字段的 DTO（D4）。Go 的优势（交叉编译简单、编译快、`gh`/`tea` 均为 Go）真实但有限：交叉编译用 `cargo zigbuild` 可解决（§8.2），而 `tea` 面向 Gitea API，代码无法直接复用 |
+| D0 | 实现语言：Rust 还是 Go | Rust | 与 IronForge 同一语言、同一套工具（cargo、clippy、cargo-audit），维护者无需切换；保留日后与 `rg-mcp` 共享 `ifg-client` 的可能（D3）；`serde` 适合按需声明部分字段的 DTO（D4）。Go 的优势（交叉编译简单、编译快、`gh`/`tea` 均为 Go）真实但有限：交叉编译用 `cargo zigbuild` 可解决（§8.2），而 `tea` 面向 Gitea API，代码无法直接复用 |
 | D1 | 二进制名 | `ifg` | 短、好打。Homebrew 和 crates.io 的查重放到 M4 发布前做；若撞名，备选 `ironforge-cli`，命令内部不受影响 |
 | D2 | crate 名 | `ifg-client`（库）、`ifg`（二进制） | 与仓库同名，不占 IronForge 的 `rg-` 前缀 |
 | D3 | 是否与 `rg-mcp` 共享客户端 | 暂不共享 | 共享的收益（省掉 57 行）小于跨仓库版本耦合的代价。`ifg-client` 1.0 之后再提议 `rg-mcp` 通过 git tag 依赖 |
@@ -272,7 +272,7 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 1. `cargo fmt --check`
 2. `cargo clippy --workspace --all-targets -- -D warnings`
 3. `cargo test --workspace`（不含 e2e）
-4. `cargo deny check`（许可证与安全公告；IronForge 已在用同类检查）
+4. `cargo audit`（安全公告；与 IronForge 一致，忽略项写在 `.cargo/audit.toml` 并注明理由与移除条件；未安装时跳过并提示）
 5. 依赖边界检查：`cargo tree -p ifg-client` 中不得出现 `clap`、`comfy-table` 等 CLI 依赖
 
 脚本只调用 cargo 和 shell，不绑定任何 CI 平台，日后接 GitHub Actions 时 workflow 直接调用它即可。e2e 依赖本地 Docker，不放进 `check.sh`。

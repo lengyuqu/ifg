@@ -1,0 +1,35 @@
+[workspace]
+members = [
+    "crates/ifg-client",
+    "crates/ifg",
+]
+resolver = "2"
+
+# Shared package metadata, inherited by every crate via `*.workspace = true`.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Yu Qu <zdz945244799@yeah.net>"]
+repository = "https://git233.phynews.com:18443/aicodeing/ifg"
+
+# IronForge commit the API contract snapshot and the local Docker e2e instance
+# are built from (design doc §6.4). Bumping it is an explicit commit:
+# rebuild the image → sync the OpenAPI snapshot → run e2e.
+[workspace.metadata.ifg]
+ironforge_rev = "ce4834f03a782ea872df88414ea6f4a406762757"
+
+[workspace.dependencies]
+ifg-client = { path = "crates/ifg-client" }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Testing
+assert_cmd = "2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
