@@ -19,6 +19,7 @@ use assert_cmd::Command as IfgCommand;
 use ifg_client::{Client, Method, Secret};
 use serde_json::{json, Value};
 use tempfile::TempDir;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 fn e2e_url() -> String {
     std::env::var("IFG_E2E_URL").unwrap_or_else(|_| "http://localhost:8080".into())
@@ -521,6 +522,31 @@ async fn fork_chain(
 /// `git` wrapper without asserting silence (fork flow prints more).
 fn harness_git(dir: &Path, args: &[&str]) {
     git(dir, args);
+}
+
+/// The job-log WebSocket accepts a PAT: an authenticated request for a
+/// missing job answers 404, not 401 (design doc §7.1-B).
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn job_log_websocket_accepts_pat() {
+    let harness = harness().await;
+    let base = e2e_url()
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1);
+    let url = format!("{base}/api/v1/ws/job/999999?since=0");
+    let mut request = url.as_str().into_client_request().expect("valid ws url");
+    request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {}", harness.pat).parse().expect("header"),
+    );
+    let error = tokio_tungstenite::connect_async(request)
+        .await
+        .expect_err("no such job");
+    let message = error.to_string();
+    assert!(
+        message.contains("404"),
+        "PAT should authenticate (404 for a missing job, not 401): {message}"
+    );
 }
 
 /// Labels, milestones, issue metadata, release edit and status (M5 surface).

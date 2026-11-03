@@ -302,7 +302,7 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 
 按对 CLI 的影响排序，均应在 IronForge 仓库单独立项：
 
-1. WebSocket `/ws/job/{job_id}` 接受 PAT（草案 §7.1-B），让 `ci logs --follow` 不再轮询全量日志。**未做**
+1. ~~WebSocket `/ws/job/{job_id}` 接受 PAT~~ —— **已完成**（ironforge `df0ba3f`：Authorization 头与 PAT 解析；客户端 `ci logs --follow` 走 WS，握手失败自动退回轮询）。
 2. ~~`GET releases/tags/{tag}`~~ —— **已完成**（ironforge `a8b8103`，客户端 `releases::get_by_tag` 带翻页兜底）。
 3. ~~维护 `refs/pull/<n>/head`~~ —— **已完成**（ironforge `a8b8103`：PR 创建时写入、push 时随 head 同步；客户端 checkout 在分支缺失时回退）。
 4. ~~OpenAPI `info.version` 改为读 `CARGO_PKG_VERSION`~~ —— **已完成**（ironforge `a8b8103`，快照生成时验证为 `0.2.0`）。
@@ -319,6 +319,10 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 3. **对接测试环境**：本地 Docker 中的 IronForge（§7.1）；自建实例用于手工验证。
 
 ## 11. 已决事项（追加）
+
+0''. **v0.6 决策（2026-11-04）**：
+   - `ci logs --follow` 首选 WebSocket（`?since=<已打印行数>` 只补增量），`tokio-tungstenite` 只进 CLI crate，不进 `ifg-client`（保持客户端无 WS 依赖）；握手失败/中途断开 → 退回原轮询并提示。
+   - WS 鉴权四个来源：cookie → 子协议 → **Authorization 头** → `?token=`；JWT 校验失败时用 `pat_actor` 解析 PAT。e2e 断言"缺 job 返回 404 而非 401"以证明 PAT 生效。
 
 0'. **v0.4 决策（2026-11-04）**：
    - `--template` 做子集（`{{.path}}`、`\n` 转义、`{{range}}…{{end}}` 可嵌套）：列表仍逐项渲染，`range` 用于嵌套数组（如 issue 的 labels）；不引模板引擎依赖。

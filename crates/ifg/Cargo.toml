@@ -13,6 +13,7 @@ clap = { workspace = true }
 clap_complete = { workspace = true }
 comfy-table = { workspace = true }
 futures-util = { workspace = true }
+tokio-tungstenite = { workspace = true }
 rpassword = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -3,6 +3,7 @@
 //! CLI re-reads the job every 2s and prints the increment.
 
 use serde_json::Value;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use super::bootstrap;
 use crate::cli::{CiCommand, Cli};
@@ -204,6 +205,20 @@ async fn logs(
         eprintln!("{}", blocked_hint(repo, id, &selected));
         return Ok(());
     }
+
+    // Prefer the WebSocket stream (design doc §7.1-B): chunks arrive as they
+    // are produced instead of re-fetching the whole log every 2s.
+    let printed_lines = selected
+        .log
+        .as_deref()
+        .map(|log| log.split('\n').count())
+        .unwrap_or(0);
+    if follow_websocket(ctx, repo, id, selected.id, printed_lines).await {
+        eprintln!("==> stream closed (job finished)");
+        return Ok(());
+    }
+    eprintln!("ifg: note: WebSocket streaming unavailable; falling back to polling");
+
     loop {
         tokio::time::sleep(POLL_INTERVAL).await;
         let job = ci.job(id, selected.id).await?;
@@ -217,6 +232,91 @@ async fn logs(
             return Ok(());
         }
     }
+}
+
+/// One WS frame → the log chunk it carries, if any. The server sends
+/// `{"event_type":"job_log","data":{"job_id":N,"log":"…"}}` and a `connected`
+/// welcome frame that carries no log.
+fn job_log_chunk(frame: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(frame).ok()?;
+    if value["event_type"] != "job_log" {
+        return None;
+    }
+    let chunk = value["data"]["log"].as_str()?;
+    (!chunk.is_empty()).then(|| chunk.to_string())
+}
+
+/// `ws(s)://…/api/v1/ws/job/{id}?since=<lines>` — the server replays only the
+/// log suffix the caller has not printed yet.
+fn job_log_ws_url(host_url: &str, job_id: i64, since_lines: usize) -> String {
+    let base = host_url
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1);
+    format!("{base}/api/v1/ws/job/{job_id}?since={since_lines}")
+}
+
+/// Stream a job log over `/api/v1/ws/job/{id}` until the job is terminal.
+///
+/// Returns `false` when streaming is not available (older server, refused
+/// handshake, or a connection that dies before the job finishes) so the
+/// caller can fall back to polling.
+async fn follow_websocket(
+    ctx: &super::CommandContext,
+    repo: &RepoContext,
+    pipeline_id: i64,
+    job_id: i64,
+    printed_lines: usize,
+) -> bool {
+    use futures_util::StreamExt;
+    use std::io::Write as _;
+
+    let url = job_log_ws_url(&ctx.host.url, job_id, printed_lines);
+    let Ok(mut request) = url.as_str().into_client_request() else {
+        return false;
+    };
+    // Ask for the suffix we have not printed yet (line-based `since`).
+    if let Some(token) = &ctx.host.token {
+        let header = format!("Bearer {}", token.expose());
+        if let Ok(value) = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&header) {
+            request.headers_mut().insert("authorization", value);
+        }
+    }
+    let Ok((mut socket, _)) = tokio_tungstenite::connect_async(request).await else {
+        return false;
+    };
+
+    let ci = ctx.client.ci(&repo.owner, &repo.name);
+    let mut ticker = tokio::time::interval(POLL_INTERVAL);
+    let mut finished = false;
+    loop {
+        tokio::select! {
+            message = socket.next() => match message {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                    if let Some(chunk) = job_log_chunk(&text) {
+                        print!("{chunk}");
+                        let _ = std::io::stdout().flush();
+                    }
+                }
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => break,
+                Some(Ok(_)) => {}
+                Some(Err(_)) => break,
+            },
+            _ = ticker.tick() => {
+                match ci.job(pipeline_id, job_id).await {
+                    Ok(job) if job.is_terminal() => {
+                        // Give in-flight chunks a moment to arrive.
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        finished = true;
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    let _ = socket.close(None).await;
+    finished
 }
 
 /// Why `--follow` stops on a job that cannot progress by itself, and how to
@@ -305,4 +405,38 @@ fn short_sha(sha: Option<&str>) -> String {
 
 fn short_date(iso: Option<&str>) -> String {
     crate::output::human_time(iso)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{job_log_chunk, job_log_ws_url};
+
+    #[test]
+    fn job_log_frames_are_parsed_and_filtered() {
+        assert_eq!(
+            job_log_chunk(r#"{"event_type":"job_log","data":{"job_id":3,"log":"step 1\n"}}"#)
+                .as_deref(),
+            Some("step 1\n")
+        );
+        // The welcome frame carries no log.
+        assert_eq!(job_log_chunk(r#"{"type":"connected","job_id":3}"#), None);
+        // Empty chunks are dropped, malformed frames are ignored.
+        assert_eq!(
+            job_log_chunk(r#"{"event_type":"job_log","data":{"log":""}}"#),
+            None
+        );
+        assert_eq!(job_log_chunk("not json"), None);
+    }
+
+    #[test]
+    fn job_log_ws_url_maps_schemes() {
+        assert_eq!(
+            job_log_ws_url("http://127.0.0.1:8080", 7, 3),
+            "ws://127.0.0.1:8080/api/v1/ws/job/7?since=3"
+        );
+        assert_eq!(
+            job_log_ws_url("https://forge.example.com", 1, 0),
+            "wss://forge.example.com/api/v1/ws/job/1?since=0"
+        );
+    }
 }
