@@ -1,3 +1,7 @@
 .DS_Store
 .workbuddy/
 /target
+
+# Stray artifacts from running a local `ironforge serve` with cwd here
+ironforge.db*
+repos/

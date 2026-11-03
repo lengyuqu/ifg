@@ -11,6 +11,17 @@ repository.workspace = true
 # so the crate stays usable from rg-mcp or other tools. `scripts/check.sh`
 # enforces this with `cargo tree`.
 [dependencies]
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+wiremock = { workspace = true }
 
 [lints]
 workspace = true
