@@ -45,8 +45,10 @@ ifg pr create -t "标题"                                 # head 默认当前分
 ifg ci logs 7 --follow                                 # 轮询增量打印日志
 ifg release create v1.0.0 -n "说明" dist/pkg.tar.gz     # 建 Release 并流式上传
 ifg release download v1.0.0 -p 'pkg*'                   # SHA-256 校验后落盘
-git config --global credential.helper "!ifg auth git-credential"   # git clone/push 免密
+git config --global credential.https://your-forge.example.com.helper "!ifg auth git-credential"   # git clone/push 免密
 ```
+
+凭据助手按主机配置，只对 IronForge 生效，不会替换其他站点已有的 helper（如 osxkeychain）。
 
 命令补全：
 
