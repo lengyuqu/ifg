@@ -25,8 +25,9 @@ jobs:
       - name: install zig and cargo-zigbuild
         run: |
           brew install zig
-          python3 -m pip install --user --break-system-packages cargo-zigbuild
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # pip --user lands in ~/Library/Python on the macOS runner (not on
+          # PATH); cargo install is slower but deterministic.
+          cargo install cargo-zigbuild --locked
 
       - name: build artifacts (adds rustup targets itself)
         run: bash scripts/release.sh
