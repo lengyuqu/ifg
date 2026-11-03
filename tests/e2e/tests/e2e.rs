@@ -524,6 +524,49 @@ fn harness_git(dir: &Path, args: &[&str]) {
     git(dir, args);
 }
 
+/// Organizations: create, list, add/remove a member by username.
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn organizations_and_members() {
+    let harness = harness().await;
+    let run_id = run_id();
+    let org = format!("{run_id}-org");
+    let (member_user, _member_pat) = bootstrap_second(&format!("{run_id}-member")).await;
+
+    let result = org_chain(&harness, &org, &member_user).await;
+    let _ = pat_client(&harness.pat)
+        .raw(Method::DELETE, &format!("orgs/{org}"), None)
+        .await;
+    result.expect("org chain");
+}
+
+async fn org_chain(harness: &Harness, org: &str, member: &str) -> Result<(), String> {
+    let out = harness.run_ok(&["org", "create", org, "-d", "e2e org"]);
+    assert!(out.contains("Created organization"), "create: {out}");
+
+    let out = harness.run_ok(&["org", "list"]);
+    assert!(out.contains(org), "list: {out}");
+
+    let out = harness.run_ok(&["org", "view", org]);
+    assert!(out.contains("members"), "view: {out}");
+
+    let out = harness.run_ok(&["org", "add-member", org, member, "--role", "member"]);
+    assert!(out.contains("Added"), "add member: {out}");
+
+    let out = harness.run_ok(&["org", "members", org]);
+    assert!(
+        out.contains(member),
+        "members should resolve the username: {out}"
+    );
+
+    let out = harness.run_ok(&["org", "remove-member", org, member]);
+    assert!(out.contains("Removed"), "remove member: {out}");
+
+    let out = harness.run_ok(&["org", "members", org]);
+    assert!(!out.contains(member), "member should be gone: {out}");
+    Ok(())
+}
+
 /// The job-log WebSocket accepts a PAT: an authenticated request for a
 /// missing job answers 404, not 401 (design doc §7.1-B).
 #[tokio::test]

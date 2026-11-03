@@ -96,6 +96,11 @@ pub enum Command {
         #[arg(long)]
         limit: Option<u64>,
     },
+    /// Work with organizations
+    Org {
+        #[command(subcommand)]
+        command: OrgCommand,
+    },
     /// List and manage your notifications
     Notifications {
         #[command(subcommand)]
@@ -542,4 +547,36 @@ pub enum NotificationsCommand {
     Delete { id: i64 },
     /// Print the unread count
     Count,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OrgCommand {
+    /// List the organizations you belong to
+    List,
+    /// Show one organization
+    View { name: String },
+    /// Create an organization
+    Create {
+        name: String,
+        /// Display name
+        #[arg(long)]
+        display: Option<String>,
+        #[arg(short = 'd', long)]
+        description: Option<String>,
+        /// Create it as a private organization
+        #[arg(long)]
+        private: bool,
+    },
+    /// List an organization's members
+    Members { name: String },
+    /// Add a member by username
+    AddMember {
+        name: String,
+        username: String,
+        /// owner / admin / member (default: member)
+        #[arg(long)]
+        role: Option<String>,
+    },
+    /// Remove a member by username
+    RemoveMember { name: String, username: String },
 }

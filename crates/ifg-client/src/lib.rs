@@ -14,6 +14,7 @@ mod issues;
 mod labels;
 mod milestones;
 mod notifications;
+mod orgs;
 mod pagination;
 mod pulls;
 mod releases;
@@ -30,6 +31,7 @@ pub use issues::{Comment, CreateIssueOptions, Issue, IssueListFilter, Issues, Up
 pub use labels::{Label, LabelOptions, Labels};
 pub use milestones::{Milestone, MilestoneOptions, Milestones};
 pub use notifications::{Notification, Notifications};
+pub use orgs::{CreateOrgOptions, OrgMember, Organization, Orgs};
 pub use pagination::{Page, PaginationMeta, Paginator, PER_PAGE};
 pub use pulls::{
     CreatePrOptions, MergeOutcome, MergeStrategy, PullRequest, Pulls, ReviewAction, ReviewComment,

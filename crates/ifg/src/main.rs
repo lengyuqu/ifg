@@ -62,6 +62,7 @@ async fn run(cli: Cli) -> i32 {
             limit,
         } => cmd::search::run(&cli, query, search_type, *limit).await,
         Command::Notifications { command } => cmd::notifications::run(command, &cli).await,
+        Command::Org { command } => cmd::org::run(command, &cli).await,
         Command::Version => cmd::version::run(&cli).await,
         Command::Completions { .. } => unreachable!("handled before dispatch"),
     };

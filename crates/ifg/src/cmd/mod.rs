@@ -8,6 +8,7 @@ pub mod issue;
 pub mod label;
 pub mod milestone;
 pub mod notifications;
+pub mod org;
 pub mod pr;
 pub mod release;
 pub mod repo;

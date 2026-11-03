@@ -4,7 +4,7 @@
 use assert_cmd::Command;
 use serde_json::json;
 use tempfile::TempDir;
-use wiremock::matchers::{header, method, path, query_param};
+use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn ifg() -> Command {
@@ -995,4 +995,85 @@ async fn notifications_list_and_count() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+}
+
+#[tokio::test]
+async fn org_list_members_and_add() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/orgs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": 4, "name": "acme", "display_name": "Acme Corp", "description": null,
+             "owner_id": 1, "visibility": "public",
+             "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-01T00:00:00Z"}
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/orgs/acme/members"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": 1, "org_id": 4, "user_id": 1, "username": "alice",
+             "display_name": "Alice", "role": "owner", "created_at": "2026-11-01T00:00:00Z"},
+            {"id": 2, "org_id": 4, "user_id": 7, "role": "member",
+             "created_at": "2026-11-02T00:00:00Z"}
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // --add-member resolves the username through /users/{username}
+    Mock::given(method("GET"))
+        .and(path("/api/v1/users/bob"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": 9, "username": "bob", "display_name": null, "avatar_url": null,
+            "created_at": "2026-11-01T00:00:00Z"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/orgs/acme/members"))
+        .and(body_json(json!({"user_id": 9, "role": "admin"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let run = |args: &[&str]| {
+        let mut cmd = ifg();
+        cmd.env("IRONFORGE_URL", server.uri())
+            .env("IRONFORGE_PAT", "ifp_env_token")
+            .env("XDG_CONFIG_HOME", home.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let output = run(&["org", "list"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("acme"));
+
+    let output = run(&["org", "members", "acme"]);
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("alice"), "resolved username: {text}");
+    // A member the server could not resolve falls back to the numeric id.
+    assert!(text.contains("#7"), "fallback label: {text}");
+
+    let output = run(&["org", "add-member", "acme", "bob", "--role", "admin"]);
+    assert!(
+        output.status.success(),
+        "add-member: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("Added bob to acme as admin"),
+        "add-member: {text}"
+    );
 }
