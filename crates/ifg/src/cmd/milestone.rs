@@ -41,9 +41,12 @@ pub async fn run(command: &MilestoneCommand, cli: &Cli) -> Result<(), AppError> 
 
 async fn list(ctx: &super::CommandContext, cli: &Cli, repo: &RepoContext) -> Result<(), AppError> {
     let milestones = ctx.client.milestones(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let items = milestones.list_raw().collect().await?;
-        output::print_json(&serde_json::Value::Array(items));
+        match &cli.template {
+            Some(template) => output::print_template(&items, template),
+            None => output::print_json(&serde_json::Value::Array(items)),
+        }
         return Ok(());
     }
     let rows: Vec<Vec<String>> = milestones
@@ -87,9 +90,12 @@ async fn create(
         due_date: due,
     };
     let milestones = ctx.client.milestones(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = milestones.create_raw(&options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let milestone = milestones.create(&options).await?;
@@ -116,9 +122,12 @@ async fn edit(
         state: state.or(existing.state.clone()),
         due_date: due.or(existing.due_date.clone()),
     };
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = milestones.update_raw(existing.id, &options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let updated = milestones.update(existing.id, &options).await?;

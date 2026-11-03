@@ -39,7 +39,7 @@ async fn runs(
     limit: Option<u64>,
 ) -> Result<(), AppError> {
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let items: Vec<Value> = ctx
             .client
             .ci(&repo.owner, &repo.name)
@@ -106,9 +106,12 @@ async fn view(
     id: i64,
 ) -> Result<(), AppError> {
     let ci = ctx.client.ci(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = ci.get_raw(id).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let detail = ci.get(id).await?;

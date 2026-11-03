@@ -17,8 +17,12 @@ pub struct Cli {
     pub repo: Option<String>,
 
     /// Output JSON (server field names) instead of a table
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "template")]
     pub json: bool,
+    /// Render each result through a small template (`{{.number}} {{.title}}`,
+    /// nested paths allowed; lists render once per row)
+    #[arg(short = 'q', long, global = true, value_name = "TEMPLATE")]
+    pub template: Option<String>,
 
     /// Disable colored output (also honors NO_COLOR)
     #[arg(long, global = true)]
@@ -81,6 +85,22 @@ pub enum Command {
     },
     /// Show the current branch's pull request and recent pipeline runs
     Status,
+    /// Search repositories, issues and wiki pages
+    Search {
+        /// Query text (the server understands repo:/state: qualifiers)
+        query: String,
+        /// all / repo / issue / wiki
+        #[arg(long = "type", default_value = "all")]
+        search_type: String,
+        /// Stop after N hits (default 30)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// List and manage your notifications
+    Notifications {
+        #[command(subcommand)]
+        command: Option<NotificationsCommand>,
+    },
     /// Print the client version and (when reachable) the server version
     Version,
     /// Print a shell completion script (bash / zsh / fish / powershell)
@@ -227,6 +247,9 @@ pub enum IssueCommand {
         body_file: Option<String>,
         #[arg(long)]
         label: Vec<String>,
+        /// Compose the title and body in $EDITOR (first line = title)
+        #[arg(long)]
+        editor: bool,
     },
     /// Comment on an issue
     Comment {
@@ -293,6 +316,9 @@ pub enum PrCommand {
         body: Option<String>,
         #[arg(long)]
         draft: bool,
+        /// Compose the title and body in $EDITOR (first line = title)
+        #[arg(long)]
+        editor: bool,
     },
     /// Merge a pull request
     Merge {
@@ -492,4 +518,28 @@ pub enum MilestoneCommand {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NotificationsCommand {
+    /// List notifications (default when no subcommand is given)
+    List {
+        /// Only unread notifications
+        #[arg(long)]
+        unread: bool,
+        /// Stop after N entries (default 30)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Mark one notification (or all of them) as read
+    Read {
+        /// Notification id; omit with --all
+        id: Option<i64>,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Delete one notification
+    Delete { id: i64 },
+    /// Print the unread count
+    Count,
 }

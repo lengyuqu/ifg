@@ -891,3 +891,108 @@ async fn release_download_needs_clobber_to_overwrite() {
         .success();
     assert_eq!(std::fs::read(&target).unwrap(), b"new bytes");
 }
+
+#[tokio::test]
+async fn search_table_and_template() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/search"))
+        .and(query_param("q", "fix bug"))
+        .and(query_param("type", "all"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "30"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "results": [
+                {"result_type": "repo", "id": 1, "title": "alice/demo",
+                 "repo_owner": "alice", "repo_name": "demo"},
+                {"result_type": "issue", "id": 2, "title": "fix the bug",
+                 "repo_owner": "alice", "repo_name": "demo", "state": "open", "number": 7}
+            ],
+            "total": 2, "page": 1, "per_page": 30
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let mut table = ifg();
+    let output = table
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_env_token")
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["search", "fix bug"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("repo"), "table: {text}");
+    assert!(text.contains("fix the bug"), "table: {text}");
+
+    let mut templated = ifg();
+    let output = templated
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_env_token")
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["search", "fix bug", "-q", "{{.result_type}} {{.title}}"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("repo alice/demo"), "template: {text}");
+    assert!(text.contains("issue fix the bug"), "template: {text}");
+}
+
+#[tokio::test]
+async fn notifications_list_and_count() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/notifications"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": 3, "user_id": 1, "event_type": "pipeline", "title": "build failed",
+             "body": null, "repo_id": 1, "is_read": false, "created_at": "2026-11-03T10:00:00Z"}
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/notifications/unread-count"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"unread_count": 1})))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let mut cmd = ifg();
+    let output = cmd
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_env_token")
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["notifications"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("build failed"), "list: {text}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("1 unread"),
+        "count hint"
+    );
+
+    let mut count = ifg();
+    let output = count
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_env_token")
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["notifications", "count"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+}

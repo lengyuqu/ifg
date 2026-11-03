@@ -320,6 +320,13 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 
 ## 11. 已决事项（追加）
 
+0'. **v0.4 决策（2026-11-04）**：
+   - `--template` 只做子集（`{{.path}}` + `\n` 转义），**不做 `{{range}}`**：列表逐项渲染已覆盖脚本场景，避免引入模板引擎依赖。
+   - `search` 直接映射 `/search`（results/total/page 信封）；`notifications` 覆盖 list/read/delete/count。
+   - `issue|pr create --editor`：文件首行标题、其余正文，`#` 开头行丢弃；`$VISUAL` 优先于 `$EDITOR`。
+   - `pr diff` 复用输出层能力（TTY 上色 + `$PAGER`）。
+   - 上游 `ironforge create-user`（`79bf88d`）：直接写库 + `--admin`；`create_user` 为 SSO 置 `auth_provider=oauth2` 而密码登录只认 `local`，新增 `user_ops::set_auth_provider` 在建号后置为 `local`（实测可登录）。
+
 0. **fork PR checkout（2026-11-03 M3 后续）**：服务端 PR 详情响应补
    `head_repo_owner` / `head_repo_name`（ironforge 7c9f07e），客户端据此从
    fork 仓库 fetch；重复 checkout 改为快进更新而非报错。e2e 双用户覆盖。

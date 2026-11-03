@@ -13,6 +13,7 @@ mod error;
 mod git;
 mod keyring;
 mod output;
+mod template;
 mod time;
 mod version;
 mod web;
@@ -55,6 +56,12 @@ async fn run(cli: Cli) -> i32 {
         Command::Label { command } => cmd::label::run(command, &cli).await,
         Command::Milestone { command } => cmd::milestone::run(command, &cli).await,
         Command::Status => cmd::status::run(&cli).await,
+        Command::Search {
+            query,
+            search_type,
+            limit,
+        } => cmd::search::run(&cli, query, search_type, *limit).await,
+        Command::Notifications { command } => cmd::notifications::run(command, &cli).await,
         Command::Version => cmd::version::run(&cli).await,
         Command::Completions { .. } => unreachable!("handled before dispatch"),
     };

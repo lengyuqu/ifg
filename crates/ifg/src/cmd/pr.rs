@@ -33,6 +33,7 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
             title,
             body,
             draft,
+            editor,
         } => {
             let args = CreateArgs {
                 base: base.clone(),
@@ -40,6 +41,7 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
                 title: title.clone(),
                 body: body.clone(),
                 draft: *draft,
+                editor: *editor,
             };
             create(&ctx, cli, &repo, &args).await
         }
@@ -83,7 +85,7 @@ async fn list(
         Some(state.as_str())
     };
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let items: Vec<Value> = ctx
             .client
             .pulls(&repo.owner, &repo.name)
@@ -91,7 +93,10 @@ async fn list(
             .limit(limit)
             .collect()
             .await?;
-        output::print_json(&Value::Array(items));
+        match &cli.template {
+            Some(template) => output::print_template(&items, template),
+            None => output::print_json(&Value::Array(items)),
+        }
         return Ok(());
     }
     let prs = ctx
@@ -129,13 +134,16 @@ async fn view(
     comments: bool,
 ) -> Result<(), AppError> {
     let pulls = ctx.client.pulls(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let mut value = pulls.get_raw(number).await?;
         if comments {
             let list = pulls.comments_raw(number).await?;
             value["comments"] = list;
         }
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let pr = pulls.get(number).await?;
@@ -215,13 +223,13 @@ async fn diff(
                     file["status"].as_str().unwrap_or("?")
                 );
                 if let Some(patch) = file["patch"].as_str() {
-                    print!("{patch}");
+                    output::print_diff(patch);
                 }
             }
             Ok(())
         }
         Ok(_) | Err(_) => {
-            print!("{raw}");
+            output::print_diff(&raw);
             Ok(())
         }
     }
@@ -235,6 +243,7 @@ struct CreateArgs {
     title: Option<String>,
     body: Option<String>,
     draft: bool,
+    editor: bool,
 }
 
 async fn create(
@@ -249,7 +258,18 @@ async fn create(
         title,
         body,
         draft,
+        editor,
     } = args.clone();
+    // `--editor` replaces -t/-b with a composed file.
+    let (title, body) = if editor {
+        let (composed_title, composed_body) = super::compose_in_editor(
+            title.as_deref().unwrap_or(""),
+            body.as_deref().unwrap_or(""),
+        )?;
+        (Some(composed_title), Some(composed_body))
+    } else {
+        (title, body)
+    };
     let head = match head {
         Some(head) => head,
         None => current_branch()?,
@@ -287,9 +307,12 @@ async fn create(
         draft,
     };
     let pulls = ctx.client.pulls(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = pulls.create_raw(&options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let pr = pulls.create(&options).await?;
@@ -396,9 +419,12 @@ async fn merge(
         );
         return Ok(());
     }
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = pulls.merge_raw(number, strategy).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let outcome = pulls.merge(number, strategy).await?;

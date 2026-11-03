@@ -13,10 +13,12 @@ mod http;
 mod issues;
 mod labels;
 mod milestones;
+mod notifications;
 mod pagination;
 mod pulls;
 mod releases;
 mod repos;
+mod search;
 mod secret;
 mod users;
 
@@ -27,6 +29,7 @@ pub use http::{Client, ClientBuilder, DEFAULT_BACKOFF, DEFAULT_MAX_RETRIES, DEFA
 pub use issues::{Comment, CreateIssueOptions, Issue, IssueListFilter, Issues, UpdateIssueOptions};
 pub use labels::{Label, LabelOptions, Labels};
 pub use milestones::{Milestone, MilestoneOptions, Milestones};
+pub use notifications::{Notification, Notifications};
 pub use pagination::{Page, PaginationMeta, Paginator, PER_PAGE};
 pub use pulls::{
     CreatePrOptions, MergeOutcome, MergeStrategy, PullRequest, Pulls, ReviewAction, ReviewComment,
@@ -34,5 +37,6 @@ pub use pulls::{
 pub use releases::{Asset, CreateReleaseOptions, Release, Releases, UpdateReleaseOptions};
 pub use repos::{CreateRepoOptions, Repo, Repos};
 pub use reqwest::Method;
+pub use search::{Search, SearchHit, SearchPage};
 pub use secret::Secret;
 pub use users::{has_scope, TokenInfo, UserProfile, Users};

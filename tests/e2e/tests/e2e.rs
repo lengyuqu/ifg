@@ -654,6 +654,31 @@ async fn meta_chain(harness: &Harness, repo_arg: &str, repo_name: &str) -> Resul
         "status output: {out}"
     );
 
+    // search: the repository shows up in the global index.
+    let out = harness.run_ok(&["search", repo_name, "--type", "repo"]);
+    assert!(out.contains(repo_name), "search hit: {out}");
+
+    // search --template renders one line per hit without headers.
+    let out = harness.run_ok(&[
+        "search",
+        repo_name,
+        "--type",
+        "repo",
+        "-q",
+        "{{.result_type}}:{{.title}}",
+    ]);
+    assert!(
+        out.contains(&format!("repo:{repo_name}")),
+        "search template: {out}"
+    );
+
+    // notifications: the counter answers even on a fresh account.
+    let out = harness.run_ok(&["notifications", "count"]);
+    assert!(
+        out.trim().parse::<u64>().is_ok(),
+        "notifications count: {out}"
+    );
+
     // Cleanup the metadata rows.
     harness.run_ok(&["-R", repo_arg, "label", "delete", "defect", "-y"]);
     harness.run_ok(&["-R", repo_arg, "milestone", "delete", "v1", "-y"]);

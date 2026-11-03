@@ -40,9 +40,12 @@ pub async fn run(command: &LabelCommand, cli: &Cli) -> Result<(), AppError> {
 
 async fn list(ctx: &super::CommandContext, cli: &Cli, repo: &RepoContext) -> Result<(), AppError> {
     let labels = ctx.client.labels(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let items = labels.list_raw().collect().await?;
-        output::print_json(&serde_json::Value::Array(items));
+        match &cli.template {
+            Some(template) => output::print_template(&items, template),
+            None => output::print_json(&serde_json::Value::Array(items)),
+        }
         return Ok(());
     }
     let rows: Vec<Vec<String>> = labels
@@ -80,9 +83,12 @@ async fn create(
         description,
     };
     let labels = ctx.client.labels(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = labels.create_raw(&options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let label = labels.create(&options).await?;
@@ -110,9 +116,12 @@ async fn edit(
         color: color.or(existing.color.clone()),
         description: description.or(existing.description.clone()),
     };
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = labels.update_raw(existing.id, &options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let updated = labels.update(existing.id, &options).await?;

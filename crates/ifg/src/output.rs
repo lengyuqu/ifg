@@ -120,6 +120,53 @@ fn page(content: &str) {
     }
 }
 
+/// Print a unified diff: `+` green, `-` red, `@@` cyan on a terminal, and
+/// paged when it is taller than the screen. Piped output stays plain.
+pub fn print_diff(text: &str) {
+    let caps = caps();
+    let mut out = String::with_capacity(text.len() + 64);
+    for line in text.lines() {
+        if caps.color {
+            if line.starts_with("+++") || line.starts_with("---") {
+                out.push_str(line);
+            } else if line.starts_with('+') {
+                out.push_str("\x1b[32m");
+                out.push_str(line);
+                out.push_str("\x1b[0m");
+            } else if line.starts_with('-') {
+                out.push_str("\x1b[31m");
+                out.push_str(line);
+                out.push_str("\x1b[0m");
+            } else if line.starts_with("@@") {
+                out.push_str("\x1b[36m");
+                out.push_str(line);
+                out.push_str("\x1b[0m");
+            } else {
+                out.push_str(line);
+            }
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    let lines = text.lines().count() as u64;
+    if caps.terminal && lines >= caps.pager_at_rows {
+        page(&out);
+    } else {
+        let _ = std::io::stdout().write_all(out.as_bytes());
+    }
+}
+
+/// Render `items` through the `--template` subset, one line-group per item.
+pub fn print_template(items: &[serde_json::Value], template: &str) {
+    let mut out = String::new();
+    for item in items {
+        out.push_str(&crate::template::render(template, item));
+        out.push('\n');
+    }
+    let _ = std::io::stdout().write_all(out.as_bytes());
+}
+
 /// Print a JSON value with two-space indent (EPIPE-tolerant).
 pub fn print_json(value: &serde_json::Value) {
     let text = serde_json::to_string_pretty(value).unwrap_or_default();

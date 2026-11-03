@@ -86,7 +86,7 @@ async fn list(
     limit: Option<u64>,
 ) -> Result<(), AppError> {
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let items: Vec<Value> = ctx
             .client
             .releases(&repo.owner, &repo.name)
@@ -94,7 +94,10 @@ async fn list(
             .limit(limit)
             .collect()
             .await?;
-        output::print_json(&Value::Array(items));
+        match &cli.template {
+            Some(template) => output::print_template(&items, template),
+            None => output::print_json(&Value::Array(items)),
+        }
         return Ok(());
     }
     let releases = ctx
@@ -137,11 +140,14 @@ async fn view(
         .ok_or_else(|| not_found(tag))?;
     let assets = releases.assets(release.id).await?;
 
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = releases.get_raw(release.id).await?;
         let mut value = value;
         value["assets"] = serde_json::json!(assets);
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let rows = vec![
@@ -217,7 +223,10 @@ async fn create(
     let releases = ctx.client.releases(&repo.owner, &repo.name);
     if cli.json && files.is_empty() {
         let value = releases.create_raw(&options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let release = releases.create(&options).await?;
@@ -512,9 +521,12 @@ async fn edit(
         is_draft: draft,
         is_prerelease: prerelease,
     };
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = releases.update_raw(release.id, &options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let updated = releases.update(release.id, &options).await?;

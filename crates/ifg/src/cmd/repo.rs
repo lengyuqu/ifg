@@ -94,7 +94,7 @@ async fn list(
     };
 
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let items: Vec<Value> = ctx
             .client
             .repos()
@@ -102,7 +102,10 @@ async fn list(
             .limit(limit)
             .collect()
             .await?;
-        output::print_json(&Value::Array(items));
+        match &cli.template {
+            Some(template) => output::print_template(&items, template),
+            None => output::print_json(&Value::Array(items)),
+        }
         return Ok(());
     }
 
@@ -149,9 +152,12 @@ async fn view(
     cli: &Cli,
     repo: &crate::context::RepoContext,
 ) -> Result<(), AppError> {
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = ctx.client.repos().get_raw(&repo.owner, &repo.name).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let info = ctx.client.repos().get(&repo.owner, &repo.name).await?;
@@ -191,9 +197,12 @@ async fn create(ctx: &CommandContext, cli: &Cli, args: &CreateArgs) -> Result<()
         default_branch,
         ..Default::default()
     };
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = ctx.client.repos().create_raw(&options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let repo = ctx.client.repos().create(&options).await?;

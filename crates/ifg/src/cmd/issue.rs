@@ -47,6 +47,7 @@ pub async fn run(command: &IssueCommand, cli: &Cli) -> Result<(), AppError> {
             body,
             body_file,
             label,
+            editor,
         } => {
             create(
                 &ctx,
@@ -56,6 +57,7 @@ pub async fn run(command: &IssueCommand, cli: &Cli) -> Result<(), AppError> {
                 body.clone(),
                 body_file.clone(),
                 label.clone(),
+                *editor,
             )
             .await
         }
@@ -109,7 +111,7 @@ async fn list(
 ) -> Result<(), AppError> {
     let filter = filter_of(&state, &label, &assignee);
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let items: Vec<Value> = ctx
             .client
             .issues(&repo.owner, &repo.name)
@@ -117,7 +119,10 @@ async fn list(
             .limit(limit)
             .collect()
             .await?;
-        output::print_json(&Value::Array(items));
+        match &cli.template {
+            Some(template) => output::print_template(&items, template),
+            None => output::print_json(&Value::Array(items)),
+        }
         return Ok(());
     }
 
@@ -160,9 +165,12 @@ async fn view(
     comments: bool,
 ) -> Result<(), AppError> {
     let issues = ctx.client.issues(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = issues.get_raw(number).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let issue = issues.get(number).await?;
@@ -197,6 +205,7 @@ async fn view(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create(
     ctx: &super::CommandContext,
     cli: &Cli,
@@ -205,7 +214,18 @@ async fn create(
     body: Option<String>,
     body_file: Option<String>,
     label: Vec<String>,
+    editor: bool,
 ) -> Result<(), AppError> {
+    // `--editor` replaces -t/-b: the file is the single source of truth.
+    let (title, body) = if editor {
+        let (composed_title, composed_body) = super::compose_in_editor(
+            title.as_deref().unwrap_or(""),
+            body.as_deref().unwrap_or(""),
+        )?;
+        (Some(composed_title), Some(composed_body))
+    } else {
+        (title, body)
+    };
     let title = title.ok_or_else(|| AppError::Usage("issue title required (-t)".into()))?;
     let body = match (body, body_file) {
         (Some(_), Some(_)) => {
@@ -227,9 +247,12 @@ async fn create(
         assignees: None,
     };
     let issues = ctx.client.issues(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = issues.create_raw(&options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let issue = issues.create(&options).await?;
@@ -245,9 +268,12 @@ async fn comment(
     body: &str,
 ) -> Result<(), AppError> {
     let issues = ctx.client.issues(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = issues.add_comment_raw(number, body).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     issues.add_comment(number, body).await?;
@@ -267,9 +293,12 @@ async fn set_state(
         ..Default::default()
     };
     let issues = ctx.client.issues(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = issues.update_raw(number, &options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let issue = issues.update(number, &options).await?;
@@ -344,9 +373,12 @@ async fn edit(
         milestone_id,
     };
     let issues = ctx.client.issues(&repo.owner, &repo.name);
-    if cli.json {
+    if cli.json || cli.template.is_some() {
         let value = issues.update_raw(number, &options).await?;
-        output::print_json(&value);
+        match &cli.template {
+            Some(template) => output::print_template(std::slice::from_ref(&value), template),
+            None => output::print_json(&value),
+        }
         return Ok(());
     }
     let issue = issues.update(number, &options).await?;
