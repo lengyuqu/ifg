@@ -320,6 +320,10 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 
 ## 11. 已决事项（追加）
 
+0'''. **v0.7 决策（2026-11-04）**：
+   - `ifg org` 命令组：list / view / create / members / add-member / remove-member；成员一律按**用户名**操作（add-member 经 `GET /users/{username}` 解析 id），服务端成员列表补 username/display_name（ironforge `1de3e55`），未解析到则回退 `#id` 展示。
+   - 团队（teams）暂不做：权限模型复杂、使用频率低，需要时走 `ifg api`。
+
 0''. **v0.6 决策（2026-11-04）**：
    - `ci logs --follow` 首选 WebSocket（`?since=<已打印行数>` 只补增量），`tokio-tungstenite` 只进 CLI crate，不进 `ifg-client`（保持客户端无 WS 依赖）；握手失败/中途断开 → 退回原轮询并提示。
    - WS 鉴权四个来源：cookie → 子协议 → **Authorization 头** → `?token=`；JWT 校验失败时用 `pat_actor` 解析 PAT。e2e 断言"缺 job 返回 404 而非 401"以证明 PAT 生效。
