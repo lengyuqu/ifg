@@ -320,22 +320,22 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 
 ## 11. 已决事项（追加）
 
-0'''. **v0.7 决策（2026-11-04）**：
+- **v0.7 决策（2026-11-04）**：
    - `ifg org` 命令组：list / view / create / members / add-member / remove-member；成员一律按**用户名**操作（add-member 经 `GET /users/{username}` 解析 id），服务端成员列表补 username/display_name（ironforge `1de3e55`），未解析到则回退 `#id` 展示。
    - 团队（teams）暂不做：权限模型复杂、使用频率低，需要时走 `ifg api`。
 
-0''. **v0.6 决策（2026-11-04）**：
+- **v0.6 决策（2026-11-04）**：
    - `ci logs --follow` 首选 WebSocket（`?since=<已打印行数>` 只补增量），`tokio-tungstenite` 只进 CLI crate，不进 `ifg-client`（保持客户端无 WS 依赖）；握手失败/中途断开 → 退回原轮询并提示。
    - WS 鉴权四个来源：cookie → 子协议 → **Authorization 头** → `?token=`；JWT 校验失败时用 `pat_actor` 解析 PAT。e2e 断言"缺 job 返回 404 而非 401"以证明 PAT 生效。
 
-0'. **v0.4 决策（2026-11-04）**：
+- **v0.4 决策（2026-11-04）**：
    - `--template` 做子集（`{{.path}}`、`\n` 转义、`{{range}}…{{end}}` 可嵌套）：列表仍逐项渲染，`range` 用于嵌套数组（如 issue 的 labels）；不引模板引擎依赖。
    - `search` 直接映射 `/search`（results/total/page 信封）；`notifications` 覆盖 list/read/delete/count。
    - `issue|pr create --editor`：文件首行标题、其余正文，`#` 开头行丢弃；`$VISUAL` 优先于 `$EDITOR`。
    - `pr diff` 复用输出层能力（TTY 上色 + `$PAGER`）。
    - 上游 `ironforge create-user`（`79bf88d`）：直接写库 + `--admin`；`create_user` 为 SSO 置 `auth_provider=oauth2` 而密码登录只认 `local`，新增 `user_ops::set_auth_provider` 在建号后置为 `local`（实测可登录）。
 
-0. **fork PR checkout（2026-11-03 M3 后续）**：服务端 PR 详情响应补
+- **fork PR checkout（2026-11-03 M3 后续）**：服务端 PR 详情响应补
    `head_repo_owner` / `head_repo_name`（ironforge 7c9f07e），客户端据此从
    fork 仓库 fetch；重复 checkout 改为快进更新而非报错。e2e 双用户覆盖。
 1. **二进制名查重（D1，2026-11-03 M4 实测）**：`ifg` 在 crates.io（404）、
