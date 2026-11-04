@@ -97,6 +97,14 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 [MIT](LICENSE)，与 IronForge 一致。
 
+## 平台支持
+
+| 平台 | 状态 |
+|---|---|
+| macOS（arm64 / x86_64） | 已发布，CI + 本地 e2e 覆盖 |
+| Linux（musl，arm64 / x86_64） | 已发布 |
+| Windows | **未验证** —— 交接文档见 [`docs/windows-handover.md`](docs/windows-handover.md) |
+
 ## 开发
 
 ```bash
