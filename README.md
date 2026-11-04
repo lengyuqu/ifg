@@ -8,7 +8,7 @@ IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Iss
 
 ## 安装
 
-发布产物：macOS（arm64/x86_64）与 Linux（musl 静态链接，arm64/x86_64）四架构 tar.gz + `SHA256SUMS`，见
+发布产物：macOS（arm64/x86_64）与 Linux（musl 静态链接，arm64/x86_64）四架构 tar.gz、Windows（x86_64）zip，另附 `SHA256SUMS`，见
 [Releases](https://github.com/lengyuqu/ifg/releases)。
 
 Homebrew：
@@ -26,6 +26,14 @@ SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端
 # 下载对应架构的 tar.gz 与 SHA256SUMS 后先校验
 shasum -a 256 -c SHA256SUMS 2>/dev/null || shasum -a 256 ifg-*.tar.gz
 tar xzf ifg-0.9.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
+```
+
+Windows（PowerShell）：
+
+```powershell
+Get-FileHash .\ifg-0.9.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256  # 对照 SHA256SUMS
+Expand-Archive .\ifg-0.9.0-x86_64-pc-windows-msvc.zip -DestinationPath C:\tools\ifg
+# 把 C:\tools\ifg 加入 PATH；升级前先退出正在运行的 ifg.exe
 ```
 
 从源码（musl 交叉编译需 `zig` + `cargo-zigbuild`）：
@@ -66,6 +74,12 @@ git config --global credential.https://your-forge.example.com.helper "!ifg auth 
 
 凭据助手按主机配置，只对 IronForge 生效，不会替换其他站点已有的 helper（如 osxkeychain）。
 
+Windows 上 helper 必须写成 `.exe`（Git 不接受无扩展名的裸命令）：
+
+```powershell
+git config --global credential.https://your-forge.example.com.helper '!ifg.exe auth git-credential'
+```
+
 手册（man 页随归档一起发布，Homebrew 安装时自动放进 man1）：
 
 ```bash
@@ -83,10 +97,11 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 ## 配置与凭据
 
-- 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`（0600；权限过宽会拒绝加载令牌）
-- 钥匙串（可选）：`token_store = "keyring"` 时 PAT 存系统钥匙串（macOS `security` / Linux `secret-tool`），不落文件
+- 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`；Windows 默认 `%APPDATA%\ironforge\hosts.toml`（POSIX 的 0600 告警不适用，权限由用户目录 ACL 控制）
+- 钥匙串（可选）：`token_store = "keyring"` 时 PAT 存系统钥匙串（macOS `security` / Linux `secret-tool` / Windows 凭据管理器），不落文件
 - `--json` 输出服务端原始字段；`-q/--template` 走轻量子集（`{{.field}}`、`{{.a.b}}`、`{{range .list}}…{{end}}`，列表自动逐项渲染）
 - 管道输出自动关闭颜色与相对时间；`pr diff` 在终端里上色并走分页器
+- Windows 终端：仅在 Windows Terminal / VS Code / mintty（`WT_SESSION`、`TERM_PROGRAM`、`TERM`）下启用颜色，传统 `cmd.exe` 等价 `--no-color`；分页器默认直出，可设 `PAGER` 覆盖
 
 ## 文档
 
@@ -103,7 +118,10 @@ ifg completions bash > /etc/bash_completion.d/ifg
 |---|---|
 | macOS（arm64 / x86_64） | 已发布，CI + 本地 e2e 覆盖 |
 | Linux（musl，arm64 / x86_64） | 已发布 |
-| Windows | **未验证** —— 交接文档见 [`docs/windows-handover.md`](docs/windows-handover.md) |
+| Windows（x86_64-msvc） | 已支持：构建 / 测试 / zip 产物，CI `windows-latest` 覆盖（e2e 仍只在 macOS） |
+
+Windows 已知限制：颜色仅在 Windows Terminal / VS Code / mintty 下启用；默认不启分页器（可用 `PAGER` 覆盖）；
+`--editor` 需要单程序编辑器（如 `notepad`），暂不支持 `code --wait`；未签名 exe 可能触发杀软告警。
 
 ## 开发
 
@@ -111,7 +129,7 @@ ifg completions bash > /etc/bash_completion.d/ifg
 scripts/check.sh    # fmt、clippy、test、audit、ifg-client 依赖边界（CI 同款）
 scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
                     # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
-scripts/release.sh  # 发布产物：四架构交叉编译 + SHA256SUMS
+scripts/release.sh  # 发布产物：四架构 tar.gz + Windows zip + SHA256SUMS（Windows 部分需在 Windows 上运行 `--windows`）
 scripts/bump-tap.sh <version> <formula>  # 发版后同步 Homebrew formula（读 SHA256SUMS）
 scripts/gen-man.sh                       # 重新生成 man/（check.sh 会校验是否最新）
 ```

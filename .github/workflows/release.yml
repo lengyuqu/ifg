@@ -1,8 +1,10 @@
-# Release: a `v*` tag builds the four artifacts and publishes them.
+# Release: a `v*` tag builds five artifacts and publishes them with one
+# merged SHA256SUMS.
 #
-# The build needs macOS (apple targets) + zig (musl targets); the same
-# `scripts/release.sh` works locally, so the workflow only provides the
-# toolchain and uploads dist/.
+# macOS (apple + zig/musl) and Windows (MSVC) must run on their own runners:
+# `ring` needs the platform C toolchain, so the Windows zip cannot be
+# cross-built from macOS. Each job runs the same scripts/release.sh (with
+# --windows on the Windows runner); the publish job merges the checksums.
 name: release
 
 on:
@@ -13,7 +15,7 @@ permissions:
   contents: write
 
 jobs:
-  artifacts:
+  unix:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -32,9 +34,50 @@ jobs:
       - name: build artifacts (adds rustup targets itself)
         run: bash scripts/release.sh
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unix
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: build artifacts (native x86_64-pc-windows-msvc)
+        shell: bash
+        run: bash scripts/release.sh --windows
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [unix, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS (all platforms)
+        run: |
+          cd dist
+          sha256sum ifg-*.tar.gz ifg-*.zip > SHA256SUMS
+          cat SHA256SUMS
+
       - name: publish release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.tar.gz
+            dist/ifg-*.tar.gz
+            dist/ifg-*.zip
             dist/SHA256SUMS

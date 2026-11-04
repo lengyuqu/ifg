@@ -150,4 +150,30 @@ mod tests {
         assert_eq!(title, "Fix the parser");
         assert_eq!(body, "Longer explanation.");
     }
+
+    /// Same flow with a batch-file fake editor: `Command` runs `.cmd` through
+    /// `cmd.exe` on Windows, mirroring how a real editor path is spawned.
+    #[cfg(windows)]
+    #[test]
+    fn editor_composition_splits_title_and_body_windows() {
+        let dir = std::env::temp_dir().join(format!("ifg-editor-test-win-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let script = dir.join("fake-editor.cmd");
+        std::fs::write(
+            &script,
+            "@echo off\r\n\
+             >\"%~1\" echo Fix the parser\r\n\
+             >>\"%~1\" echo.\r\n\
+             >>\"%~1\" echo Longer explanation.\r\n\
+             >>\"%~1\" echo # a comment line\r\n",
+        )
+        .expect("script");
+
+        let result = compose_with_editor(script.to_str().expect("utf8 path"), "", "");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let (title, body) = result.expect("composed");
+        assert_eq!(title, "Fix the parser");
+        assert_eq!(body, "Longer explanation.");
+    }
 }

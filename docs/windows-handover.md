@@ -15,12 +15,19 @@
 
 ### 验收定义（Definition of Done）
 
-- [ ] `cargo build --release -p ifg` 在 Windows 成功，产物 `target/release/ifg.exe`
-- [ ] `cargo test -p ifg -p ifg-client` 全绿（120 个测试，本机）
-- [ ] `ifg doctor` 对一台可达的 IronForge 输出 `all good.`（除 `git` 一项允许 warn）
-- [ ] 手测通过：`auth login` → `repo list` → `issue create` → `pr list` → `pr diff`（有颜色）→ `ci logs --follow`（流式）→ `completions powershell` 可用
-- [ ] CI 新增 `windows` job 且绿
-- [ ] `scripts/release.sh` 产出 `ifg-<ver>-x86_64-pc-windows-msvc.zip` 并进入 `SHA256SUMS`
+- [x] `cargo build --release -p ifg` 在 Windows 成功，产物 `target/release/ifg.exe`
+- [x] `cargo test -p ifg -p ifg-client` 全绿（本机 115 passed；e2e 5 个 `--ignored` 另跑，5/5 通过）
+- [x] `ifg doctor` 对可达的 IronForge 输出 `all good.`（本地 Docker IronForge 0.2.0，仅 `git` 一项 warn）
+- [x] 手测通过：`auth login` → `repo list` → `issue create`（notepad）→ `pr list` → `pr diff`（Windows Terminal 有颜色）→ `completions powershell`；`ci logs --follow` 的真实流式待有 CI runner 的实例补测
+- [ ] CI 新增 `windows` job 且绿（workflow 已加，待推送后首次运行）
+- [x] `scripts/release.sh --windows` 产出 `ifg-0.9.0-x86_64-pc-windows-msvc.zip` 并进入 `SHA256SUMS`（本地已验证；release workflow 待 rc tag dry-run）
+
+> 完成情况（2026-11-04）：W1–W7 已落地，提交见 `feat/windows-support`。
+> 与本文初稿的差异：配置目录在 Windows 回退 `%APPDATA%\ironforge`（PowerShell 通常
+> 没有 `HOME`）；颜色检测额外接受 `TERM`（mintty/Git Bash）；Windows keyring 的凭据管理器
+> target 由 `keyring` crate 生成为 `<host_key>.ifg`（User 为 host_key），功能等价；
+> 发布脚本新增 `--windows`，release workflow 用独立 `windows-latest` job 构建后合并
+> `SHA256SUMS`。未签名 exe 可能被 Defender/杀软拦截，签名不在本次范围。
 
 ---
 

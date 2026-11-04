@@ -23,7 +23,7 @@ static CAPS: OnceLock<Capabilities> = OnceLock::new();
 /// Decide and cache the output capabilities from the global flags.
 pub fn init(no_color: bool) {
     let terminal = std::io::stdout().is_terminal();
-    let color = terminal && !no_color && std::env::var_os("NO_COLOR").is_none();
+    let color = terminal && ansi_terminal() && !no_color && std::env::var_os("NO_COLOR").is_none();
     // `LINES` is advisory; 40 is a sane fallback for "one screenful".
     let rows = std::env::var("LINES")
         .ok()
@@ -35,6 +35,25 @@ pub fn init(no_color: bool) {
         color,
         pager_at_rows: rows,
     });
+}
+
+/// Whether the terminal interprets ANSI escapes. Windows consoles only do so
+/// when virtual-terminal processing is enabled; enabling it needs
+/// `SetConsoleMode` and thus `unsafe`, which the workspace forbids. Require a
+/// known-good terminal instead (Windows Terminal sets `WT_SESSION`, VS Code
+/// and mintty/Git Bash set `TERM_PROGRAM`/`TERM`): plain cmd.exe falls back to
+/// plain output, equivalent to `--no-color`.
+fn ansi_terminal() -> bool {
+    #[cfg(windows)]
+    {
+        ["WT_SESSION", "TERM_PROGRAM", "TERM"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some())
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
 }
 
 fn caps() -> Capabilities {
@@ -89,10 +108,16 @@ pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     }
 }
 
-/// Send large output through `$PAGER` (default `less -R`); falls back to a
-/// plain print when the pager cannot be spawned.
+/// Send large output through `$PAGER` (default `less -R`; no pager on Windows,
+/// where `less` is usually absent and `more` mishandles ANSI escapes). Falls
+/// back to a plain print when the pager cannot be spawned.
 fn page(content: &str) {
-    let pager = std::env::var("PAGER").unwrap_or_else(|_| "less -R".into());
+    let pager = std::env::var("PAGER").ok().or_else(default_pager);
+    let Some(pager) = pager else {
+        print!("{content}");
+        let _ = std::io::stdout().flush();
+        return;
+    };
     let mut parts = pager.split_whitespace();
     let (program, args) = match (parts.next(), parts.collect::<Vec<_>>()) {
         (Some(program), args) => (program, args),
@@ -117,6 +142,17 @@ fn page(content: &str) {
             print!("{content}");
             let _ = std::io::stdout().flush();
         }
+    }
+}
+
+fn default_pager() -> Option<String> {
+    #[cfg(windows)]
+    {
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        Some("less -R".to_string())
     }
 }
 
