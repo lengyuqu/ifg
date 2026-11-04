@@ -127,7 +127,15 @@ Windows 已知限制：颜色仅在 Windows Terminal / VS Code / mintty 下启�
 
 ```bash
 scripts/check.sh    # fmt、clippy、test、audit、ifg-client 依赖边界（CI 同款）
-scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
+```
+
+Windows（PowerShell，无需 Git Bash）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
+```
+
+其余脚本：scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
                     # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
 scripts/release.sh  # 发布产物：四架构 tar.gz + Windows zip + SHA256SUMS（Windows 部分需在 Windows 上运行 `--windows`）
 scripts/bump-tap.sh <version> <formula>  # 发版后同步 Homebrew formula（读 SHA256SUMS）

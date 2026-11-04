@@ -18,7 +18,7 @@
 - [x] `cargo build --release -p ifg` 在 Windows 成功，产物 `target/release/ifg.exe`
 - [x] `cargo test -p ifg -p ifg-client` 全绿（本机 115 passed；e2e 5 个 `--ignored` 另跑，5/5 通过）
 - [x] `ifg doctor` 对可达的 IronForge 输出 `all good.`（本地 Docker IronForge 0.2.0，仅 `git` 一项 warn）
-- [x] 手测通过：`auth login` → `repo list` → `issue create`（notepad）→ `pr list` → `pr diff`（Windows Terminal 有颜色）→ `completions powershell`；`ci logs --follow` 的真实流式待有 CI runner 的实例补测
+- [x] 手测通过：`auth login` → `repo list` → `issue create`（notepad）→ `pr list` → `pr diff`（Windows Terminal 有颜色）→ `completions powershell`；`ci logs --follow` 已用本地 Docker runner 验证（等待 pending → 日志到达 → stream closed），runner 在任务结束时一次性上传日志，逐行实时取决于服务端 runner 实现
 - [ ] CI 新增 `windows` job 且绿（workflow 已加，待推送后首次运行）
 - [x] `scripts/release.sh --windows` 产出 `ifg-0.9.0-x86_64-pc-windows-msvc.zip` 并进入 `SHA256SUMS`（本地已验证；release workflow 待 rc tag dry-run）
 
@@ -28,6 +28,12 @@
 > target 由 `keyring` crate 生成为 `<host_key>.ifg`（User 为 host_key），功能等价；
 > 发布脚本新增 `--windows`，release workflow 用独立 `windows-latest` job 构建后合并
 > `SHA256SUMS`。未签名 exe 可能被 Defender/杀软拦截，签名不在本次范围。
+>
+> 本地补充验证：Linux 容器门禁（fmt/clippy/test/man/依赖边界）通过；
+> `cargo audit`（261 个依赖）无告警；`scripts/check.ps1` 已提供并通过。
+> 本地 Docker 服务端为 `84ececc`（晚于 workspace pin 的 `ce4834f`）：重试 pipeline 的
+> `triggered_by` 返回整数，`ifg ci runs` 会解码失败；升级 `ironforge_rev` 时需同步放宽
+> 客户端字段类型。
 
 ---
 
@@ -235,7 +241,7 @@ cargo test -p ifg -p ifg-client
 ```
 
 `scripts/check.sh` 需要 bash（Git Bash 可用：`& 'C:\Program Files\Git\bin\bash.exe' scripts/check.sh`）。
-若能顺手补一个 `scripts/check.ps1` 等价脚本，是加分项（非必须）。
+`scripts/check.ps1` 已提供：纯 PowerShell 等价门禁（fmt/clippy/man/test/audit/依赖边界），无需 Git Bash。
 
 ---
 
