@@ -120,6 +120,9 @@ ifg completions bash > /etc/bash_completion.d/ifg
 | Linux（musl，arm64 / x86_64） | 已发布 |
 | Windows（x86_64-msvc） | 已支持：构建 / 测试 / zip 产物，CI `windows-latest` 覆盖（e2e 仍只在 macOS） |
 
+Windows 已知限制：颜色仅在 Windows Terminal / VS Code / mintty 下启用；默认不启分页器（可用 `PAGER` 覆盖）；
+`--editor` 需要单程序编辑器（如 `notepad`），暂不支持 `code --wait`；未签名 exe 可能触发杀软告警。
+
 ## 开发
 
 ```bash
