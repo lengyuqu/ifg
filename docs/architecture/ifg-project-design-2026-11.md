@@ -321,7 +321,13 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 ## 11. 已决事项（追加）
 
 - **v0.7 决策（2026-11-04）**：
-   - 契约测试上游化：ifg 依赖的 7 个接口形状搬到 IronForge 仓库
+   - **CLI 健康监控（ironforge `22f43c8`）**：`/metrics`（需令牌）上新增
+  `pat_auth_total{outcome=ok|invalid_token|scope_denied|inactive_owner}` 与
+  `ws_connections_total{channel}` / `ws_active_connections{channel}`。
+  排障口径：`invalid_token` 突增 → 用户令牌过期或被删；`scope_denied` → 令牌缺 scope；
+  `inactive_owner` → 账号被停用；`ws_active_connections` 长期不降 → 客户端未正常关闭；
+  `ws_connections_total` 增速远高于活跃数 → 反复重连（看服务端重启或代理超时）。
+- 契约测试上游化：ifg 依赖的 7 个接口形状搬到 IronForge 仓库
      （`crates/rg-http/tests/cli_contract_tests.rs`，ironforge `dba4366`）：
      users/{username}、releases/tags、orgs members 的 username、label PATCH 落库、
      openapi 版本、PAT 用于 HTTP 与 WS、PR 详情与行内评论字段。
