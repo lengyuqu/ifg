@@ -20,7 +20,7 @@ pub struct Pipeline {
     pub ref_name: String,
     pub status: String,
     pub trigger_type: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "triggered_by_string")]
     pub triggered_by: Option<String>,
     #[serde(default)]
     pub started_at: Option<String>,
@@ -28,6 +28,20 @@ pub struct Pipeline {
     pub finished_at: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
+}
+
+/// `triggered_by` is a username string on some server versions and the user id
+/// as a number on others (notably retried pipelines). Accept both; callers
+/// only render it.
+fn triggered_by_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.map(|value| match value {
+        Value::String(text) => text,
+        other => other.to_string(),
+    }))
 }
 
 /// A stage inside a pipeline detail.
@@ -270,5 +284,33 @@ mod tests {
             assert!(!job(status).is_terminal(), "{status}");
         }
         assert!(!job("running").is_blocked());
+    }
+
+    fn pipeline(triggered_by: serde_json::Value) -> Pipeline {
+        serde_json::from_value(serde_json::json!({
+            "id": 2,
+            "repo_id": 3,
+            "ref_name": "refs/heads/main",
+            "status": "success",
+            "trigger_type": "retry",
+            "triggered_by": triggered_by,
+            "started_at": null,
+            "finished_at": null,
+            "created_at": null
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn triggered_by_accepts_number_string_and_null() {
+        assert_eq!(
+            pipeline(serde_json::json!(4)).triggered_by.as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            pipeline(serde_json::json!("alice")).triggered_by.as_deref(),
+            Some("alice")
+        );
+        assert_eq!(pipeline(serde_json::json!(null)).triggered_by, None);
     }
 }
