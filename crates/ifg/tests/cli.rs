@@ -1077,3 +1077,29 @@ async fn org_list_members_and_add() {
         "add-member: {text}"
     );
 }
+
+#[test]
+fn help_carries_examples_and_long_descriptions() {
+    let top = ifg().arg("--help").output().unwrap();
+    assert!(top.status.success());
+    let text = String::from_utf8_lossy(&top.stdout);
+    assert!(text.contains("EXAMPLES:"), "examples block: {text}");
+    assert!(text.contains("ifg pr checkout 12"), "example line: {text}");
+    assert!(text.contains("man ifg"), "man page hint: {text}");
+
+    // `ifg help <group>` shows the long description, `-h` the short one.
+    let long = ifg().args(["help", "pr"]).output().unwrap();
+    let text = String::from_utf8_lossy(&long.stdout);
+    assert!(text.contains("pr-<number>"), "long about: {text}");
+    assert!(
+        text.contains("refs/pull/<n>/head"),
+        "long about detail: {text}"
+    );
+
+    let short = ifg().args(["pr", "-h"]).output().unwrap();
+    let text = String::from_utf8_lossy(&short.stdout);
+    assert!(
+        !text.contains("refs/pull/<n>/head"),
+        "short help stays short"
+    );
+}

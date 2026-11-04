@@ -321,6 +321,11 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 ## 11. 已决事项（追加）
 
 - **v0.7 决策（2026-11-04）**：
+   - 文档面：`--help` 走 clap 长描述（`long_about` + `after_help` 示例），`-h` 保持一行摘要；
+     man 页由 `clap_mangen` 从同一份定义生成（`crates/ifg/examples/gen_man.rs`），`man/*.1` 入库，
+     `scripts/gen-man.sh --check` 进 check.sh/CI，归档内附 `man/`，brew formula `man1.install`。
+   - 理由：命令面已覆盖 8 组，README 不可能逐条讲；man 页与 `help` 同源，不会漂移。
+
    - `ifg org` 命令组：list / view / create / members / add-member / remove-member；成员一律按**用户名**操作（add-member 经 `GET /users/{username}` 解析 id），服务端成员列表补 username/display_name（ironforge `1de3e55`），未解析到则回退 `#id` 展示。
    - 团队（teams）暂不做：权限模型复杂、使用频率低，需要时走 `ifg api`。
 

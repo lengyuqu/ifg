@@ -1,0 +1,15 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH status 1  "status " 
+.SH NAME
+status \- Show the current branch\*(Aqs pull request and recent pipeline runs
+.SH SYNOPSIS
+\fBstatus\fR [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Show the current branch\*(Aqs pull request and recent pipeline runs
+.PP
+A one\-screen answer to "where am I": the repository, the branch, the open PR whose head is this branch, and the last few pipeline runs for it. Must be run inside a git checkout.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)

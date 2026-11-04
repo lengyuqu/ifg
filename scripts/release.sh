@@ -45,8 +45,10 @@ for target in "${APPLE_TARGETS[@]}" "${MUSL_TARGETS[@]}"; do
     # package managers, `tar xzf … && ./ifg --version` works, and the
     # version/target stays in the archive name.
     cp "target/$target/release/ifg" "dist/ifg"
-    tar -C dist -czf "dist/ifg-$VERSION-$target.tar.gz" ifg
-    rm "dist/ifg"
+    cp -R man "dist/man"
+    # The archive carries the binary plus the generated man pages.
+    tar -C dist -czf "dist/ifg-$VERSION-$target.tar.gz" ifg man
+    rm -rf "dist/ifg" "dist/man"
 done
 
 step "SHA256SUMS"

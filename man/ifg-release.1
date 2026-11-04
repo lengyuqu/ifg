@@ -1,0 +1,40 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH release 1  "release " 
+.SH NAME
+release \- Work with releases and their assets
+.SH SYNOPSIS
+\fBrelease\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Work with releases and their assets
+.PP
+`release download` verifies every asset against the server\-provided SHA\-256 and deletes it on mismatch. `release create` uploads files with a streaming request, so large artifacts do not sit in memory.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.SH SUBCOMMANDS
+.TP
+release\-list(1)
+List releases
+.TP
+release\-view(1)
+Show one release (by tag) with its assets
+.TP
+release\-create(1)
+Create a release and optionally upload files
+.TP
+release\-upload(1)
+Upload files as assets of a release
+.TP
+release\-edit(1)
+Edit a release\*(Aqs title, notes or flags
+.TP
+release\-delete(1)
+Delete a release (asks for confirmation unless \-\-yes)
+.TP
+release\-download(1)
+Download release assets (SHA\-256 verified) into the current directory
+.TP
+release\-help(1)
+Print this message or the help of the given subcommand(s)

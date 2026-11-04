@@ -1,0 +1,30 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH api 1  "api " 
+.SH NAME
+api \- Raw pass\-through to the IronForge REST API (paths relative to /api/v1/)
+.SH SYNOPSIS
+\fBapi\fR [\fB\-X\fR|\fB\-\-method\fR] [\fB\-f\fR|\fB\-\-field\fR] [\fB\-\-input\fR] [\fB\-\-paginate\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+.SH DESCRIPTION
+Raw pass\-through to the IronForge REST API (paths relative to /api/v1/)
+.PP
+Long\-tail endpoints (wiki, webhooks, packages, secrets, runners) work here until they get first\-class commands. `\-f key=value` sends a JSON field, `\-\-input file` sends a raw body, and `\-\-paginate` merges the `data` arrays of every page into one array (GET only).
+.SH OPTIONS
+.TP
+\fB\-X\fR, \fB\-\-method\fR \fI<METHOD>\fR [default: GET]
+HTTP method (default GET)
+.TP
+\fB\-f\fR, \fB\-\-field\fR \fI<KEY=VALUE>\fR
+Add a field. With GET these become query parameters; with other methods they form a JSON body of strings
+.TP
+\fB\-\-input\fR \fI<FILE>\fR
+Read the JSON request body from a file ("\-" for stdin)
+.TP
+\fB\-\-paginate\fR
+Follow pagination and merge all `data` arrays into one JSON array
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIPATH\fR>
+Path relative to /api/v1/, e.g. "users/me"

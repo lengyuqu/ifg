@@ -5,22 +5,66 @@ use clap::{ArgAction, Parser, Subcommand};
 
 /// Work with IronForge repositories, issues, pull requests, CI and releases
 /// from the terminal.
+///
+/// `ifg` talks to the IronForge REST API with a personal access token. The
+/// token is validated by `auth login`, stored in
+/// `$XDG_CONFIG_HOME/ironforge/hosts.toml` (or the system keychain when
+/// `token_store = "keyring"`), and reused by every command.
+///
+/// Machine-readable output: `--json` prints the server's own field names,
+/// `-q/--template` renders a small template per result
+/// (`{{.number}} {{.title}}`, `{{range .labels}}{{.}} {{end}}`). Colors,
+/// relative timestamps and the pager only switch on when stdout is a
+/// terminal.
+///
+/// Long-tail API surface (wiki, webhooks, packages, secrets, …) is reachable
+/// through `ifg api <path>`.
 #[derive(Debug, Parser)]
-#[command(name = "ifg", version, arg_required_else_help = true)]
+#[command(
+    name = "ifg",
+    version,
+    arg_required_else_help = true,
+    after_help = "EXAMPLES:
+  ifg auth login --host https://forge.example.com   store a token for a host
+  ifg issue list -R alice/demo --state open        list open issues
+  ifg pr checkout 12                               fetch a PR into pr-12
+  ifg ci logs 7 --follow                           stream a job log
+  ifg pr list -q '{{.number}} {{.title}}'           script-friendly output
+  ifg api users/me                                 raw API passthrough
+
+Run `ifg help <command>` for the full description of one command,
+or `man ifg` / `man ifg-<command>` when the man pages are installed."
+)]
 pub struct Cli {
     /// Host name from the config, or a base URL like https://forge.example.com
+    ///
+    /// Resolution order: this flag, `IRONFORGE_URL`, the repository's git
+    /// remote (when run inside a checkout), then `default_host` from the
+    /// config file.
     #[arg(long, global = true, value_name = "NAME|URL")]
     pub host: Option<String>,
 
     /// Target repository as OWNER/NAME, or a full remote URL
+    ///
+    /// Inside a git checkout `ifg` infers OWNER/NAME from `origin`, so the
+    /// flag is only needed outside a repository or to target another one.
     #[arg(short = 'R', long, global = true, value_name = "OWNER/NAME")]
     pub repo: Option<String>,
 
     /// Output JSON (server field names) instead of a table
+    ///
+    /// Field names are the server's own, so `jq` expressions from the API
+    /// docs work unchanged. Mutually exclusive with `--template`.
     #[arg(long, global = true, conflicts_with = "template")]
     pub json: bool,
     /// Render each result through a small template (`{{.number}} {{.title}}`,
     /// nested paths allowed; lists render once per row)
+    ///
+    /// Supported subset: `{{.field}}`, `{{.nested.field}}`, `{{.array.0}}`,
+    /// `{{range .list}}…{{end}}` (nestable; objects iterate their values) and
+    /// the escapes `\n` / `\t`. Missing fields render empty. Lists render the
+    /// template once per item, so `{{range}}` is only needed for nested
+    /// arrays such as an issue's labels.
     #[arg(short = 'q', long, global = true, value_name = "TEMPLATE")]
     pub template: Option<String>,
 
@@ -39,11 +83,23 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Manage credentials for IronForge hosts
+    ///
+    /// Tokens are personal access tokens created in the web UI
+    /// (Settings → Tokens). `auth login` reads one from a no-echo prompt on a
+    /// terminal, or from stdin with `--with-token`/a pipe. `token_store =
+    /// "keyring"` in the config keeps the token out of the config file.
+    /// `auth git-credential` implements the git credential helper protocol so
+    /// `git clone`/`push` reuse the same token.
     Auth {
         #[command(subcommand)]
         command: AuthCommand,
     },
     /// Raw pass-through to the IronForge REST API (paths relative to /api/v1/)
+    ///
+    /// Long-tail endpoints (wiki, webhooks, packages, secrets, runners) work
+    /// here until they get first-class commands. `-f key=value` sends a JSON
+    /// field, `--input file` sends a raw body, and `--paginate` merges the
+    /// `data` arrays of every page into one array (GET only).
     Api {
         #[command(flatten)]
         args: ApiArgs,
@@ -59,16 +115,32 @@ pub enum Command {
         command: IssueCommand,
     },
     /// Work with pull requests (`checkout` fetches the head branch)
+    ///
+    /// `ifg pr create` defaults `--head` to the current branch and refuses to
+    /// open a PR whose commits are not pushed yet. `checkout` fetches the PR
+    /// head — from the fork when the PR came from one — into a local branch
+    /// named `pr-<number>`; running it again fast-forwards that branch, and
+    /// it falls back to the server's `refs/pull/<n>/head` mirror when the
+    /// head branch has been deleted.
     Pr {
         #[command(subcommand)]
         command: PrCommand,
     },
     /// Work with CI pipelines
+    ///
+    /// `ci logs --follow` streams the job log over a WebSocket and resumes
+    /// from the last printed line when the connection drops; servers without
+    /// WebSocket support fall back to polling. `ci approve` clears an
+    /// environment gate; `ci retry` re-runs a finished pipeline.
     Ci {
         #[command(subcommand)]
         command: CiCommand,
     },
     /// Work with releases and their assets
+    ///
+    /// `release download` verifies every asset against the server-provided
+    /// SHA-256 and deletes it on mismatch. `release create` uploads files
+    /// with a streaming request, so large artifacts do not sit in memory.
     Release {
         #[command(subcommand)]
         command: ReleaseCommand,
@@ -84,8 +156,16 @@ pub enum Command {
         command: MilestoneCommand,
     },
     /// Show the current branch's pull request and recent pipeline runs
+    ///
+    /// A one-screen answer to "where am I": the repository, the branch, the
+    /// open PR whose head is this branch, and the last few pipeline runs for
+    /// it. Must be run inside a git checkout.
     Status,
     /// Search repositories, issues and wiki pages
+    ///
+    /// `--type` narrows to repo/issue/wiki (default: all). The server
+    /// understands qualifiers such as `repo:owner/name` and `state:open` in
+    /// the query text.
     Search {
         /// Query text (the server understands repo:/state: qualifiers)
         query: String,
@@ -97,6 +177,11 @@ pub enum Command {
         limit: Option<u64>,
     },
     /// Work with organizations
+    ///
+    /// Members are addressed by username: `org add-member` resolves the name
+    /// through `GET /users/{username}` and posts the numeric id, and
+    /// `org members` shows the username the server resolves for each row
+    /// (falling back to `#id` when the account is gone).
     Org {
         #[command(subcommand)]
         command: OrgCommand,

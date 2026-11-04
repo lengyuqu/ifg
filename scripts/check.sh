@@ -14,6 +14,9 @@ cargo fmt --all --check
 step "cargo clippy"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 
+step "man pages are generated"
+bash scripts/gen-man.sh --check
+
 step "cargo test"
 cargo test --workspace --locked
 

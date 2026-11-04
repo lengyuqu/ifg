@@ -1,0 +1,24 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH search 1  "search " 
+.SH NAME
+search \- Search repositories, issues and wiki pages
+.SH SYNOPSIS
+\fBsearch\fR [\fB\-\-type\fR] [\fB\-\-limit\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIQUERY\fR> 
+.SH DESCRIPTION
+Search repositories, issues and wiki pages
+.PP
+`\-\-type` narrows to repo/issue/wiki (default: all). The server understands qualifiers such as `repo:owner/name` and `state:open` in the query text.
+.SH OPTIONS
+.TP
+\fB\-\-type\fR \fI<SEARCH_TYPE>\fR [default: all]
+all / repo / issue / wiki
+.TP
+\fB\-\-limit\fR \fI<LIMIT>\fR
+Stop after N hits (default 30)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIQUERY\fR>
+Query text (the server understands repo:/state: qualifiers)

@@ -2,7 +2,7 @@
 
 IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
 
-> 状态：v0.7.1 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
+> 状态：v0.8.0 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
 
 与 IronForge 自带的 `ironforge` 二进制不同，`ifg` 不连数据库、不做运维，只用个人访问令牌（PAT）调用公开 API，可以装在任何机器上。
 
@@ -25,7 +25,7 @@ SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端
 ```bash
 # 下载对应架构的 tar.gz 与 SHA256SUMS 后先校验
 shasum -a 256 -c SHA256SUMS 2>/dev/null || shasum -a 256 ifg-*.tar.gz
-tar xzf ifg-0.7.1-<target>.tar.gz && sudo mv ifg /usr/local/bin/
+tar xzf ifg-0.8.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
 ```
 
 从源码（musl 交叉编译需 `zig` + `cargo-zigbuild`）：
@@ -65,6 +65,14 @@ git config --global credential.https://your-forge.example.com.helper "!ifg auth 
 
 凭据助手按主机配置，只对 IronForge 生效，不会替换其他站点已有的 helper（如 osxkeychain）。
 
+手册（man 页随归档一起发布，Homebrew 安装时自动放进 man1）：
+
+```bash
+man ifg            # 总览：全局开关、退出码、示例
+man ifg-pr         # 单命令：ifg pr ..., ifg org ..., ifg ci ...
+ifg help pr        # 同一份长描述，不装 man 也能看
+```
+
 命令补全：
 
 ```bash
@@ -96,6 +104,7 @@ scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 loca
                     # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
 scripts/release.sh  # 发布产物：四架构交叉编译 + SHA256SUMS
 scripts/bump-tap.sh <version> <formula>  # 发版后同步 Homebrew formula（读 SHA256SUMS）
+scripts/gen-man.sh                       # 重新生成 man/（check.sh 会校验是否最新）
 ```
 
 工具链版本固定在 `rust-toolchain.toml`（若设置了 `RUSTUP_TOOLCHAIN` 环境变量，它会覆盖该文件）。
