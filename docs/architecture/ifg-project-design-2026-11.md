@@ -321,6 +321,12 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 ## 11. 已决事项（追加）
 
 - **v0.7 决策（2026-11-04）**：
+   - 契约测试上游化：ifg 依赖的 7 个接口形状搬到 IronForge 仓库
+     （`crates/rg-http/tests/cli_contract_tests.rs`，ironforge `dba4366`）：
+     users/{username}、releases/tags、orgs members 的 username、label PATCH 落库、
+     openapi 版本、PAT 用于 HTTP 与 WS、PR 详情与行内评论字段。
+     分工：上游测试防「形状变了」，ifg 的 `fixtures/openapi` 快照防「接口消失了」。
+
    - 文档面：`--help` 走 clap 长描述（`long_about` + `after_help` 示例），`-h` 保持一行摘要；
      man 页由 `clap_mangen` 从同一份定义生成（`crates/ifg/examples/gen_man.rs`），`man/*.1` 入库，
      `scripts/gen-man.sh --check` 进 check.sh/CI，归档内附 `man/`，brew formula `man1.install`。
