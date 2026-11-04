@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH api 1  "api " 
+.TH ifg-api 1  "ifg-api 0.8.0" 
 .SH NAME
-api \- Raw pass\-through to the IronForge REST API (paths relative to /api/v1/)
+ifg\-api \- Raw pass\-through to the IronForge REST API (paths relative to /api/v1/)
 .SH SYNOPSIS
-\fBapi\fR [\fB\-X\fR|\fB\-\-method\fR] [\fB\-f\fR|\fB\-\-field\fR] [\fB\-\-input\fR] [\fB\-\-paginate\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+\fBifg api\fR [\fB\-X\fR|\fB\-\-method\fR] [\fB\-f\fR|\fB\-\-field\fR] [\fB\-\-input\fR] [\fB\-\-paginate\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIPATH\fR> 
 .SH DESCRIPTION
 Raw pass\-through to the IronForge REST API (paths relative to /api/v1/)
 .PP
@@ -26,5 +26,10 @@ Follow pagination and merge all `data` arrays into one JSON array
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
 <\fIPATH\fR>
 Path relative to /api/v1/, e.g. "users/me"
+.SH VERSION
+v0.8.0

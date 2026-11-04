@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH ci 1  "ci " 
+.TH ifg-ci 1  "ifg-ci 0.8.0" 
 .SH NAME
-ci \- Work with CI pipelines
+ifg\-ci \- Work with CI pipelines
 .SH SYNOPSIS
-\fBci\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+\fBifg ci\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
 Work with CI pipelines
 .PP
@@ -13,25 +13,30 @@ Work with CI pipelines
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
 .SH SUBCOMMANDS
 .TP
-ci\-runs(1)
+ifg\-ci\-runs(1)
 List pipeline runs
 .TP
-ci\-view(1)
+ifg\-ci\-view(1)
 Show a pipeline with its stages and jobs
 .TP
-ci\-logs(1)
+ifg\-ci\-logs(1)
 Print a job log; \-\-follow polls until the job finishes
 .TP
-ci\-cancel(1)
+ifg\-ci\-cancel(1)
 Cancel a running pipeline
 .TP
-ci\-retry(1)
+ifg\-ci\-retry(1)
 Retry a pipeline
 .TP
-ci\-approve(1)
+ifg\-ci\-approve(1)
 Approve an environment\-gated job
 .TP
-ci\-help(1)
+ifg\-ci\-help(1)
 Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.8.0

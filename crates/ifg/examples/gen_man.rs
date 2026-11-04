@@ -27,8 +27,21 @@ fn main() -> std::io::Result<()> {
         if matches!(name, "help") {
             continue;
         }
+        // The page must identify as `ifg-<cmd>` (NAME) while the usage line
+        // reads `ifg <cmd> …` like the real invocation.
+        // clap wants 'static strings here; the generator is a short-lived
+        // process, so leaking the two names is harmless.
+        let page_name: &'static str = Box::leak(format!("ifg-{name}").into_boxed_str());
+        let bin_name: &'static str = Box::leak(format!("ifg {name}").into_boxed_str());
+        let named = subcommand
+            .clone()
+            .name(page_name)
+            .display_name(page_name)
+            .bin_name(bin_name)
+            // Subcommands do not inherit `version`; the man header wants it.
+            .version(env!("CARGO_PKG_VERSION"));
         let page = format!("ifg-{name}.1");
-        write_page(subcommand, &out, &page)?;
+        write_page(&named, &out, &page)?;
     }
     println!("wrote man pages to {}", out.display());
     Ok(())

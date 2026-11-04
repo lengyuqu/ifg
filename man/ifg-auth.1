@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH auth 1  "auth " 
+.TH ifg-auth 1  "ifg-auth 0.8.0" 
 .SH NAME
-auth \- Manage credentials for IronForge hosts
+ifg\-auth \- Manage credentials for IronForge hosts
 .SH SYNOPSIS
-\fBauth\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+\fBifg auth\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
 Manage credentials for IronForge hosts
 .PP
@@ -13,22 +13,27 @@ Tokens are personal access tokens created in the web UI (Settings → Tokens). `
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
 .SH SUBCOMMANDS
 .TP
-auth\-login(1)
+ifg\-auth\-login(1)
 Log in with a personal access token (validates it against /users/me)
 .TP
-auth\-status(1)
+ifg\-auth\-status(1)
 List configured hosts, token prefixes and usable scopes
 .TP
-auth\-logout(1)
+ifg\-auth\-logout(1)
 Remove local credentials (the token stays valid server\-side)
 .TP
-auth\-token(1)
+ifg\-auth\-token(1)
 Print the token of the resolved host (for scripts)
 .TP
-auth\-git\-credential(1)
+ifg\-auth\-git\-credential(1)
 git credential helper: answer `get` for configured hosts only (protocol and host must both match). Configure it for your host only: git config \-\-global credential.https://HOST.helper "!ifg auth git\-credential"
 .TP
-auth\-help(1)
+ifg\-auth\-help(1)
 Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.8.0

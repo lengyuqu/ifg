@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH pr 1  "pr " 
+.TH ifg-pr 1  "ifg-pr 0.8.0" 
 .SH NAME
-pr \- Work with pull requests (`checkout` fetches the head branch)
+ifg\-pr \- Work with pull requests (`checkout` fetches the head branch)
 .SH SYNOPSIS
-\fBpr\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+\fBifg pr\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
 Work with pull requests (`checkout` fetches the head branch)
 .PP
@@ -13,28 +13,33 @@ Work with pull requests (`checkout` fetches the head branch)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
 .SH SUBCOMMANDS
 .TP
-pr\-list(1)
+ifg\-pr\-list(1)
 List pull requests
 .TP
-pr\-view(1)
+ifg\-pr\-view(1)
 Show one pull request
 .TP
-pr\-diff(1)
+ifg\-pr\-diff(1)
 Print the diff of a pull request
 .TP
-pr\-create(1)
+ifg\-pr\-create(1)
 Create a pull request (head defaults to the current branch)
 .TP
-pr\-merge(1)
+ifg\-pr\-merge(1)
 Merge a pull request
 .TP
-pr\-review(1)
+ifg\-pr\-review(1)
 Review a pull request
 .TP
-pr\-checkout(1)
+ifg\-pr\-checkout(1)
 Fetch the PR head branch and check it out as pr\-<number>
 .TP
-pr\-help(1)
+ifg\-pr\-help(1)
 Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.8.0
