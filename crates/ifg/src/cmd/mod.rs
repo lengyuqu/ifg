@@ -4,6 +4,7 @@
 pub mod api;
 pub mod auth;
 pub mod ci;
+pub mod doctor;
 pub mod issue;
 pub mod label;
 pub mod milestone;

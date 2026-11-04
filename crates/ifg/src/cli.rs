@@ -191,6 +191,11 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<NotificationsCommand>,
     },
+    /// Check the whole setup: host, token, scopes, server version, streaming
+    ///
+    /// Answers "why does this command fail" without a debugging session, and
+    /// exits 1 when something is actually broken (warnings do not fail).
+    Doctor,
     /// Print the client version and (when reachable) the server version
     Version,
     /// Print a shell completion script (bash / zsh / fish / powershell)

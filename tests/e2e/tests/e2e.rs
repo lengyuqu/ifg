@@ -748,6 +748,12 @@ async fn meta_chain(harness: &Harness, repo_arg: &str, repo_name: &str) -> Resul
         "notifications count: {out}"
     );
 
+    // doctor: every check passes against a healthy instance + repository.
+    let out = harness.run_ok(&["-R", repo_arg, "doctor"]);
+    assert!(out.contains("all good."), "doctor: {out}");
+    assert!(out.contains("repo scope works"), "doctor scope: {out}");
+    assert!(out.contains("WebSocket available"), "doctor ws: {out}");
+
     // Cleanup the metadata rows.
     harness.run_ok(&["-R", repo_arg, "label", "delete", "defect", "-y"]);
     harness.run_ok(&["-R", repo_arg, "milestone", "delete", "v1", "-y"]);

@@ -64,6 +64,7 @@ async fn run(cli: Cli) -> i32 {
         Command::Notifications { command } => cmd::notifications::run(command, &cli).await,
         Command::Org { command } => cmd::org::run(command, &cli).await,
         Command::Version => cmd::version::run(&cli).await,
+        Command::Doctor => cmd::doctor::run(&cli).await,
         Command::Completions { .. } => unreachable!("handled before dispatch"),
     };
     match result {

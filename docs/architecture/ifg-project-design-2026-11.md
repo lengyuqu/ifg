@@ -321,6 +321,12 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 ## 11. 已决事项（追加）
 
 - **v0.7 决策（2026-11-04）**：
+   - `ifg doctor`：一条命令自检 host 来源 / 令牌存在 / 账号身份 / `repo` scope /
+     服务端版本（对比 MIN_SERVER_VERSION）/ WS 握手 / 仓库可读 / git 凭据助手。
+     三档结果（ok/warn/fail），**只有 fail 才返回 1**；`--json` 可脚本化。
+     设计取舍：scope 探测用 `GET /repos/{owner}`（需要 repo scope），不用 `/search`
+     ——后者允许匿名访问，坏令牌也会 200，会给出假的 ok。
+
    - **CLI 健康监控（ironforge `22f43c8`）**：`/metrics`（需令牌）上新增
   `pat_auth_total{outcome=ok|invalid_token|scope_denied|inactive_owner}` 与
   `ws_connections_total{channel}` / `ws_active_connections{channel}`。

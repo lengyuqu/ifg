@@ -1103,3 +1103,83 @@ fn help_carries_examples_and_long_descriptions() {
         "short help stays short"
     );
 }
+
+#[tokio::test]
+async fn doctor_reports_ok_for_a_healthy_setup() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "ok", "version": "0.2.0", "phase": 22,
+            "checks": {"database": "ok"}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/users/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(me_body()))
+        .mount(&server)
+        .await;
+    // `repo` scope probe: listing the caller's repositories.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [], "pagination": {"page": 1, "per_page": 1, "total": 0,
+            "total_pages": 0, "has_next": false, "has_prev": false}
+        })))
+        .mount(&server)
+        .await;
+
+    // A directory without a git remote keeps the `repo` check a warning.
+    let workdir = TempDir::new().unwrap();
+    let mut cmd = ifg();
+    let output = cmd
+        .current_dir(workdir.path())
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_env_token")
+        .env("XDG_CONFIG_HOME", TempDir::new().unwrap().path())
+        .arg("doctor")
+        .output()
+        .unwrap();
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("account"), "{text}");
+    assert!(text.contains("repo scope works"), "{text}");
+    assert!(text.contains("all good."), "{text}");
+    // WebSocket and git-helper only warn, so the exit code stays 0.
+    assert_eq!(output.status.code(), Some(0), "{text}");
+}
+
+#[tokio::test]
+async fn doctor_fails_when_the_token_is_rejected() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"version": "0.2.0"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/users/me"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .set_body_json(error_body("UNAUTHORIZED", "missing or invalid token")),
+        )
+        .mount(&server)
+        .await;
+
+    let workdir = TempDir::new().unwrap();
+    let mut cmd = ifg();
+    let output = cmd
+        .current_dir(workdir.path())
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_bad")
+        .env("XDG_CONFIG_HOME", TempDir::new().unwrap().path())
+        .arg("doctor")
+        .output()
+        .unwrap();
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("FAIL"), "{text}");
+    assert!(text.contains("check(s) failed."), "{text}");
+    assert_eq!(output.status.code(), Some(1), "{text}");
+}

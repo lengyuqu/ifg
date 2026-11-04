@@ -1,0 +1,20 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ifg-doctor 1  "ifg-doctor 0.8.1" 
+.SH NAME
+ifg\-doctor \- Check the whole setup: host, token, scopes, server version, streaming
+.SH SYNOPSIS
+\fBifg doctor\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] 
+.SH DESCRIPTION
+Check the whole setup: host, token, scopes, server version, streaming
+.PP
+Answers "why does this command fail" without a debugging session, and exits 1 when something is actually broken (warnings do not fail).
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH VERSION
+v0.8.1
