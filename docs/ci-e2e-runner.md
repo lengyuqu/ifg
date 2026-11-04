@@ -25,14 +25,22 @@ TOKEN=$(gh api -X POST /repos/OWNER/REPO/actions/runners/registration-token --jq
 
 ## 2. 准备 e2e 用的实例与凭据
 
-```bash
-# 一次性的本地实例（示例路径随意）
-ironforge serve --repo-root ~/ci/ifg-e2e-server/repos \
-  --db-url "sqlite://$HOME/ci/ifg-e2e-server/ironforge.db?mode=rwc"
+实例跑 Docker 容器（与用户实际部署同一镜像，顺带持续验证 Docker 路径）：
 
-# 建号（注册关闭时也能用），再登录换 JWT、换 PAT
-ironforge create-user ci-e2e --email ci-e2e@ifg.local --password '<强密码>' --admin \
-  --db-url "sqlite://$HOME/ci/ifg-e2e-server/ironforge.db?mode=rwc"
+```bash
+cd ../ironforge                     # 仓库根
+export IRONFORGE_JWT_SECRET=$(openssl rand -hex 32)
+docker compose up -d --build        # 首次约 11 分钟；之后改代码只需重建
+
+# 建号（注册关闭时也能用）；容器内执行，DB 在 /data
+docker compose exec ironforge ironforge create-user ci-e2e \
+  --email ci-e2e@ifg.local --password '<强密码>' --admin \
+  --db-url "sqlite:///data/ironforge.db?mode=rwc"
+```
+
+再换一个 PAT 给 CI：
+
+```bash
 JWT=$(curl -s -X POST http://localhost:8080/api/v1/users/login \
   -H 'content-type: application/json' \
   -d '{"login":"ci-e2e","password":"<强密码>"}' | jq -r .token)
@@ -40,6 +48,9 @@ PAT=$(curl -s -X POST http://localhost:8080/api/v1/users/tokens \
   -H "authorization: Bearer $JWT" -H 'content-type: application/json' \
   -d '{"name":"ci-e2e","scopes":"repo,user,admin"}' | jq -r .token)
 ```
+
+**更新服务端**：`cd ../ironforge && docker compose up -d --build` 后旧容器被替换、
+数据在 `ironforge-data` 卷里不受影响。不再需要「手动 cp 二进制」那一步。
 
 ## 3. 打开开关
 
