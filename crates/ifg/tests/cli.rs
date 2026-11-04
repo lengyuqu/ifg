@@ -323,6 +323,8 @@ token = "ifp_b"
 }
 
 /// A config file with group/other read bits loses its tokens on load.
+/// POSIX-only: Windows ACLs have no mode bits and the warning does not apply.
+#[cfg(unix)]
 #[tokio::test]
 async fn insecure_config_tokens_are_refused() {
     let home = TempDir::new().unwrap();

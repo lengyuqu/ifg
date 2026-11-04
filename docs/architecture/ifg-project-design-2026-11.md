@@ -320,6 +320,22 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 
 ## 11. 已决事项（追加）
 
+- **Windows 支持（2026-11-04，`feat/windows-support`）**：
+   - 目标是 `x86_64-pc-windows-msvc`（`ring` 需要 MSVC 工具链；不用 GNU 目标）。
+   - 配置目录：`XDG_CONFIG_HOME` 优先，Windows 回退 `%APPDATA%\ironforge\hosts.toml`
+     （PowerShell/cmd 通常没有 `HOME`）。
+   - POSIX 权限告警不适用：Windows ACL 没有 group/other 位，
+     `has_group_or_other_permissions` 恒为 false，不做 `chmod`/收紧。
+   - keyring 用 `keyring` crate 的 `windows-native` feature（凭据管理器），
+     不再依赖 `sh` 探测；失败仍退化为配置文件并告警。
+   - 颜色只在已知支持 ANSI 的终端（`WT_SESSION`/`TERM_PROGRAM`/`TERM`）开启，
+     传统 `cmd.exe` 等价 `--no-color`（不用 unsafe 调 `SetConsoleMode`）；
+     分页器默认关闭，`PAGER` 可覆盖。
+   - git 凭据助手在 Windows 写作 `!ifg.exe auth git-credential`（README 分平台说明）。
+   - 发布物 `ifg-<ver>-x86_64-pc-windows-msvc.zip` 由 release workflow 的
+     `windows-latest` job 构建，再与 macOS/Linux 产物合并 `SHA256SUMS`。
+   - CI 增加 `windows-latest` job（fmt/clippy/test），不跑 audit 与 e2e。
+
 - **v0.7 决策（2026-11-04）**：
    - `ifg doctor`：一条命令自检 host 来源 / 令牌存在 / 账号身份 / `repo` scope /
      服务端版本（对比 MIN_SERVER_VERSION）/ WS 握手 / 仓库可读 / git 凭据助手。

@@ -1,7 +1,8 @@
 //! `hosts.toml` (design doc §5.1): `$XDG_CONFIG_HOME/ironforge/hosts.toml`,
-//! falling back to `$HOME/.config/ironforge/hosts.toml`. Written with 0600
-//! permissions; a file with wider permissions is loaded but its tokens are
-//! refused (`*.ai/guardrails.md` credential policy).
+//! else the platform-native config directory (`$HOME/.config` on POSIX,
+//! `%APPDATA%` on Windows). On POSIX it is written with 0600 permissions; a
+//! file with wider permissions is loaded but its tokens are refused
+//! (`*.ai/guardrails.md` credential policy).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -59,18 +60,32 @@ pub enum ConfigError {
     Parse { path: PathBuf, message: String },
 }
 
-/// The config directory: `$XDG_CONFIG_HOME/ironforge`, else
-/// `$HOME/.config/ironforge`. Deliberately not `dirs::config_dir()`, which
-/// would return `~/Library/Application Support` on macOS (design doc §5.2).
+/// The config directory: `$XDG_CONFIG_HOME/ironforge` when set, else the
+/// platform-native location — `%APPDATA%\ironforge` on Windows,
+/// `$HOME/.config/ironforge` elsewhere. Deliberately not `dirs::config_dir()`,
+/// which would return `~/Library/Application Support` on macOS (design doc §5.2).
 pub fn config_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            let home = std::env::var_os("HOME").filter(|value| !value.is_empty())?;
-            Some(PathBuf::from(home).join(".config"))
-        })?;
+        .or_else(native_config_base)?;
     Some(base.join("ironforge"))
+}
+
+/// `%APPDATA%` is the Windows convention and is set for every interactive
+/// user; `HOME` usually is not, so without this fallback `auth login` could
+/// not persist anything from PowerShell or cmd.
+#[cfg(windows)]
+fn native_config_base() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(not(windows))]
+fn native_config_base() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").filter(|value| !value.is_empty())?;
+    Some(PathBuf::from(home).join(".config"))
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -114,12 +129,14 @@ pub fn load() -> Result<Config, ConfigError> {
     Ok(config)
 }
 
-/// Write the config, creating parent directories, with 0600 permissions.
+/// Write the config, creating parent directories (0600 on POSIX).
 pub fn save(config: &Config) -> Result<(), ConfigError> {
     let Some(path) = config_path() else {
-        return Err(ConfigError::Io(std::io::Error::other(
-            "neither XDG_CONFIG_HOME nor HOME is set",
-        )));
+        return Err(ConfigError::Io(std::io::Error::other(if cfg!(windows) {
+            "neither XDG_CONFIG_HOME nor APPDATA is set"
+        } else {
+            "neither XDG_CONFIG_HOME nor HOME is set"
+        })));
     };
     let Some(dir) = path.parent() else {
         return Err(ConfigError::Io(std::io::Error::other(
@@ -132,7 +149,6 @@ pub fn save(config: &Config) -> Result<(), ConfigError> {
         .create(true)
         .truncate(true)
         .open(&path)?;
-    #[cfg(unix)]
     tighten_permissions(&path)?;
     let text = toml::to_string_pretty(config).map_err(|e| ConfigError::Parse {
         path: path.clone(),
@@ -177,6 +193,21 @@ fn tighten_permissions(path: &std::path::Path) -> std::io::Result<()> {
     if fs::metadata(path)?.permissions().mode() & 0o077 != 0 {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     }
+    Ok(())
+}
+
+// Windows ACLs are not POSIX mode bits. Access is governed by the ACL inherited
+// from the user profile directory, which is private to the user by default, so
+// the group/other warning does not apply and no tightening is needed. Returning
+// false (rather than true) keeps the warning silent instead of pretending the
+// file was checked.
+#[cfg(not(unix))]
+fn has_group_or_other_permissions(_path: &std::path::Path) -> bool {
+    false
+}
+
+#[cfg(not(unix))]
+fn tighten_permissions(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 

@@ -33,6 +33,27 @@ jobs:
       - name: checks (fmt, clippy, test, audit, dependency boundary)
         run: bash scripts/check.sh
 
+  # Windows has no `cargo audit` (slow) and no live IronForge for e2e; this
+  # job keeps the platform compiling and the test suite green. Git Bash is
+  # preinstalled on windows-latest.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: checks (fmt, clippy, test)
+        shell: bash
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test -p ifg -p ifg-client
+
   # e2e drives the real `ifg` binary against a live IronForge instance, so it
   # needs a runner that can reach one. Enable by setting the repository
   # variable IFG_E2E_ENABLED=true and providing the IFG_E2E_URL / IFG_E2E_PAT

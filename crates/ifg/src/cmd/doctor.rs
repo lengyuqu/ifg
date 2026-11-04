@@ -335,10 +335,15 @@ fn git_helper_check() -> Check {
     if configured.contains("ifg") {
         Check::ok("git", "credential helper → ifg")
     } else {
+        let helper = if cfg!(windows) {
+            "!ifg.exe auth git-credential"
+        } else {
+            "ifg auth git-credential"
+        };
         Check::warn(
             "git",
             "ifg is not the git credential helper",
-            "git config --global --add credential.helper 'ifg auth git-credential' (optional)",
+            format!("git config --global --add credential.helper '{helper}' (optional)"),
         )
     }
 }
