@@ -206,10 +206,9 @@ async fn create(
             ))
         }
         (Some(notes), None) => Some(notes),
-        (None, Some(file)) => Some(
-            std::fs::read_to_string(&file)
-                .map_err(|e| AppError::Other(format!("could not read {file}: {e}")))?,
-        ),
+        (None, Some(file)) => {
+            Some(std::fs::read_to_string(&file).map_err(|e| read_error(&file, &e))?)
+        }
         (None, None) => None,
     };
     let options = ifg_client::CreateReleaseOptions {
@@ -353,7 +352,7 @@ async fn download_asset(
     let part_path = std::path::PathBuf::from(format!("{target}.part"));
     let mut file = tokio::fs::File::create(&part_path)
         .await
-        .map_err(|e| AppError::Other(format!("could not create {}: {e}", part_path.display())))?;
+        .map_err(|e| AppError::Io(format!("could not create {}: {e}", part_path.display())))?;
     let mut hasher = Sha256::new();
     let mut stream = response.bytes_stream();
     let mut size: u64 = 0;
@@ -363,7 +362,7 @@ async fn download_asset(
         size += chunk.len() as u64;
         file.write_all(&chunk)
             .await
-            .map_err(|e| AppError::Other(format!("write failed: {e}")))?;
+            .map_err(|e| AppError::Io(format!("write failed: {e}")))?;
     }
     drop(file);
 
@@ -388,9 +387,7 @@ async fn download_asset(
     let final_path = std::path::PathBuf::from(target);
     tokio::fs::rename(&part_path, &final_path)
         .await
-        .map_err(|e| {
-            AppError::Other(format!("could not finalize {}: {e}", final_path.display()))
-        })?;
+        .map_err(|e| AppError::Io(format!("could not finalize {}: {e}", final_path.display())))?;
     println!("Downloaded {target} ({size} bytes)");
     Ok(())
 }
@@ -417,8 +414,13 @@ fn local_filename(server_name: &str) -> Result<String, AppError> {
     }
 }
 
+/// A notes file the user pointed at could not be read; exit code 1.
+fn read_error(path: &str, error: &std::io::Error) -> AppError {
+    AppError::Io(format!("could not read {path}: {error}"))
+}
+
 fn not_found(tag: &str) -> AppError {
-    AppError::Other(format!(
+    AppError::NotFound(format!(
         "release '{tag}' not found (releases are matched by tag, newest first)"
     ))
 }
@@ -499,10 +501,9 @@ async fn edit(
             ))
         }
         (Some(notes), None) => Some(notes),
-        (None, Some(file)) => Some(
-            std::fs::read_to_string(&file)
-                .map_err(|e| AppError::Other(format!("could not read {file}: {e}")))?,
-        ),
+        (None, Some(file)) => {
+            Some(std::fs::read_to_string(&file).map_err(|e| read_error(&file, &e))?)
+        }
         (None, None) => None,
     };
     if title.is_none() && body.is_none() && draft.is_none() && prerelease.is_none() {
