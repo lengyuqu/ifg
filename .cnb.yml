@@ -10,9 +10,10 @@
 # agree with rust-toolchain.toml. The version assertion in the first stage is
 # what turns a silently re-tagged image into a red build instead of drift.
 #
-# Only `push` on the default branch runs here for now. Add `pull_request` under
-# `main` when PR validation on CNB is wanted (config is then read from the
-# source branch, and CNB_TOKEN is narrowed for that untrusted event).
+# Triggered on `main` and on pull requests targeting it. Note what a
+# `pull_request` run means on CNB: the config comes from the *source* branch,
+# the workspace is the pre-merge commit, and CNB_TOKEN is narrowed because PR
+# events are untrusted. Nothing here needs a token, so that costs us nothing.
 
 main:
   push:
@@ -32,7 +33,7 @@ main:
         RUST_TOOLCHAIN: "1.99.1"
         RUSTUP_HOME: /usr/local/rustup
         CARGO_HOME: /usr/local/cargo
-      stages:
+      stages: &stages
         - name: toolchain version assertion
           script: |
             set -euo pipefail
@@ -85,3 +86,19 @@ main:
             set -euo pipefail
             echo "check passed on ${CNB_BRANCH}@${CNB_COMMIT_SHORT}, rustc ${RUST_TOOLCHAIN}"
             echo "build ${CNB_BUILD_ID}"
+
+  pull_request:
+    - name: ci
+      lock:
+        key: ci-pr
+        cancel-in-progress: true
+      docker:
+        image: rust:1.99.1-bookworm
+        volumes:
+          - /usr/local/rustup:copy-on-write-read-only
+          - /usr/local/cargo:copy-on-write-read-only
+      env:
+        RUST_TOOLCHAIN: "1.99.1"
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      stages: *stages
