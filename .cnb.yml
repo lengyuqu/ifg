@@ -1,4 +1,4 @@
-# CNB is the development upstream (see AGENTS.md), so the Linux gate runs here
+# CNB is the development upstream (see AGENTS.md), so the Linux check runs here
 # as well as on GitHub. `scripts/check.sh` is invoked unchanged: it is the same
 # script .github/workflows/ci.yml runs.
 #
@@ -7,22 +7,24 @@
 # `ring` needs each platform's own C toolchain, so they cannot move here.
 #
 # Toolchain: the image tag is pinned to the exact patch release and must agree
-# with rust-toolchain.toml. The `rustc --version` assertion in the first stage
-# is what turns a silently re-tagged image into a red build instead of drift.
+# with rust-toolchain.toml. The `rustc --version` assertion turns a silently
+# re-tagged image into a red build instead of drift.
 #
-# Volumes: do NOT mount /usr/local/rustup or /usr/local/cargo. A declared volume
-# is an empty host directory overlaid onto the image path — mounting them wiped
-# the toolchain the image ships and `rustc` came back 127 "command not found".
-# A half-populated rustup dir is also not worth it, so the toolchain lives in the
-# image and only the registry caches are persisted below.
+# Volumes: never mount /usr/local/rustup or /usr/local/cargo. A declared volume
+# is an empty directory overlaid on the image path; doing that wiped the
+# toolchain the image ships and `rustc` came back 127 "command not found".
+# Only the registry and git checkouts are cached. Paths must be absolute —
+# `~/.cargo/...` fails Prepare with "Unsupported volume path".
+#
+# Interpreters: CNB runs `script` under `sh`, which is dash in these Debian
+# images, so `set -euo pipefail` cannot live inline (first run died with
+# "sh: 1: set: Illegal option -o pipefail"). Each stage body is a file under
+# scripts/ci/ called as `bash scripts/ci/<name>.sh`; the explicit `bash` prefix
+# is what selects the interpreter, not the shebang.
 #
 # Triggers: `main` on push, and pull requests targeting `main`. Config for a PR
 # event is read from the target branch, but the run uses the source branch's
 # copy of this file, so pushing to a PR branch is enough to validate it.
-#
-# CNB runs `script` with `sh`, not bash (语法手册 + FAQ: 「流水线默认使用 sh」),
-# so each stage body is a one-liner `bash -c '...'`. A bare multi-line body
-# dies on `set -o pipefail` before doing any work: `sh: set: Illegal option`.
 
 main:
   push:
@@ -32,70 +34,34 @@ main:
         key: ci
         cancel-in-progress: true
       docker:
-        # Exact tag: rust:1.99.1 == rust-toolchain.toml channel = "1.99.1".
         image: rust:1.99.1-bookworm
         volumes:
-          # Registry and git checkouts only: overlayfs so concurrent pipelines
-          # share one copy instead of fighting over writes.
-          - ~/.cargo/registry:copy-on-write
-          - ~/.cargo/git:copy-on-write
+          # Node-local, overlayfs so concurrent pipelines share one copy.
+          - /opt/rust/cache/registry:copy-on-write
+          - /opt/rust/cache/git:copy-on-write
       env:
         RUST_TOOLCHAIN: "1.99.1"
         RUSTUP_HOME: /usr/local/rustup
         CARGO_HOME: /usr/local/cargo
       stages: &stages
         - name: toolchain version assertion
-          script: |
-            bash -euo pipefail -c '
-            rustc --version
-            cargo --version
-            have="$(rustc --version | cut -d" " -f2)"
-            if [ "$have" != "$RUST_TOOLCHAIN" ]; then
-                echo "rustc $have, but the image tag and rust-toolchain.toml say $RUST_TOOLCHAIN" >&2
-                echo "the rust:<tag> image was probably re-tagged; bump .cnb.yml and rust-toolchain.toml together" >&2
-                exit 1
-            fi
-            rustup component list --installed
-            '
+          script: bash scripts/ci/toolchain.sh
 
-        # check.sh only warns when `cargo audit` is missing, so the install has
-        # to be enforced here or the gate goes green without an audit.
         - name: install cargo-audit
+          # check.sh only warns when `cargo audit` is missing, so the install has
+          # to be enforced here or the gate goes green without an audit. The
+          # dependency boundary still runs either way.
           if: |
-            bash -c '[ "${CNB_SKIP_CARGO_AUDIT:-}" != "true" ]'
-          script: |
-            bash -euo pipefail -c '
-            if cargo audit --version >/dev/null 2>&1; then
-                echo "cargo-audit already present"
-            else
-                cargo install cargo-audit --locked
-            fi
-            cargo audit --version
-            '
+            [ "${CNB_SKIP_CARGO_AUDIT:-}" != "true" ]
+          script: bash scripts/ci/audit.sh
 
-        # The declared escape hatch. Without it, "install failed" and "we chose
-        # not to audit" would read the same in the log — the same silent-skip
-        # problem in a different costume. This stage makes the choice loud.
-        - name: cargo-audit skipped on purpose
+        - name: announce skipped cargo-audit
           if: |
-            bash -c '[ "${CNB_SKIP_CARGO_AUDIT:-}" = "true" ]'
-          script: |
-            bash -euo pipefail -c '
-            echo "!! CNB_SKIP_CARGO_AUDIT=true: cargo-audit install skipped ON PURPOSE."
-            echo "!! scripts/check.sh reports missing cargo-audit and continues."
-            echo "!! Advisory gate is NOT enforced by this build."
-            '
+            [ "${CNB_SKIP_CARGO_AUDIT:-}" = "true" ]
+          script: bash scripts/ci/announce-skip-audit.sh
 
         - name: check.sh (fmt, clippy, man, test, audit, boundary)
-          script: |
-            bash -euo pipefail -c 'bash scripts/check.sh'
-
-        - name: summary
-          script: |
-            bash -euo pipefail -c '
-            echo "Linux gate green: ${CNB_BRANCH}@${CNB_COMMIT_SHORT}, rustc ${RUST_TOOLCHAIN}"
-            echo "build ${CNB_BUILD_ID}"
-            '
+          script: bash scripts/ci/check.sh
 
   pull_request:
     - name: ci
@@ -105,9 +71,9 @@ main:
       docker:
         image: rust:1.99.1-bookworm
         volumes:
-          # A PR never writes the shared cache: it is untrusted code.
-          - ~/.cargo/registry:copy-on-write-read-only
-          - ~/.cargo/git:copy-on-write-read-only
+          # A PR never writes the shared cache: the event is untrusted.
+          - /opt/rust/cache/registry:copy-on-write-read-only
+          - /opt/rust/cache/git:copy-on-write-read-only
       env:
         RUST_TOOLCHAIN: "1.99.1"
         RUSTUP_HOME: /usr/local/rustup
