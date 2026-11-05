@@ -1336,3 +1336,35 @@ async fn ssh_remote_selects_configured_api_and_repository() {
         .assert()
         .success();
 }
+
+/// A tag the server never lists is a real "not found": exit 8, not 1.
+#[tokio::test]
+async fn release_view_missing_tag_exits_with_not_found() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases/tags/nosuchtag"))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_json(error_body("NOT_FOUND", "release not found")),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases"))
+        .and(query_param("page", "1"))
+        .respond_with(page(json!([]), 1, false))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let home = TempDir::new().unwrap();
+    let out = ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_env_token")
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["-R", "alice/demo", "release", "view", "nosuchtag"])
+        .assert()
+        .code(8);
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("not found"), "stderr: {stderr}");
+}
