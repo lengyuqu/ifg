@@ -263,6 +263,101 @@ async fn paginator_limit_stops_before_the_next_page() {
 }
 
 #[tokio::test]
+async fn paginator_limit_narrows_the_request_per_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "5"))
+        .respond_with(page(json!([{"id": 1}, {"id": 2}, {"id": 3}]), 1, false))
+        .expect(1) // one request, asking for 5 rather than PER_PAGE
+        .mount(&server)
+        .await;
+
+    let items: Vec<serde_json::Value> = client_for(&server)
+        .paginate::<serde_json::Value>("repos")
+        .limit(5)
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(items.len(), 3);
+}
+
+#[tokio::test]
+async fn paginator_limit_only_narrows_the_first_page() {
+    let server = MockServer::start().await;
+    // limit(3) with a server that keeps saying has_next: page 1 asks for 3,
+    // page 2 goes back to the cap. Otherwise `limit(150)` would degrade into
+    // 50 requests of 3 instead of 2 requests of 100.
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "3"))
+        .respond_with(page(json!([{"id": 0}, {"id": 1}]), 1, true))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos"))
+        .and(query_param("page", "2"))
+        .and(query_param("per_page", "100"))
+        .respond_with(page(json!([{"id": 2}]), 2, false))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let items: Vec<serde_json::Value> = client_for(&server)
+        .paginate::<serde_json::Value>("repos")
+        .limit(3)
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(items.len(), 3);
+}
+
+#[tokio::test]
+async fn paginator_limit_above_the_cap_always_asks_for_the_cap() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos"))
+        .and(query_param("page", "1"))
+        .and(query_param("per_page", "100"))
+        .respond_with(page(json!([{"id": 0}]), 1, false))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // min(150, PER_PAGE) == PER_PAGE: the narrowed size must never exceed it.
+    let items: Vec<serde_json::Value> = client_for(&server)
+        .paginate::<serde_json::Value>("repos")
+        .limit(150)
+        .collect()
+        .await
+        .unwrap();
+    assert_eq!(items.len(), 1);
+}
+
+#[tokio::test]
+async fn paginator_zero_limit_never_sends_per_page_zero() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos"))
+        .respond_with(page(json!([{"id": 1}]), 1, false))
+        .mount(&server)
+        .await;
+
+    // limit(0) asks for nothing at all, and certainly not `per_page=0`.
+    let items: Vec<serde_json::Value> = client_for(&server)
+        .paginate::<serde_json::Value>("repos")
+        .limit(0)
+        .collect()
+        .await
+        .unwrap();
+    assert!(items.is_empty());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn paginator_reuses_the_body_for_post_pages() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
