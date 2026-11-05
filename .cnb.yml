@@ -1,0 +1,81 @@
+# CNB is the development upstream (see AGENTS.md), so the Linux check runs here
+# as well as on GitHub. `scripts/check.sh` is invoked unchanged: it is the same
+# script .github/workflows/ci.yml runs.
+#
+# Boundary: this file only covers the Linux check. The Windows job and the
+# four-architecture release stay on GitHub (.github/workflows/), untouched:
+# `ring` needs each platform's own C toolchain, so they cannot move here.
+#
+# Toolchain: the image tag is pinned to the exact patch release and must agree
+# with rust-toolchain.toml. The `rustc --version` assertion turns a silently
+# re-tagged image into a red build instead of drift.
+#
+# Volumes: never mount /usr/local/rustup or /usr/local/cargo. A declared volume
+# is an empty directory overlaid on the image path; doing that wiped the
+# toolchain the image ships and `rustc` came back 127 "command not found".
+# Only the registry and git checkouts are cached. Paths must be absolute —
+# `~/.cargo/...` fails Prepare with "Unsupported volume path".
+#
+# Interpreters: CNB runs `script` under `sh`, which is dash in these Debian
+# images, so `set -euo pipefail` cannot live inline (first run died with
+# "sh: 1: set: Illegal option -o pipefail"). Each stage body is a file under
+# scripts/ci/ called as `bash scripts/ci/<name>.sh`; the explicit `bash` prefix
+# is what selects the interpreter, not the shebang.
+#
+# Triggers: `main` on push, and pull requests targeting `main`. Config for a PR
+# event is read from the target branch, but the run uses the source branch's
+# copy of this file, so pushing to a PR branch is enough to validate it.
+
+main:
+  push:
+    - name: ci
+      # Supersede an in-flight run on the same branch instead of queueing.
+      lock:
+        key: ci
+        cancel-in-progress: true
+      docker:
+        image: rust:1.99.1-bookworm
+        volumes:
+          # Node-local, overlayfs so concurrent pipelines share one copy.
+          - /opt/rust/cache/registry:copy-on-write
+          - /opt/rust/cache/git:copy-on-write
+      env:
+        RUST_TOOLCHAIN: "1.99.1"
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      stages: &stages
+        - name: toolchain version assertion
+          script: bash scripts/ci/toolchain.sh
+
+        - name: install cargo-audit
+          # check.sh only warns when `cargo audit` is missing, so the install has
+          # to be enforced here or the gate goes green without an audit. The
+          # dependency boundary still runs either way.
+          if: |
+            [ "${CNB_SKIP_CARGO_AUDIT:-}" != "true" ]
+          script: bash scripts/ci/audit.sh
+
+        - name: announce skipped cargo-audit
+          if: |
+            [ "${CNB_SKIP_CARGO_AUDIT:-}" = "true" ]
+          script: bash scripts/ci/announce-skip-audit.sh
+
+        - name: check.sh (fmt, clippy, man, test, audit, boundary)
+          script: bash scripts/ci/check.sh
+
+  pull_request:
+    - name: ci
+      lock:
+        key: ci-pr
+        cancel-in-progress: true
+      docker:
+        image: rust:1.99.1-bookworm
+        volumes:
+          # A PR never writes the shared cache: the event is untrusted.
+          - /opt/rust/cache/registry:copy-on-write-read-only
+          - /opt/rust/cache/git:copy-on-write-read-only
+      env:
+        RUST_TOOLCHAIN: "1.99.1"
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      stages: *stages
