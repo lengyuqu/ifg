@@ -68,4 +68,29 @@ pub const USED_PATHS: &[(&str, &str)] = &[
         "GET",
         "/repos/{owner}/{name}/releases/assets/{asset_id}/download",
     ),
+    // labels
+    ("GET", "/repos/{owner}/{name}/labels"),
+    ("POST", "/repos/{owner}/{name}/labels"),
+    ("PATCH", "/repos/{owner}/{name}/labels/{id}"),
+    ("DELETE", "/repos/{owner}/{name}/labels/{id}"),
+    // milestones
+    ("GET", "/repos/{owner}/{name}/milestones"),
+    ("POST", "/repos/{owner}/{name}/milestones"),
+    ("PATCH", "/repos/{owner}/{name}/milestones/{id}"),
+    ("DELETE", "/repos/{owner}/{name}/milestones/{id}"),
+    // notifications (read is POST, not PATCH — see the snapshot)
+    ("GET", "/notifications"),
+    ("GET", "/notifications/unread-count"),
+    ("POST", "/notifications/{id}/read"),
+    ("POST", "/notifications/mark-all-read"),
+    ("DELETE", "/notifications/{id}"),
+    // orgs
+    ("GET", "/orgs"),
+    ("POST", "/orgs"),
+    ("GET", "/orgs/{name}"),
+    ("GET", "/orgs/{name}/members"),
+    ("POST", "/orgs/{name}/members"),
+    ("DELETE", "/orgs/{name}/members/{user_id}"),
+    // search
+    ("GET", "/search"),
 ];
