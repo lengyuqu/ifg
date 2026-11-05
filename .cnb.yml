@@ -18,18 +18,19 @@
 # would take `cargo install cargo-audit` with it. Paths must be absolute —
 # `~/.cargo/...` fails Prepare with "Unsupported volume path".
 #
-# The caches are keyed by what cargo reads and writes, so a *new* cache entry is
-# expected: a `copy-on-write` volume starts empty on the branch it is first
-# declared on, so the first build after this change re-downloads the registry.
-# Small vs. before: hashed entries are keyed by mtime+size, and a copy-on-write
-# volume copies file data but not mtimes, so cached crate sources hash
-# differently on every build and get re-extracted. What is saved is the network
-# fetch, not the unpack.
+# What the cache is worth (measured 2026-11-05, two consecutive main builds):
+# 192s -> 145s. `cargo-audit` 118s -> 79s, `check.sh` 64s -> 42s. The saving is
+# the network fetch, not the compile: a copy-on-write volume copies file data but
+# not mtimes, cargo keys its fingerprints on mtime+size, so crate sources get
+# re-extracted and rebuilt either way.
 #
-# PR cache is read-only: the event is untrusted. `cargo install` would write the
-# install root (`$CARGO_HOME/.package-cache`, `$CARGO_HOME/bin`) next to those
-# read-only trees, so stage 2 decides at run time whether to install or to skip
-# with a stated reason. See scripts/ci/audit.sh.
+# Advisory gate: only the push pipeline installs `cargo-audit` and enforces it.
+# A PR event deliberately runs without that stage — the PR cache is declared
+# `copy-on-write-read-only` but mounts as `overlay rw` with an empty registry on
+# every run (probed in #7), so installing there would spend ~80s per build for a
+# check that main repeats immediately after merge. The PR stages therefore list
+# `toolchain` and `check` only; `scripts/check.sh` prints its
+# "cargo-audit not installed; skipped" line there, which is the honest state.
 #
 # Interpreters: CNB runs `script` under `sh`, which is dash in these Debian
 # images, so `set -euo pipefail` cannot live inline (first run died with
@@ -58,20 +59,19 @@ main:
         RUST_TOOLCHAIN: "1.99.1"
         RUSTUP_HOME: /usr/local/rustup
         CARGO_HOME: /usr/local/cargo
-      stages: &stages
-        - name: probe cache (temporary)
-          script: bash scripts/ci/probe-cache.sh
-
-        - name: toolchain version assertion
+      stages:
+        - &toolchain-stage
+          name: toolchain version assertion
           script: bash scripts/ci/toolchain.sh
 
-        - name: cargo-audit
+        - &audit-stage
+          name: cargo-audit
           # check.sh only warns when `cargo audit` is missing, so this stage has
-          # to make the gate real: it installs cargo-audit, or it fails, or it
-          # says out loud that the advisory gate is not being enforced.
+          # to make the gate real: it installs cargo-audit or it fails.
           script: bash scripts/ci/audit.sh
 
-        - name: check.sh (fmt, clippy, man, test, audit, boundary)
+        - &check-stage
+          name: check.sh (fmt, clippy, man, test, audit, boundary)
           script: bash scripts/ci/check.sh
 
   pull_request:
@@ -82,11 +82,15 @@ main:
       docker:
         image: rust:1.99.1-bookworm
         volumes:
-          # A PR never writes the shared cache: the event is untrusted.
+          # Declared read-only as the intent, but see the header: it mounts rw
+          # and comes up empty, so nothing is shared either way.
           - /usr/local/cargo/registry:copy-on-write-read-only
           - /usr/local/cargo/git:copy-on-write-read-only
       env:
         RUST_TOOLCHAIN: "1.99.1"
         RUSTUP_HOME: /usr/local/rustup
         CARGO_HOME: /usr/local/cargo
-      stages: *stages
+      # `audit-stage` is deliberately absent: a PR never installs cargo-audit.
+      stages:
+        - *toolchain-stage
+        - *check-stage
