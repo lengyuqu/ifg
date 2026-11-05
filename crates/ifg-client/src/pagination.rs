@@ -1,8 +1,10 @@
 //! Pagination (design doc §4.3).
 //!
-//! Requests always ask for `per_page=100` (the server-side cap). Iteration
-//! follows `pagination.has_next`; a page that claims `has_next` while
-//! returning no data stops the iteration to avoid an infinite loop.
+//! Requests ask for `per_page=100` (the server-side cap) by default; a
+//! [`Paginator::limit`] below that cap is folded into the request so the server
+//! returns just what was asked for. Iteration follows `pagination.has_next`; a
+//! page that claims `has_next` while returning no data stops the iteration to
+//! avoid an infinite loop.
 
 use std::marker::PhantomData;
 
@@ -46,6 +48,7 @@ pub struct Paginator<T> {
     next_page: u64,
     exhausted: bool,
     fetched: u64,
+    per_page: u64,
     limit: Option<u64>,
     marker: PhantomData<fn() -> T>,
 }
@@ -65,6 +68,7 @@ impl<T: DeserializeOwned> Paginator<T> {
             next_page: 1,
             exhausted: false,
             fetched: 0,
+            per_page: PER_PAGE,
             limit: None,
             marker: PhantomData,
         }
@@ -72,8 +76,15 @@ impl<T: DeserializeOwned> Paginator<T> {
 
     /// Stop after `n` items; no further page is fetched once the limit is
     /// reached (the current page may overshoot, it is truncated then).
+    ///
+    /// The request size is narrowed to `min(n, PER_PAGE)` as well, so asking
+    /// for 5 items fetches 5 per page rather than 100 (`n = 0` keeps the
+    /// default, since `per_page=0` is rejected by the server).
     pub fn limit(mut self, limit: u64) -> Self {
         self.limit = Some(limit);
+        if limit > 0 {
+            self.per_page = limit.min(PER_PAGE);
+        }
         self
     }
 
@@ -89,12 +100,12 @@ impl<T: DeserializeOwned> Paginator<T> {
                 return Ok(None);
             }
         }
-        let path = with_page_params(&self.path, self.next_page);
+        let path = with_page_params(&self.path, self.next_page, self.per_page);
         let bytes = self
             .client
             .raw(self.method.clone(), &path, self.body.as_ref())
             .await?;
-        let page = decode_page(&bytes, self.next_page)?;
+        let page = decode_page(&bytes, self.next_page, self.per_page)?;
         if page.data.is_empty() {
             if page.pagination.has_next {
                 tracing::warn!(
@@ -108,6 +119,9 @@ impl<T: DeserializeOwned> Paginator<T> {
             self.fetched += page.data.len() as u64;
             self.next_page += 1;
             self.exhausted = !page.pagination.has_next;
+            // The small first page only pays off once; later pages ask for the
+            // full cap so a large limit doesn't turn into many tiny requests.
+            self.per_page = PER_PAGE;
         }
         Ok(Some(page))
     }
@@ -129,14 +143,18 @@ impl<T: DeserializeOwned> Paginator<T> {
 }
 
 /// Append `page`/`per_page` to a path that may already carry a query string.
-pub(crate) fn with_page_params(path: &str, page: u64) -> String {
+pub(crate) fn with_page_params(path: &str, page: u64, per_page: u64) -> String {
     let separator = if path.contains('?') { '&' } else { '?' };
-    format!("{path}{separator}page={page}&per_page={PER_PAGE}")
+    format!("{path}{separator}page={page}&per_page={per_page}")
 }
 
 /// Decode a list response: a `Page<T>` when the endpoint paginates, a plain
 /// `Vec<T>` as a single synthetic page otherwise.
-fn decode_page<T: DeserializeOwned>(bytes: &[u8], page: u64) -> Result<Page<T>, Error> {
+fn decode_page<T: DeserializeOwned>(
+    bytes: &[u8],
+    page: u64,
+    per_page: u64,
+) -> Result<Page<T>, Error> {
     match serde_json::from_slice::<Page<T>>(bytes) {
         Ok(page) => Ok(page),
         Err(page_err) => match serde_json::from_slice::<Vec<T>>(bytes) {
@@ -146,7 +164,7 @@ fn decode_page<T: DeserializeOwned>(bytes: &[u8], page: u64) -> Result<Page<T>, 
                     data,
                     pagination: PaginationMeta {
                         page,
-                        per_page: PER_PAGE,
+                        per_page,
                         total,
                         total_pages: 1,
                         has_next: false,
@@ -168,11 +186,24 @@ mod tests {
 
     #[test]
     fn appends_params_after_existing_query() {
-        assert_eq!(with_page_params("repos", 2), "repos?page=2&per_page=100");
         assert_eq!(
-            with_page_params("issues?state=open", 1),
+            with_page_params("repos", 2, PER_PAGE),
+            "repos?page=2&per_page=100"
+        );
+        assert_eq!(
+            with_page_params("issues?state=open", 1, PER_PAGE),
             "issues?state=open&page=1&per_page=100"
         );
+        assert_eq!(with_page_params("repos", 1, 5), "repos?page=1&per_page=5");
+    }
+
+    #[test]
+    fn plain_array_page_uses_the_requested_per_page() {
+        let page: Page<serde_json::Value> =
+            decode_page(br#"[{"id": 1}, {"id": 2}]"#, 1, 7).unwrap();
+        assert_eq!(page.pagination.per_page, 7);
+        assert_eq!(page.pagination.total, 2);
+        assert!(!page.pagination.has_next);
     }
 
     #[test]
