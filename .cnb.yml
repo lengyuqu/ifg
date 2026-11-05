@@ -44,6 +44,21 @@ main:
         RUSTUP_HOME: /usr/local/rustup
         CARGO_HOME: /usr/local/cargo
       stages: &stages
+        - name: probe environment
+          script: |
+            bash -c '
+            echo "uname: $(uname -m)"
+            echo "PATH=$PATH"
+            echo "--- /usr/local ---"
+            ls -la /usr/local/ 2>&1 | head -20
+            echo "--- toolchain ---"
+            command -v rustc cargo rustup || echo "none on PATH"
+            ls -la /usr/local/cargo/bin 2>&1 | head -10
+            ls -la /usr/local/rustup 2>&1 | head -10
+            echo "--- image ---"
+            head -3 /etc/os-release 2>/dev/null
+            '
+
         - name: toolchain version assertion
           script: |
             bash -euo pipefail -c '
