@@ -9,6 +9,8 @@ use std::process::Command;
 pub struct Remote {
     /// `host` or `host:port`, for matching configured hosts.
     pub host: String,
+    /// SSH ports are independent of the HTTP API port.
+    pub is_ssh: bool,
     pub owner: String,
     pub name: String,
 }
@@ -32,17 +34,17 @@ pub fn parse_remote_url(raw: &str) -> Option<Remote> {
         // IronForge HTTP remotes carry the `/git/` path prefix; a
         // GitHub-style `host/owner/name` URL is not one of ours.
         let path = path.strip_prefix("git/")?;
-        return from_authority_and_path(strip_credentials(authority), path);
+        return from_authority_and_path(strip_credentials(authority), path, false);
     }
     if let Some(rest) = raw.strip_prefix("ssh://") {
         let rest = strip_credentials(rest);
         let (authority, path) = rest.split_once('/')?;
-        return from_authority_and_path(authority, path);
+        return from_authority_and_path(authority, path, true);
     }
     // scp syntax: credentials, then a single ':' separating host and path.
     let rest = strip_credentials(raw);
     let (authority, path) = rest.split_once(':')?;
-    from_authority_and_path(authority, path)
+    from_authority_and_path(authority, path, true)
 }
 
 /// Drop `user[:password]@` from an authority string.
@@ -53,7 +55,7 @@ fn strip_credentials(authority: &str) -> &str {
     }
 }
 
-fn from_authority_and_path(authority: &str, path: &str) -> Option<Remote> {
+fn from_authority_and_path(authority: &str, path: &str, is_ssh: bool) -> Option<Remote> {
     let authority = authority.trim();
     if authority.is_empty() {
         return None;
@@ -66,6 +68,7 @@ fn from_authority_and_path(authority: &str, path: &str) -> Option<Remote> {
     }
     Some(Remote {
         host: authority.to_string(),
+        is_ssh,
         owner: owner.to_string(),
         name: name.to_string(),
     })
@@ -86,9 +89,10 @@ pub fn git_remotes() -> Vec<(String, Remote)> {
     let text = String::from_utf8_lossy(&output.stdout);
     let mut remotes: Vec<(String, Remote)> = Vec::new();
     for line in text.lines() {
-        let Some((key, url)) = line.split_once(' ') else {
+        let Some((key, url)) = line.split_once(char::is_whitespace) else {
             continue;
         };
+        let url = url.trim_start();
         let Some(remote_name) = key
             .strip_prefix("remote.")
             .and_then(|rest| rest.strip_suffix(".url"))

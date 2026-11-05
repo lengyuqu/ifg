@@ -40,35 +40,36 @@ async fn runs(
     limit: Option<u64>,
 ) -> Result<(), AppError> {
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
+    let mut paginator = ctx.client.ci(&repo.owner, &repo.name).list_raw();
+    let mut filtered = Vec::new();
+    while (filtered.len() as u64) < limit {
+        let Some(page) = paginator.next_page().await? else {
+            break;
+        };
+        for item in page.data {
+            if matches_filter(&item, branch, status) {
+                filtered.push(item);
+                if filtered.len() as u64 == limit {
+                    break;
+                }
+            }
+        }
+    }
     if cli.json || cli.template.is_some() {
-        let items: Vec<Value> = ctx
-            .client
-            .ci(&repo.owner, &repo.name)
-            .list_raw()
-            .collect()
-            .await?;
-        let filtered: Vec<Value> = items
-            .into_iter()
-            .filter(|item| matches_filter(item, branch, status))
-            .take(limit as usize)
-            .collect();
-        output::print_json(&Value::Array(filtered));
+        match &cli.template {
+            Some(template) => output::print_template(&filtered, template),
+            None => output::print_json(&Value::Array(filtered)),
+        }
         return Ok(());
     }
 
-    let pipelines = ctx
-        .client
-        .ci(&repo.owner, &repo.name)
-        .list()
-        .collect()
-        .await?;
+    let pipelines: Vec<ifg_client::Pipeline> = filtered
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<_, _>>()
+        .map_err(|e| AppError::Other(format!("could not decode pipeline: {e}")))?;
     let rows: Vec<Vec<String>> = pipelines
         .iter()
-        .filter(|pipeline| {
-            branch.as_deref().is_none_or(|b| pipeline.ref_name == b)
-                && status.as_deref().is_none_or(|s| pipeline.status == s)
-        })
-        .take(limit as usize)
         .map(|pipeline| {
             vec![
                 pipeline.id.to_string(),

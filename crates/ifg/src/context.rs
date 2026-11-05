@@ -8,7 +8,7 @@
 
 use ifg_client::Secret;
 
-use crate::config::{self, Config, HostEntry};
+use crate::config::{self, Config};
 use crate::git;
 
 /// The host a command talks to.
@@ -87,19 +87,16 @@ pub fn resolve_host(
 
     // 2.5. `-R https://host/git/owner/name` also decides the host.
     if let Some(repo_arg) = repo_arg {
-        if is_url(repo_arg) {
-            if let Some(remote) = git::parse_remote_url(repo_arg) {
-                if let Some(resolved) = from_configured_host(config, &remote.host, env_pat.clone())
-                {
-                    return Ok(resolved);
-                }
+        if let Some(remote) = git::parse_remote_url(repo_arg) {
+            if let Some(resolved) = from_configured_host(config, &remote, env_pat.clone())? {
+                return Ok(resolved);
             }
         }
     }
 
     // 3. Git remote inference: the remote's host must be a configured one.
     for (_, remote) in git::git_remotes() {
-        if let Some(resolved) = from_configured_host(config, &remote.host, env_pat.clone()) {
+        if let Some(resolved) = from_configured_host(config, &remote, env_pat.clone())? {
             return Ok(resolved);
         }
     }
@@ -124,18 +121,43 @@ pub fn resolve_host(
 
 fn from_configured_host(
     config: &Config,
-    host_name: &str,
+    remote: &git::Remote,
     env_pat: Option<Secret>,
-) -> Option<ResolvedHost> {
-    let (name, entry): (&String, &HostEntry) = config
+) -> Result<Option<ResolvedHost>, crate::error::AppError> {
+    let mut matches = config
         .hosts
         .iter()
-        .find(|(_, entry)| config::entry_matches_url(&entry.url, host_name))?;
-    Some(ResolvedHost {
+        .filter(|(_, entry)| remote_matches_url(remote, &entry.url));
+    let Some((name, entry)) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(crate::error::AppError::Other(format!(
+            "multiple configured hosts match SSH remote {}; select one with --host",
+            remote.host
+        )));
+    }
+    Ok(Some(ResolvedHost {
         name: Some(name.clone()),
         url: entry.url.clone(),
         token: env_pat.or_else(|| entry.token.clone().map(Secret::new)),
-    })
+    }))
+}
+
+fn remote_matches_url(remote: &git::Remote, entry_url: &str) -> bool {
+    if !remote.is_ssh {
+        return config::entry_matches_url(entry_url, &remote.host);
+    }
+    let Ok(ssh) = url::Url::parse(&format!("ssh://{}", remote.host)) else {
+        return false;
+    };
+    let Ok(api) = url::Url::parse(entry_url) else {
+        return false;
+    };
+    match (ssh.host_str(), api.host_str()) {
+        (Some(ssh), Some(api)) => ssh.eq_ignore_ascii_case(api),
+        _ => false,
+    }
 }
 
 fn token_from_url(config: &Config, url: &str) -> Option<Secret> {
@@ -176,7 +198,10 @@ pub fn resolve_repo(
     resolved_host: &ResolvedHost,
 ) -> Result<RepoContext, crate::error::AppError> {
     if let Some(repo_arg) = repo_arg {
-        if is_url(repo_arg) {
+        if is_url(repo_arg)
+            || repo_arg.starts_with("ssh://")
+            || (repo_arg.contains(':') && git::parse_remote_url(repo_arg).is_some())
+        {
             let remote = crate::git::parse_remote_url(repo_arg).ok_or_else(|| {
                 crate::error::AppError::Usage(format!(
                     "cannot parse '{repo_arg}' as an IronForge repository URL \
@@ -205,7 +230,7 @@ pub fn resolve_repo(
     }
 
     for (_, remote) in crate::git::git_remotes() {
-        if config::entry_matches_url(&resolved_host.url, &remote.host) {
+        if remote_matches_url(&remote, &resolved_host.url) {
             return Ok(RepoContext {
                 owner: remote.owner,
                 name: remote.name,
@@ -215,4 +240,64 @@ pub fn resolve_repo(
     Err(crate::error::AppError::Usage(
         "no repository context: pass -R OWNER/NAME or run inside a git clone".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssh_ports_match_api_hosts_but_http_ports_remain_distinct() {
+        let ssh = git::parse_remote_url("ssh://git@forge.example.com:2222/alice/demo.git").unwrap();
+        assert!(remote_matches_url(&ssh, "https://forge.example.com:8443"));
+        let scp = git::parse_remote_url("git@forge.example.com:alice/demo.git").unwrap();
+        assert!(remote_matches_url(&scp, "https://forge.example.com:8443"));
+        let http =
+            git::parse_remote_url("https://forge.example.com:8443/git/alice/demo.git").unwrap();
+        assert!(!remote_matches_url(&http, "https://forge.example.com:9443"));
+        assert!(remote_matches_url(&http, "https://forge.example.com:8443"));
+    }
+
+    #[test]
+    fn ssh_host_inference_rejects_ambiguous_configurations() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "one".into(),
+            crate::config::HostEntry::new("https://forge.example.com:8443"),
+        );
+        let ssh = git::parse_remote_url("ssh://git@forge.example.com:2222/alice/demo.git").unwrap();
+        assert_eq!(
+            from_configured_host(&config, &ssh, None)
+                .unwrap()
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("one")
+        );
+        config.hosts.insert(
+            "two".into(),
+            crate::config::HostEntry::new("https://forge.example.com:9443"),
+        );
+        assert!(from_configured_host(&config, &ssh, None)
+            .unwrap_err()
+            .to_string()
+            .contains("--host"));
+    }
+
+    #[test]
+    fn explicit_ssh_and_scp_repository_urls_are_parsed() {
+        let host = ResolvedHost {
+            name: None,
+            url: "https://forge.example.com".into(),
+            token: None,
+        };
+        for input in [
+            "ssh://git@forge.example.com:2222/alice/demo.git",
+            "git@forge.example.com:alice/demo.git",
+        ] {
+            let repo = resolve_repo(Some(input), &host).unwrap();
+            assert_eq!(repo.owner, "alice");
+            assert_eq!(repo.name, "demo");
+        }
+    }
 }

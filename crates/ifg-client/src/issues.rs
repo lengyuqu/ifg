@@ -60,17 +60,17 @@ pub struct IssueListFilter {
 
 impl IssueListFilter {
     fn to_query(&self) -> String {
-        let mut pairs = Vec::new();
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
         if let Some(state) = &self.state {
-            pairs.push(format!("state={state}"));
+            query.append_pair("state", state);
         }
         if let Some(labels) = &self.labels {
-            pairs.push(format!("labels={labels}"));
+            query.append_pair("labels", labels);
         }
         if let Some(assignee) = &self.assignee {
-            pairs.push(format!("assignee={assignee}"));
+            query.append_pair("assignee", assignee);
         }
-        pairs.join("&")
+        query.finish()
     }
 }
 

@@ -1185,3 +1185,154 @@ async fn doctor_fails_when_the_token_is_rejected() {
     assert!(text.contains("check(s) failed."), "{text}");
     assert_eq!(output.status.code(), Some(1), "{text}");
 }
+
+#[tokio::test]
+async fn issue_filters_encode_special_characters() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/issues"))
+        .and(query_param("labels", "c++ & #问题"))
+        .and(query_param("assignee", "a+b&c#d"))
+        .respond_with(page(json!([]), 1, false))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let home = TempDir::new().unwrap();
+    ifg()
+        .env("IRONFORGE_URL", server.uri())
+        .env("XDG_CONFIG_HOME", home.path())
+        .args([
+            "-R",
+            "alice/demo",
+            "issue",
+            "list",
+            "--label",
+            "c++ & #问题",
+            "--assignee",
+            "a+b&c#d",
+        ])
+        .assert()
+        .success();
+}
+
+#[tokio::test]
+async fn pipeline_filters_continue_until_enough_matches_then_stop() {
+    for json_output in [false, true] {
+        let server = MockServer::start().await;
+        let pipeline = |id, branch: &str| json!({"id": id, "repo_id": 1, "ref_name": branch, "status": "success", "trigger_type": "push"});
+        Mock::given(method("GET"))
+            .and(path("/api/v1/repos/alice/demo/pipelines"))
+            .and(query_param("page", "1"))
+            .respond_with(page(
+                json!([pipeline(1, "other"), pipeline(2, "main")]),
+                1,
+                true,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/repos/alice/demo/pipelines"))
+            .and(query_param("page", "2"))
+            .respond_with(page(
+                json!([pipeline(3, "main"), pipeline(4, "main")]),
+                2,
+                true,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/repos/alice/demo/pipelines"))
+            .and(query_param("page", "3"))
+            .respond_with(page(json!([]), 3, false))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let home = TempDir::new().unwrap();
+        let mut command = ifg();
+        command
+            .env("IRONFORGE_URL", server.uri())
+            .env("XDG_CONFIG_HOME", home.path());
+        if json_output {
+            command.arg("--json");
+        }
+        let result = command
+            .args([
+                "-R",
+                "alice/demo",
+                "ci",
+                "runs",
+                "--branch",
+                "main",
+                "--limit",
+                "2",
+            ])
+            .assert()
+            .success();
+        let stdout = String::from_utf8(result.get_output().stdout.clone()).unwrap();
+        if json_output {
+            let items: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+            assert_eq!(items.as_array().unwrap().len(), 2);
+            assert_eq!(items[0]["id"], 2);
+            assert_eq!(items[1]["id"], 3);
+        } else {
+            assert!(stdout.contains("main"), "{stdout}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn ssh_remote_selects_configured_api_and_repository() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/issues"))
+        .and(query_param("page", "1"))
+        .respond_with(page(json!([]), 1, false))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let home = TempDir::new().unwrap();
+    let config_dir = home.path().join("ironforge");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("hosts.toml"),
+        format!("[hosts.local]\nurl = {:?}\n", server.uri()),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            config_dir.join("hosts.toml"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
+    let repo = TempDir::new().unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(repo.path())
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "ssh://git@127.0.0.1:2222/alice/demo.git"
+        ])
+        .current_dir(repo.path())
+        .status()
+        .unwrap()
+        .success());
+    ifg()
+        .env_remove("IRONFORGE_URL")
+        .env_remove("IRONFORGE_PAT")
+        .env("XDG_CONFIG_HOME", home.path())
+        .current_dir(repo.path())
+        .args(["issue", "list"])
+        .assert()
+        .success();
+}
