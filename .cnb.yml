@@ -59,6 +59,9 @@ main:
         RUSTUP_HOME: /usr/local/rustup
         CARGO_HOME: /usr/local/cargo
       stages: &stages
+        - name: probe cache (temporary)
+          script: bash scripts/ci/probe-cache.sh
+
         - name: toolchain version assertion
           script: bash scripts/ci/toolchain.sh
 
