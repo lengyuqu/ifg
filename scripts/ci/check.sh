@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # CNB stage 3: run the repo checks, then say what was checked.
 #
-# `--locked` is off on purpose: the PR cargo cache volume is mounted
-# copy-on-write-read-only, so a Cargo.lock that no longer matches the cached
-# registry state cannot be refreshed and would red the gate for a reason that
-# has nothing to do with the diff. Run it locally with --locked if you care.
+# It adds no cargo flags of its own: `--locked` and the rest are
+# scripts/check.sh's call, and calling it unchanged is what keeps CNB and GitHub
+# running the same checks.
 set -euo pipefail
 
 bash scripts/check.sh
