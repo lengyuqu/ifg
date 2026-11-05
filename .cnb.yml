@@ -10,6 +10,12 @@
 # with rust-toolchain.toml. The `rustc --version` assertion in the first stage
 # is what turns a silently re-tagged image into a red build instead of drift.
 #
+# Volumes: do NOT mount /usr/local/rustup or /usr/local/cargo. A declared volume
+# is an empty host directory overlaid onto the image path — mounting them wiped
+# the toolchain the image ships and `rustc` came back 127 "command not found".
+# A half-populated rustup dir is also not worth it, so the toolchain lives in the
+# image and only the registry caches are persisted below.
+#
 # Triggers: `main` on push, and pull requests targeting `main`. Config for a PR
 # event is read from the target branch, but the run uses the source branch's
 # copy of this file, so pushing to a PR branch is enough to validate it.
@@ -29,10 +35,10 @@ main:
         # Exact tag: rust:1.99.1 == rust-toolchain.toml channel = "1.99.1".
         image: rust:1.99.1-bookworm
         volumes:
-          # Node-local cargo caches, overlayfs so concurrent pipelines share
-          # one copy instead of fighting over writes.
-          - /usr/local/rustup:copy-on-write
-          - /usr/local/cargo:copy-on-write
+          # Registry and git checkouts only: overlayfs so concurrent pipelines
+          # share one copy instead of fighting over writes.
+          - ~/.cargo/registry:copy-on-write
+          - ~/.cargo/git:copy-on-write
       env:
         RUST_TOOLCHAIN: "1.99.1"
         RUSTUP_HOME: /usr/local/rustup
@@ -100,8 +106,8 @@ main:
         image: rust:1.99.1-bookworm
         volumes:
           # A PR never writes the shared cache: it is untrusted code.
-          - /usr/local/rustup:copy-on-write-read-only
-          - /usr/local/cargo:copy-on-write-read-only
+          - ~/.cargo/registry:copy-on-write-read-only
+          - ~/.cargo/git:copy-on-write-read-only
       env:
         RUST_TOOLCHAIN: "1.99.1"
         RUSTUP_HOME: /usr/local/rustup
