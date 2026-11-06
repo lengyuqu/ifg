@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 use super::{bootstrap, CommandContext};
-use crate::cli::{Cli, RepoCommand};
+use crate::cli::{Cli, RepoCollaboratorsCommand, RepoCommand};
 use crate::context::{resolve_repo, RepoContext};
 use crate::error::AppError;
 use crate::output;
@@ -14,6 +14,10 @@ const DEFAULT_LIMIT: u64 = 30;
 pub async fn run(command: &RepoCommand, cli: &Cli) -> Result<(), AppError> {
     let ctx = bootstrap(cli)?;
     match command {
+        RepoCommand::Collaborators { command } => {
+            let repo = resolve_repo(cli.repo.as_deref(), &ctx.host)?;
+            collaborators(&ctx, cli, &repo, command).await
+        }
         RepoCommand::List { owner, limit } => list(&ctx, cli, owner.clone(), *limit).await,
         RepoCommand::View { target, web } => {
             let repo = resolve_target(cli, &ctx, target.clone())?;
@@ -45,6 +49,105 @@ pub async fn run(command: &RepoCommand, cli: &Cli) -> Result<(), AppError> {
             let repo = resolve_target(cli, &ctx, target.clone())?;
             delete(&ctx, &repo, *yes).await
         }
+    }
+}
+
+async fn collaborators(
+    ctx: &CommandContext,
+    cli: &Cli,
+    repo: &RepoContext,
+    command: &RepoCollaboratorsCommand,
+) -> Result<(), AppError> {
+    let repos = ctx.client.repos();
+    match command {
+        RepoCollaboratorsCommand::List => {
+            if cli.json || cli.template.is_some() {
+                let value = repos.collaborators_raw(&repo.owner, &repo.name).await?;
+                if let Some(template) = &cli.template {
+                    let items = value
+                        .as_array()
+                        .ok_or_else(|| AppError::Other("invalid collaborator list".into()))?;
+                    output::print_template(items, template);
+                } else {
+                    output::print_json(&value);
+                }
+            } else {
+                let members = repos.collaborators(&repo.owner, &repo.name).await?;
+                let rows: Vec<Vec<String>> = members
+                    .iter()
+                    .map(|m| {
+                        vec![
+                            m.user_id.to_string(),
+                            m.id.to_string(),
+                            m.permission.clone(),
+                        ]
+                    })
+                    .collect();
+                if rows.is_empty() {
+                    println!("No direct collaborators in {repo}.");
+                } else {
+                    output::print_table(&["USER ID", "RECORD ID", "PERMISSION"], &rows);
+                }
+            }
+        }
+        RepoCollaboratorsCommand::Add {
+            username,
+            permission,
+        } => {
+            let value = repos
+                .add_collaborator(&repo.owner, &repo.name, username, permission)
+                .await?;
+            show_collaborator(cli, &value);
+        }
+        RepoCollaboratorsCommand::Set {
+            username,
+            permission,
+        } => {
+            let user = ctx.client.users().get(username).await?;
+            let members = repos.collaborators(&repo.owner, &repo.name).await?;
+            let member = members
+                .iter()
+                .find(|m| m.user_id == user.id)
+                .ok_or_else(|| {
+                    AppError::NotFound(format!("{username} is not a direct collaborator in {repo}"))
+                })?;
+            let value = repos
+                .update_collaborator(&repo.owner, &repo.name, member.id, permission)
+                .await?;
+            show_collaborator(cli, &value);
+        }
+        RepoCollaboratorsCommand::Remove { username, yes } => {
+            let user = ctx.client.users().get(username).await?;
+            let members = repos.collaborators(&repo.owner, &repo.name).await?;
+            if !members.iter().any(|m| m.user_id == user.id) {
+                return Err(AppError::NotFound(format!(
+                    "{username} is not a direct collaborator in {repo}"
+                )));
+            }
+            if !*yes && !super::confirm(&format!("Remove {username} from {repo}?"))? {
+                return Err(AppError::Other("cancelled".into()));
+            }
+            repos
+                .remove_collaborator(&repo.owner, &repo.name, user.id)
+                .await?;
+            if cli.json || cli.template.is_some() {
+                show_collaborator(
+                    cli,
+                    &serde_json::json!({"username":username,"user_id":user.id,"removed":true}),
+                );
+            } else {
+                println!("Removed {username} from {repo}.");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn show_collaborator(cli: &Cli, value: &Value) {
+    if let Some(template) = &cli.template {
+        output::print_template(std::slice::from_ref(value), template);
+    } else {
+        output::print_json(value);
     }
 }
 

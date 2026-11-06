@@ -27,6 +27,16 @@ pub struct Repo {
     pub updated_at: Option<String>,
 }
 
+/// Repository collaborator row. `id` is the collaborator record ID, whereas
+/// `user_id` identifies the user and is used by the delete endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Collaborator {
+    pub id: i64,
+    pub repo_id: i64,
+    pub user_id: i64,
+    pub permission: String,
+}
+
 /// `POST /repos` request body. Field names match the server exactly;
 /// `Option` fields are omitted from the JSON when unset.
 #[derive(Debug, Default, Serialize)]
@@ -69,6 +79,80 @@ impl Client {
 }
 
 impl Repos<'_> {
+    pub async fn collaborators(&self, owner: &str, name: &str) -> Result<Vec<Collaborator>, Error> {
+        self.client
+            .send(
+                crate::Method::GET,
+                &format!("{}/collaborators", repo_path(owner, name)),
+                None,
+            )
+            .await
+    }
+
+    pub async fn collaborators_raw(&self, owner: &str, name: &str) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::GET,
+                &format!("{}/collaborators", repo_path(owner, name)),
+                None,
+            )
+            .await
+    }
+
+    pub async fn add_collaborator(
+        &self,
+        owner: &str,
+        name: &str,
+        username: &str,
+        permission: &str,
+    ) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::POST,
+                &format!("{}/collaborators", repo_path(owner, name)),
+                Some(&serde_json::json!({"username": username, "permission": permission})),
+            )
+            .await
+    }
+
+    pub async fn update_collaborator(
+        &self,
+        owner: &str,
+        name: &str,
+        collaborator_id: i64,
+        permission: &str,
+    ) -> Result<Value, Error> {
+        let response: Value = self
+            .client
+            .send(
+                crate::Method::PATCH,
+                &format!("{}/collaborators/{collaborator_id}", repo_path(owner, name)),
+                Some(&serde_json::json!({"permission": permission})),
+            )
+            .await?;
+        let actual = self.collaborators(owner, name).await?;
+        let persisted = actual.iter().find(|entry| entry.id == collaborator_id);
+        if !persisted.is_some_and(|entry| entry.permission == permission) {
+            return Err(Error::StateMismatch(format!("collaborator {collaborator_id} permission is not {permission}; re-read the repository collaborators")));
+        }
+        Ok(response)
+    }
+
+    pub async fn remove_collaborator(
+        &self,
+        owner: &str,
+        name: &str,
+        user_id: i64,
+    ) -> Result<(), Error> {
+        self.client
+            .raw(
+                crate::Method::DELETE,
+                &format!("{}/collaborators/{user_id}", repo_path(owner, name)),
+                None,
+            )
+            .await?;
+        Ok(())
+    }
     /// List a user's or organization's repositories (paginated).
     pub fn list(&self, owner: &str) -> Paginator<Repo> {
         self.client.paginate(format!("repos/{owner}"))

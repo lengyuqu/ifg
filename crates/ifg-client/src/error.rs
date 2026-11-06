@@ -33,6 +33,9 @@ pub enum Error {
     /// Invalid client configuration (malformed base URL, …).
     #[error("invalid configuration: {0}")]
     Config(String),
+    /// The server accepted a mutation but did not persist the requested state.
+    #[error("server did not persist the requested change: {0}")]
+    StateMismatch(String),
 }
 
 impl Error {

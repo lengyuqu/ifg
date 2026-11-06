@@ -57,7 +57,11 @@ impl Users<'_> {
     /// `GET /users/{username}` — public profile (no email).
     pub async fn get(&self, username: &str) -> Result<UserProfile, Error> {
         self.client
-            .send(crate::Method::GET, &format!("users/{username}"), None)
+            .send(
+                crate::Method::GET,
+                &format!("users/{}", crate::collab_segment(username)),
+                None,
+            )
             .await
     }
 

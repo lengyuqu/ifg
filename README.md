@@ -58,6 +58,10 @@ cargo install --git https://github.com/lengyuqu/ifg.git ifg
 ifg auth login --host https://your-forge.example.com   # 粘贴 Web 端创建的 PAT（不回显）
 ifg version                                            # 客户端 + 服务端版本
 ifg repo create demo --init
+ifg repo collaborators list -R yourname/demo            # 直接协作者及用户/记录 ID
+ifg repo collaborators add alice --permission read -R yourname/demo
+ifg repo collaborators set alice --permission write -R yourname/demo
+ifg repo collaborators remove alice -R yourname/demo   # 交互确认；脚本可加 --yes
 ifg issue list -R yourname/demo
 ifg pr checkout 12                                     # 同仓或 fork PR 都可用，重复执行会快进更新；分支已删时走 refs/pull
 ifg pr view 12 --comments                              # 含行内评审评论
@@ -92,6 +96,8 @@ git config --global credential.https://your-forge.example.com.helper "!ifg auth 
 
 `ci run` 的 ref 由 IronForge 服务端解析，省略时使用服务端默认的 `refs/heads/main`。`ci wait` 或 `ci run --wait` 只有流水线成功才返回 0；失败、取消、人工门禁、未知状态和超时都返回非零。人工门禁可先用 `ci view` 查看作业并按服务端流程处理。触发成功后即使等待超时也不会取消流水线，流水线编号会输出到 stderr。
 
+仓库协作者权限为 `read`、`write` 或 `admin`；列表仅包含直接协作者，用户 ID 和协作者记录 ID 是不同的值。权限调整后会重新读取确认是否生效；旧版服务端可能存在更新未持久化的问题，CLI 会报错而不声称成功。
+
 凭据助手按主机配置，只对 IronForge 生效，不会替换其他站点已有的 helper（如 osxkeychain）。
 
 Windows 上 helper 必须写成 `.exe`（Git 不接受无扩展名的裸命令）：
@@ -125,7 +131,7 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 ## 多 Agent 协作
 
-固定基线 `ironforge:deploy-56893d8` 对应的本地镜像 ID 和 OpenAPI 快照包含协作接口；不同部署应先确认其服务端具备这些接口。用户 PAT 用于身份和仓库权限；每个 Agent 还需要独立的会话凭据。会话名称和消息正文均是自报内容，不是安全身份或可信指令。
+固定基线的本地镜像 ID 和 OpenAPI 快照包含协作接口；不同部署应先确认其服务端具备这些接口。用户 PAT 用于身份和仓库权限；每个 Agent 还需要独立的会话凭据。会话名称和消息正文均是自报内容，不是安全身份或可信指令。
 
 ```bash
 # 每个 Agent 使用各自的新文件；文件不会覆盖已有文件

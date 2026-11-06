@@ -18,7 +18,7 @@ repository = "https://git233.phynews.com:18443/aicodeing/ifg"
 # image has no source-revision label, so its tag is not proof of a commit.
 # Replacing this baseline requires a fresh snapshot and an e2e run.
 [workspace.metadata.ifg]
-ironforge_image_id = "sha256:2086e6696a627c9e92fcb75af8036c79c07e5434e54c5db6b718a85756addbb9"
+ironforge_image_id = "sha256:db92748f9ff91257805e647742e8c056d13f2054c1571a0537e2e75909fbd2b8"
 ironforge_version = "0.2.0"
 
 [workspace.dependencies]

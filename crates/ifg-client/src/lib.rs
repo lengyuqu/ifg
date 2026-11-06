@@ -40,7 +40,7 @@ pub use pulls::{
     UpdatePrOptions,
 };
 pub use releases::{Asset, CreateReleaseOptions, Release, Releases, UpdateReleaseOptions};
-pub use repos::{CreateRepoOptions, Repo, Repos};
+pub use repos::{Collaborator, CreateRepoOptions, Repo, Repos};
 pub use reqwest::Method;
 pub use search::{Search, SearchHit, SearchPage};
 pub use secret::Secret;

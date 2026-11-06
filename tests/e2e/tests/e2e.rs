@@ -1282,6 +1282,103 @@ async fn organizations_and_members() {
     result.expect("org chain");
 }
 
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn repository_collaborator_permissions() {
+    let h = harness().await;
+    let name = format!("{}-collaborators", run_id());
+    let repo = format!("{}/{}", h.user, name);
+    let (username, pat) = bootstrap_second(&format!("{}-collaborator", run_id())).await;
+    h.run_ok(&["repo", "create", &name, "--private", "--init"]);
+    assert!(pat_client(&pat).repos().get(&h.user, &name).await.is_err());
+    let added: Value = serde_json::from_str(&h.run_ok(&[
+        "-R",
+        &repo,
+        "repo",
+        "collaborators",
+        "add",
+        &username,
+        "--permission",
+        "read",
+    ]))
+    .unwrap();
+    assert_eq!(added["permission"], "read");
+    let user_id = added["user_id"].as_i64().unwrap();
+    let record_id = added["id"].as_i64().unwrap();
+    let list: Value =
+        serde_json::from_str(&h.run_ok(&["--json", "-R", &repo, "repo", "collaborators", "list"]))
+            .unwrap();
+    assert!(list
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["id"] == record_id && v["user_id"] == user_id));
+    assert!(pat_client(&pat).repos().get(&h.user, &name).await.is_ok());
+    let write_path = format!("repos/{repo}/collaborators");
+    let write_probe = json!({"username": username, "permission": "read"});
+    let before = pat_client(&pat)
+        .raw(Method::POST, &write_path, Some(&write_probe))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        before.status(),
+        Some(403),
+        "read-only collaborator cannot manage collaborators"
+    );
+    let updated = h
+        .ifg()
+        .args([
+            "-R",
+            &repo,
+            "repo",
+            "collaborators",
+            "set",
+            &username,
+            "--permission",
+            "write",
+        ])
+        .output()
+        .expect("run collaborator update");
+    let persisted: Value =
+        serde_json::from_str(&h.run_ok(&["--json", "-R", &repo, "repo", "collaborators", "list"]))
+            .unwrap();
+    let stored = persisted
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["user_id"] == user_id)
+        .unwrap();
+    assert!(
+        updated.status.success(),
+        "permission update failed: {}",
+        String::from_utf8_lossy(&updated.stderr)
+    );
+    assert_eq!(
+        stored["permission"], "write",
+        "server must persist the requested permission"
+    );
+    let after = pat_client(&pat)
+        .raw(Method::POST, &write_path, Some(&write_probe))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        after.status(),
+        Some(409),
+        "write permission must pass authorization and reach duplicate check"
+    );
+    h.run_ok(&[
+        "-R",
+        &repo,
+        "repo",
+        "collaborators",
+        "remove",
+        &username,
+        "--yes",
+    ]);
+    assert!(pat_client(&pat).repos().get(&h.user, &name).await.is_err());
+    cleanup(&h, &[name]).await;
+}
+
 async fn org_chain(harness: &Harness, org: &str, member: &str) -> Result<(), String> {
     let out = harness.run_ok(&["org", "create", org, "-d", "e2e org"]);
     assert!(out.contains("Created organization"), "create: {out}");

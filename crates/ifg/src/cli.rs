@@ -559,6 +559,11 @@ pub struct ApiArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum RepoCommand {
+    /// List or manage direct repository collaborators
+    Collaborators {
+        #[command(subcommand)]
+        command: RepoCollaboratorsCommand,
+    },
     /// List an owner's repositories (default: the logged-in user)
     List {
         /// Owner (user or organization name)
@@ -609,6 +614,30 @@ pub enum RepoCommand {
         #[arg(value_name = "OWNER/NAME")]
         target: Option<String>,
         #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RepoCollaboratorsCommand {
+    /// List direct collaborators (user IDs and collaborator record IDs)
+    List,
+    /// Add a collaborator by username
+    Add {
+        username: String,
+        #[arg(long, default_value = "read", value_parser = ["read", "write", "admin"])]
+        permission: String,
+    },
+    /// Change a collaborator's permission by username
+    Set {
+        username: String,
+        #[arg(long, value_parser = ["read", "write", "admin"])]
+        permission: String,
+    },
+    /// Remove a collaborator by username
+    Remove {
+        username: String,
+        #[arg(long)]
         yes: bool,
     },
 }
