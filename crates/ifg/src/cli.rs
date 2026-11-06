@@ -158,6 +158,11 @@ pub enum Command {
         #[command(subcommand)]
         command: LabelCommand,
     },
+    /// Read and manage repository Wiki pages
+    Wiki {
+        #[command(subcommand)]
+        command: WikiCommand,
+    },
     /// Work with repository milestones
     Milestone {
         #[command(subcommand)]
@@ -210,6 +215,42 @@ pub enum Command {
     Completions {
         /// Target shell
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WikiCommand {
+    /// List Wiki pages
+    List,
+    /// Read a page
+    View { title: String },
+    /// Create a page from text or a UTF-8 file (use - for stdin)
+    Create {
+        title: String,
+        #[arg(long, conflicts_with = "file", required_unless_present = "file")]
+        body: Option<String>,
+        #[arg(long, conflicts_with = "body", required_unless_present = "body")]
+        file: Option<String>,
+        #[arg(long)]
+        message: Option<String>,
+    },
+    /// Replace a page's content
+    Edit {
+        title: String,
+        #[arg(long, conflicts_with = "file", required_unless_present = "file")]
+        body: Option<String>,
+        #[arg(long, conflicts_with = "body", required_unless_present = "body")]
+        file: Option<String>,
+        #[arg(long)]
+        message: Option<String>,
+    },
+    /// List previous revisions
+    History { title: String },
+    /// Delete a page after confirmation
+    Delete {
+        title: String,
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -555,6 +596,14 @@ pub struct ApiArgs {
     /// Follow pagination and merge all `data` arrays into one JSON array
     #[arg(long)]
     pub paginate: bool,
+
+    /// Filter a GET response with the system jq executable
+    #[arg(long, value_name = "EXPRESSION")]
+    pub jq: Option<String>,
+
+    /// Output jq string results without JSON quoting
+    #[arg(long, requires = "jq")]
+    pub jq_raw: bool,
 }
 
 #[derive(Debug, Subcommand)]

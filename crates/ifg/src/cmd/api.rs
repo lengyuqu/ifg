@@ -16,6 +16,11 @@ use crate::error::AppError;
 use crate::output;
 
 pub async fn run(args: &ApiArgs, cli: &Cli) -> Result<(), AppError> {
+    if args.jq.is_some() && cli.template.is_some() {
+        return Err(AppError::Usage(
+            "--jq and --template are mutually exclusive".into(),
+        ));
+    }
     let ctx = bootstrap(cli)?;
     let client = &ctx.client;
 
@@ -48,13 +53,62 @@ pub async fn run(args: &ApiArgs, cli: &Cli) -> Result<(), AppError> {
         return Err(AppError::Usage("--paginate requires GET".into()));
     }
 
+    if args.jq.is_some() && method != Method::GET {
+        return Err(AppError::Usage("--jq requires GET".into()));
+    }
+
     if args.paginate {
         let items: Vec<Value> = client.paginate(&path).collect().await?;
-        output::print_json(&Value::Array(items));
+        if let Some(expression) = &args.jq {
+            let bytes = serde_json::to_vec(&items)
+                .map_err(|e| AppError::Other(format!("could not encode JSON: {e}")))?;
+            filter_jq(expression, args.jq_raw, &bytes)?;
+        } else {
+            output::print_json(&Value::Array(items));
+        }
     } else {
         let bytes = client.raw(method, &path, body.as_ref()).await?;
-        output::print_bytes(&bytes);
+        if let Some(expression) = &args.jq {
+            filter_jq(expression, args.jq_raw, &bytes)?;
+        } else {
+            output::print_bytes(&bytes);
+        }
     }
+    Ok(())
+}
+
+/// Run jq directly (no shell) with output inherited, so large results cannot
+/// fill a pipe while JSON is written to stdin.
+fn filter_jq(expression: &str, raw: bool, bytes: &[u8]) -> Result<(), AppError> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    // jq accepts a stream of JSON values, but API responses must be exactly
+    // one JSON value; reject HTML, empty bodies and extra trailing data.
+    serde_json::from_slice::<Value>(bytes)
+        .map_err(|_| AppError::Other("--jq requires a JSON response".into()))?;
+    let mut command = Command::new("jq");
+    command.arg("-M");
+    if raw {
+        command.arg("-r");
+    }
+    let mut child = command
+        .arg("--")
+        .arg(expression)
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            AppError::Other(format!(
+                "could not start jq (install jq and add it to PATH): {e}"
+            ))
+        })?;
+    let write_result = child.stdin.take().expect("piped stdin").write_all(bytes);
+    let status = child
+        .wait()
+        .map_err(|e| AppError::Other(format!("could not wait for jq: {e}")))?;
+    if !status.success() {
+        return Err(AppError::Other(format!("jq failed ({status})")));
+    }
+    write_result.map_err(|e| AppError::Other(format!("could not send JSON to jq: {e}")))?;
     Ok(())
 }
 

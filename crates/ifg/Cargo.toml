@@ -24,6 +24,7 @@ toml = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
+tempfile = { workspace = true }
 
 # Windows Credential Manager backend. `windows-native` is a safe wrapper over
 # CredRead/CredWrite; `unsafe_code = "forbid"` applies to this workspace, not
@@ -34,7 +35,6 @@ keyring = { version = "3", default-features = false, features = ["windows-native
 [dev-dependencies]
 assert_cmd = { workspace = true }
 clap_mangen = { workspace = true }
-tempfile = { workspace = true }
 wiremock = { workspace = true }
 
 [lints]

@@ -96,4 +96,5 @@ async fn collaboration_redacts_session_secrets_in_response_and_errors() {
 fn route_segments_do_not_allow_dot_traversal() {
     assert_eq!(ifg_client::collab_segment(".."), "%252E%252E");
     assert_eq!(ifg_client::collab_segment("a/b"), "a%2Fb");
+    assert_eq!(ifg_client::collab_segment("a b+c"), "a%20b%2Bc");
 }

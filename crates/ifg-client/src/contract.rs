@@ -8,6 +8,14 @@
 
 /// (method, path) pairs used by `ifg-client` and the CLI/e2e flows.
 pub const USED_PATHS: &[(&str, &str)] = &[
+    // Wiki: revision-by-id is intentionally not used because the server must
+    // verify that the requested revision belongs to the authorized page.
+    ("GET", "/repos/{owner}/{name}/wiki"),
+    ("POST", "/repos/{owner}/{name}/wiki"),
+    ("GET", "/repos/{owner}/{name}/wiki/{title}"),
+    ("PATCH", "/repos/{owner}/{name}/wiki/{title}"),
+    ("DELETE", "/repos/{owner}/{name}/wiki/{title}"),
+    ("GET", "/repos/{owner}/{name}/wiki/{title}/history"),
     // Collaboration P0
     ("GET", "/repos/{owner}/{name}/collaboration/sessions"),
     ("POST", "/repos/{owner}/{name}/collaboration/sessions"),

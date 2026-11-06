@@ -48,6 +48,37 @@ fn no_arguments_shows_help_with_usage_exit_code() {
     assert!(stderr.contains("Usage: ifg"), "stderr was: {stderr}");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn issue_editor_supports_quoted_program_and_arguments() {
+    use std::os::unix::fs::PermissionsExt;
+    let server = MockServer::start().await;
+    let home = TempDir::new().unwrap();
+    let editor = home.path().join("fake editor.sh");
+    std::fs::write(&editor, "#!/bin/sh\n[ \"$1\" = --wait ] || exit 3\nprintf 'Editor title\\n\\nEditor body\\n' > \"$2\"\n").unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    Mock::given(method("POST"))
+        .and(path("/api/v1/repos/alice/demo/issues"))
+        .and(body_json(
+            json!({"title":"Editor title","body":"Editor body"}),
+        ))
+        .respond_with(
+            ResponseTemplate::new(201).set_body_json(json!({"number":1,"title":"Editor title"})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    ifg()
+        .args(["--json", "-R", "alice/demo", "issue", "create", "--editor"])
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_test")
+        .env("XDG_CONFIG_HOME", home.path())
+        .env_remove("VISUAL")
+        .env("EDITOR", format!("\"{}\" --wait", editor.display()))
+        .assert()
+        .success();
+}
+
 #[tokio::test]
 async fn pr_collaboration_commands_use_server_contracts() {
     let server = MockServer::start().await;

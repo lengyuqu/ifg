@@ -1379,6 +1379,68 @@ async fn repository_collaborator_permissions() {
     cleanup(&h, &[name]).await;
 }
 
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn wiki_page_lifecycle() {
+    let h = harness().await;
+    let name = format!("{}-wiki", run_id());
+    let repo = format!("{}/{}", h.user, name);
+    h.run_ok(&["repo", "create", &name, "--private", "--init"]);
+    let title = "设计 & notes";
+    let file = h.home_path.join("wiki.md");
+    std::fs::write(&file, "Initial wiki content").unwrap();
+    h.run_ok(&[
+        "-R",
+        &repo,
+        "wiki",
+        "create",
+        title,
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    assert!(h
+        .run_ok(&["-R", &repo, "wiki", "view", title])
+        .contains("Initial wiki content"));
+    let list: Value =
+        serde_json::from_str(&h.run_ok(&["--json", "-R", &repo, "wiki", "list"])).unwrap();
+    assert!(list
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|page| page["title"] == title));
+    h.ifg()
+        .args([
+            "-R",
+            &repo,
+            "wiki",
+            "edit",
+            title,
+            "--file",
+            "-",
+            "--message",
+            "revise",
+        ])
+        .write_stdin("Updated wiki content")
+        .assert()
+        .success();
+    let page: Value =
+        serde_json::from_str(&h.run_ok(&["--json", "-R", &repo, "wiki", "view", title])).unwrap();
+    assert_eq!(page["content"], "Updated wiki content");
+    let history: Value =
+        serde_json::from_str(&h.run_ok(&["-R", &repo, "wiki", "history", title])).unwrap();
+    assert!(history
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|rev| rev["content"] == "Initial wiki content"));
+    h.run_ok(&["-R", &repo, "wiki", "delete", title, "--yes"]);
+    h.ifg()
+        .args(["-R", &repo, "wiki", "view", title])
+        .assert()
+        .code(8);
+    cleanup(&h, &[name]).await;
+}
+
 async fn org_chain(harness: &Harness, org: &str, member: &str) -> Result<(), String> {
     let out = harness.run_ok(&["org", "create", org, "-d", "e2e org"]);
     assert!(out.contains("Created organization"), "create: {out}");

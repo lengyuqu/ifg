@@ -59,6 +59,7 @@ async fn run(cli: Cli) -> i32 {
         Command::Release { command } => cmd::release::run(command, &cli).await,
         Command::Label { command } => cmd::label::run(command, &cli).await,
         Command::Milestone { command } => cmd::milestone::run(command, &cli).await,
+        Command::Wiki { command } => cmd::wiki::run(command, &cli).await,
         Command::Status => cmd::status::run(&cli).await,
         Command::Search {
             query,

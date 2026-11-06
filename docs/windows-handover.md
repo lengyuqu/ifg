@@ -185,8 +185,7 @@ git clone http://localhost:8080/git/OWNER/REPO.git   # 不输密码即可（凭�
 `crates/ifg/src/cmd/mod.rs` 的 `compose_in_editor` 用 `$VISUAL`/`$EDITOR` + `std::env::temp_dir()`。
 Windows 注意：
 
-- `EDITOR=notepad` 可用；`EDITOR="code --wait"` 目前会被当成完整程序名而失败（**已知限制，可留待后续**，
-  若要修：按空白切分 + 保留带空格路径的引号处理）。
+- 历史情况：`EDITOR=notepad` 可用；交接时 `EDITOR="code --wait"` 会被当成完整程序名而失败。后续已添加参数解析，Windows 实测仍待补充。
 - 临时文件路径含空格/中文时 `Command::new(editor).arg(path)` 是安全的（不经 shell）✓
 
 验收：`$env:EDITOR="notepad"; ifg issue create --editor` 能打开记事本并成功建 issue。

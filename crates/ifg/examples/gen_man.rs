@@ -50,5 +50,17 @@ fn main() -> std::io::Result<()> {
 fn write_page(command: &clap::Command, dir: &std::path::Path, file: &str) -> std::io::Result<()> {
     let mut buffer = Vec::new();
     Man::new(command.clone()).render(&mut buffer)?;
-    std::fs::write(dir.join(file), buffer)
+    // clap_mangen emits trailing spaces in some roff lines. Normalize the
+    // generated artifacts so git's whitespace check agrees with --check.
+    let text = String::from_utf8(buffer)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let mut normalized = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let (body, newline) = line
+            .strip_suffix('\n')
+            .map_or((line, ""), |body| (body, "\n"));
+        normalized.push_str(body.trim_end_matches([' ', '\t']));
+        normalized.push_str(newline);
+    }
+    std::fs::write(dir.join(file), normalized)
 }

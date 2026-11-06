@@ -57,7 +57,10 @@ pub fn segment(value: &str) -> String {
     if value == "." || value == ".." {
         return value.replace('.', "%252E");
     }
-    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+    // Form encoding uses `+` for spaces; path segments require `%20`.
+    url::form_urlencoded::byte_serialize(value.as_bytes())
+        .collect::<String>()
+        .replace('+', "%20")
 }
 
 fn redact(value: &mut Value, secret: &str) {

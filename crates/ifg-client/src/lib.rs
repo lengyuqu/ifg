@@ -23,6 +23,7 @@ mod repos;
 mod search;
 mod secret;
 mod users;
+mod wiki;
 
 pub use ci::{Ci, Job, Pipeline, PipelineDetail, Stage, StageWithJobs};
 pub use collab::{segment as collab_segment, Collaboration, SessionCredentials, StartedSession};
@@ -45,3 +46,4 @@ pub use reqwest::Method;
 pub use search::{Search, SearchHit, SearchPage};
 pub use secret::Secret;
 pub use users::{has_scope, TokenInfo, UserProfile, Users};
+pub use wiki::Wiki;

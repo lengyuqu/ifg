@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH ifg-api 1  "ifg-api 0.9.0" 
+.TH ifg-api 1  "ifg-api 0.9.0"
 .SH NAME
 ifg\-api \- Raw pass\-through to the IronForge REST API (paths relative to /api/v1/)
 .SH SYNOPSIS
-\fBifg api\fR [\fB\-X\fR|\fB\-\-method\fR] [\fB\-f\fR|\fB\-\-field\fR] [\fB\-\-input\fR] [\fB\-\-paginate\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIPATH\fR> 
+\fBifg api\fR [\fB\-X\fR|\fB\-\-method\fR] [\fB\-f\fR|\fB\-\-field\fR] [\fB\-\-input\fR] [\fB\-\-paginate\fR] [\fB\-\-jq\fR] [\fB\-\-jq\-raw\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIPATH\fR>
 .SH DESCRIPTION
 Raw pass\-through to the IronForge REST API (paths relative to /api/v1/)
 .PP
@@ -22,6 +22,12 @@ Read the JSON request body from a file ("\-" for stdin)
 .TP
 \fB\-\-paginate\fR
 Follow pagination and merge all `data` arrays into one JSON array
+.TP
+\fB\-\-jq\fR \fI<EXPRESSION>\fR
+Filter a GET response with the system jq executable
+.TP
+\fB\-\-jq\-raw\fR
+Output jq string results without JSON quoting
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)

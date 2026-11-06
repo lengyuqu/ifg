@@ -86,6 +86,12 @@ ifg org create acme -d "Acme 团队"                      # 建组织，成员�
 ifg issue create --editor                              # 用 $EDITOR 写标题与正文
 ifg pr list -q '{{.number}} {{.title}}'                 # 轻量模板输出（列表逐行渲染）
 ifg issue view 3 -q '{{range .labels}}{{.}} {{end}}'    # range 遍历嵌套数组
+ifg api users/me --jq '.username' --jq-raw             # 使用系统 jq 处理 GET 响应
+ifg wiki create '使用说明' --file README.md -R yourname/demo
+ifg wiki view '使用说明' -R yourname/demo
+ifg wiki edit '使用说明' --file - -R yourname/demo      # 从 stdin 读取并替换页面内容
+ifg wiki history '使用说明' -R yourname/demo
+ifg wiki delete '使用说明' -R yourname/demo             # 交互确认；脚本可加 --yes
 ifg release create v1.0.0 -n "说明" dist/pkg.tar.gz     # 建 Release 并流式上传
 ifg release edit v1.0.0 -n "修订说明" --prerelease       # 改发布说明/标记
 ifg release download v1.0.0 -p 'pkg*'                   # SHA-256 校验后落盘
@@ -93,6 +99,12 @@ git config --global credential.https://your-forge.example.com.helper "!ifg auth 
 ```
 
 `pr comment` 提交的是带正文的普通评审（`action=comment`），不是文件行内评论；可通过 `pr reviews` 查看。行内评论仍由 `pr view --comments` 查看。
+
+`--editor` 支持带参数的 `VISUAL` 或 `EDITOR`，例如 `EDITOR='code --wait'`；含空格的程序路径需加引号，例如 `EDITOR='"/path with spaces/editor" --wait'`。命令直接启动程序而不经过 shell，不会展开变量、管道或重定向；可执行文件路径本身含空格时也可单独指定完整路径。
+
+`ifg api <path> --jq '<表达式>'` 使用 PATH 中的 `jq` 处理 GET 的 JSON 响应，`--jq-raw` 输出未加引号的字符串；缺少 jq、响应不是 JSON 或表达式出错时返回非零。`--paginate --jq` 将各页合并为数组后再执行表达式。该选项当前仅属于 `api` 子命令且仅支持 GET；其他子命令可继续使用 `--json | jq ...`。
+
+Wiki 的 `edit` 替换整个页面，当前服务端没有版本前置条件，应先读取页面并协调并发编辑。固定基线的单条历史版本接口存在跨仓库授权缺陷，因此没有提供对应的专门命令；`history` 只列出当前授权仓库中该页面的历史。服务端修复前应限制该历史版本接口的访问。
 
 `ci run` 的 ref 由 IronForge 服务端解析，省略时使用服务端默认的 `refs/heads/main`。`ci wait` 或 `ci run --wait` 只有流水线成功才返回 0；失败、取消、人工门禁、未知状态和超时都返回非零。人工门禁可先用 `ci view` 查看作业并按服务端流程处理。触发成功后即使等待超时也不会取消流水线，流水线编号会输出到 stderr。
 
@@ -174,8 +186,7 @@ ifg -R owner/repo collab task reassign '<任务 ID>' --key move-1 --expected-ver
 | Linux（musl，arm64 / x86_64） | 已发布 |
 | Windows（x86_64-msvc） | 已支持：构建 / 测试 / zip 产物，CI `windows-latest` 覆盖（e2e 仍只在 macOS） |
 
-Windows 已知限制：颜色仅在 Windows Terminal / VS Code / mintty 下启用；默认不启分页器（可用 `PAGER` 覆盖）；
-`--editor` 需要单程序编辑器（如 `notepad`），暂不支持 `code --wait`；未签名 exe 可能触发杀软告警。
+Windows 已知限制：颜色仅在 Windows Terminal / VS Code / mintty 下启用；默认不启分页器（可用 `PAGER` 覆盖）；未签名 exe 可能触发杀软告警。带参数编辑器配置支持解析 Windows 路径，但尚需在 Windows 上实测。
 
 ## 开发
 

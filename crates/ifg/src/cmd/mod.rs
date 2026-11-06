@@ -17,6 +17,7 @@ pub mod repo;
 pub mod search;
 pub mod status;
 pub mod version;
+pub mod wiki;
 
 use ifg_client::Client;
 
@@ -94,23 +95,31 @@ fn compose_with_editor(
     initial_title: &str,
     initial_body: &str,
 ) -> Result<(String, String), AppError> {
-    let path = std::env::temp_dir().join(format!("ifg-edit-{}.md", std::process::id()));
+    let parts = parse_editor(editor)?;
+    let file = tempfile::Builder::new()
+        .prefix("ifg-edit-")
+        .suffix(".md")
+        .tempfile()
+        .map_err(|e| AppError::Io(format!("could not create editor file: {e}")))?;
+    let path = file.path();
     let template = format!(
         "{initial_title}\n\n{initial_body}\n\n# First line above is the title; the rest is the body.\n# Lines starting with '#' are dropped. Save an empty file to abort.\n"
     );
-    std::fs::write(&path, template)
+    std::fs::write(path, template)
         .map_err(|e| AppError::Other(format!("could not write {}: {e}", path.display())))?;
-    let status = std::process::Command::new(editor)
-        .arg(&path)
+    let status = std::process::Command::new(&parts[0])
+        .args(&parts[1..])
+        .arg(path)
         .status()
-        .map_err(|e| AppError::Other(format!("could not run {editor}: {e}")))?;
+        .map_err(|e| AppError::Other(format!("could not run editor {}: {e}", parts[0])))?;
     if !status.success() {
-        let _ = std::fs::remove_file(&path);
-        return Err(AppError::Other(format!("{editor} exited with {status}")));
+        return Err(AppError::Other(format!(
+            "editor {} exited with {status}",
+            parts[0]
+        )));
     }
-    let text = std::fs::read_to_string(&path)
+    let text = std::fs::read_to_string(path)
         .map_err(|e| AppError::Other(format!("could not read {}: {e}", path.display())))?;
-    let _ = std::fs::remove_file(&path);
 
     let mut lines = text
         .lines()
@@ -124,9 +133,124 @@ fn compose_with_editor(
     Ok((title, body))
 }
 
+/// Split an editor command into an executable and arguments without invoking a
+/// shell. Quotes group spaces; backslashes in Windows paths are preserved.
+fn parse_editor(input: &str) -> Result<Vec<String>, AppError> {
+    // Preserve the previous ability to pass a bare executable path with spaces.
+    if std::path::Path::new(input).is_file() {
+        return Ok(vec![input.to_owned()]);
+    }
+    let mut parts = Vec::new();
+    let mut token = String::new();
+    let mut chars = input.chars().peekable();
+    let mut quote = None;
+    let mut started = false;
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            (None, '\'' | '"') => {
+                quote = Some(ch);
+                started = true;
+            }
+            (Some(q), ch) if q == ch => quote = None,
+            (None, ch) if ch.is_whitespace() => {
+                if started {
+                    parts.push(std::mem::take(&mut token));
+                    started = false;
+                }
+            }
+            (None, '\\')
+                if chars
+                    .peek()
+                    .is_some_and(|c| c.is_whitespace() || *c == '\'' || *c == '"') =>
+            {
+                token.push(chars.next().expect("peeked"));
+                started = true;
+            }
+            (Some('"'), '\\') if chars.peek() == Some(&'"') => {
+                token.push(chars.next().expect("peeked"));
+                started = true;
+            }
+            (_, ch) => {
+                token.push(ch);
+                started = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return Err(AppError::Usage("unclosed quote in editor command".into()));
+    }
+    if started {
+        parts.push(token);
+    }
+    if parts.first().is_none_or(String::is_empty) {
+        return Err(AppError::Usage("editor command is empty".into()));
+    }
+    Ok(parts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_arguments_handle_quotes_escapes_and_windows_paths() {
+        assert_eq!(parse_editor("code --wait").unwrap(), ["code", "--wait"]);
+        assert_eq!(
+            parse_editor(r#""C:\Program Files\Editor\edit.exe" --wait "two words""#).unwrap(),
+            [r"C:\Program Files\Editor\edit.exe", "--wait", "two words"]
+        );
+        assert_eq!(
+            parse_editor(r"editor\ with\ spaces --wait").unwrap(),
+            ["editor with spaces", "--wait"]
+        );
+        assert_eq!(
+            parse_editor("editor '$HOME; echo danger'").unwrap(),
+            ["editor", "$HOME; echo danger"]
+        );
+        assert!(parse_editor("editor 'broken").is_err());
+        assert!(parse_editor("   ").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn editor_executes_quoted_path_with_arguments_and_cleans_up() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::Builder::new()
+            .prefix("ifg editor ")
+            .tempdir()
+            .unwrap();
+        let script = dir.path().join("fake editor.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\n[ \"$1\" = --wait ] || exit 3\nprintf 'Title\\n\\nBody\\n' > \"$2\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let editor = format!("\"{}\" --wait", script.display());
+        assert_eq!(
+            compose_with_editor(&editor, "", "").unwrap(),
+            ("Title".into(), "Body".into())
+        );
+        assert_eq!(
+            parse_editor(script.to_str().unwrap()).unwrap(),
+            [script.to_str().unwrap()]
+        );
+        let record = dir.path().join("record");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$1\" > '{}'\nexit 1\n",
+                record.display()
+            ),
+        )
+        .unwrap();
+        assert!(compose_with_editor(script.to_str().unwrap(), "", "").is_err());
+        let path = std::fs::read_to_string(record).unwrap();
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "temporary file must be removed after failure"
+        );
+    }
 
     /// `--editor`: first non-comment line is the title, the rest the body.
     #[cfg(unix)]
