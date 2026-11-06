@@ -862,6 +862,42 @@
         }
       }
     },
+    "/admin/users/{id}/collaboration-impact": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "user_deletion_impact",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "user id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collaboration records removed if the account is deleted (point-in-time counts)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Site admin required"
+          },
+          "404": {
+            "description": "User not found"
+          }
+        }
+      }
+    },
     "/admin/users/{id}/unlock": {
       "post": {
         "tags": [
@@ -1126,7 +1162,7 @@
           {
             "name": "ref",
             "in": "query",
-            "description": "Branch/tag/SHA (default: default branch)",
+            "description": "Only the default branch is indexed; any other ref is rejected with 400",
             "required": false,
             "schema": {
               "type": "string"
@@ -1135,7 +1171,17 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Max results (default 20)",
+            "description": "Max results (default 20, max 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Results to skip (default 0); total in the x-total-count header",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1145,7 +1191,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Code search results",
+            "description": "Code search results; x-total-count carries the total match count",
             "content": {
               "application/json": {
                 "schema": {
@@ -1158,7 +1204,7 @@
             }
           },
           "400": {
-            "description": "Repository not indexed"
+            "description": "Repository not indexed, or ref is not the indexed branch"
           },
           "404": {
             "description": "Repository not found"
@@ -1253,17 +1299,54 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "depth",
+            "in": "query",
+            "description": "Directory levels to descend (default 1, max 8)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max entries per page (default 200, max 1000)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "next_cursor from the previous page",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Repository file tree"
+            "description": "Repository file tree page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiTreeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor"
           },
           "404": {
-            "description": "Repository not found"
-          },
-          "501": {
-            "description": "Not yet implemented"
+            "description": "Repository, ref or path not found"
           }
         }
       }
@@ -1633,6 +1716,29 @@
           },
           "403": {
             "description": "Job is not running"
+          }
+        }
+      }
+    },
+    "/collaboration/capabilities": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "instance_capabilities",
+        "responses": {
+          "200": {
+            "description": "What this server's collaboration contract offers; no repository information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
           }
         }
       }
@@ -4897,6 +5003,4399 @@
                 "schema": {}
               }
             }
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/capabilities": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "repo_capabilities",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The contract plus the caller's access to this repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoCapabilitiesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Public repository, but the caller is not part of its working group"
+          },
+          "404": {
+            "description": "No such repository, or a private one the caller cannot see (indistinguishable)"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/decisions/{id}": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_decision",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decision with its terminal `change`, `status`, `context_freshness` (fresh | stale | unknown) and `supersedes` (decisions it replaces)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such decision in this repository"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/decisions/{id}/changes": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "change_decision",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "The decision's one terminal change was recorded; the decision itself is not edited",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid kind/reason, missing or forbidden replacement, self-reference, or a replacement of another task"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such decision in this repository"
+          },
+          "409": {
+            "description": "DECISION_ALREADY_CHANGED, DECISION_CYCLE, REPLACEMENT_NOT_NEWER, IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/declarations": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_declarations",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stale_after_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Declarations, most recently declared first: {items, next_cursor}. Join with the session list by session_id; sessions that never declared are absent (unknown). Each item carries staleness, source user_content and authorization none",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/deletion-impact": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "repo_deletion_impact",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collaboration records of the repository and what deleting it does to them (point-in-time counts)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Repository admin access required"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/diagnostics": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_diagnostics",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Diagnose this task (exactly one of `task_id` and `session_id`).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Diagnose this session.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{subject, as_of, findings:[{code, confidence: established|unknown, severity, statement, source, details}], not_covered, authority}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Not exactly one of task_id and session_id"
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task or session in this repository"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/escalation-settings": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_settings",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Thresholds, quiet window (UTC) and version; source=default means nothing is stored and escalation is off",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "put_settings",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored settings (a retry with identical values is a no-op)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Value out of range"
+          },
+          "403": {
+            "description": "Repository admin access required"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT with the current version"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/groups": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_group",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "New group (version 1) owned by this repository, plus a `notice` about who can read title/description",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field"
+          },
+          "403": {
+            "description": "Write access to the anchor repository denied, or invalid session credentials"
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/groups/{group_id}": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_group",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Size of the embedded first page of links (default 50, max 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Group fields and the first page `links` {items, next_cursor, has_more, as_of} of the links the caller may see; `version` only with write access to the anchor. Links to repositories the caller cannot see are omitted without a trace.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Collaboration read access to the anchor denied"
+          },
+          "404": {
+            "description": "No such group in this repository"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/groups/{group_id}/links": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_group_links",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{items, next_cursor, has_more, as_of}: only links whose target repository the caller can see, resolved with the repository's current name. Authorization happens first, then ordering and paging, on every page; there is no total and no marker for hidden links.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor"
+          },
+          "403": {
+            "description": "Collaboration read access to the anchor denied"
+          },
+          "404": {
+            "description": "No such group in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "add_group_link",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Link added; the group version moved by one",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field, or the commit is not in the target repository"
+          },
+          "403": {
+            "description": "Write access to the anchor or the (visible) target denied"
+          },
+          "404": {
+            "description": "No such group, target repository (or not visible to the caller), or task"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT, LINK_ALREADY_EXISTS, GROUP_LINK_LIMIT_REACHED, IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/groups/{group_id}/links/{link_id}": {
+      "delete": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "remove_group_link",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Link soft-removed (`removed_at` set) or an identical earlier removal replayed; the group version moved by one",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field"
+          },
+          "403": {
+            "description": "Write access to the anchor or the (visible) target denied"
+          },
+          "404": {
+            "description": "No such group or link, or the link's target is not visible to the caller"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT, LINK_ALREADY_REMOVED, IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/handoffs/{id}/accept": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "accept_handoff",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Handoff accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the addressed session, or invalid session credentials"
+          },
+          "404": {
+            "description": "No such handoff in this repository"
+          },
+          "409": {
+            "description": "Already accepted/cancelled (CONFLICT), VERSION_CONFLICT or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/handoffs/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "cancel_handoff",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Handoff cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the creating session, or invalid session credentials"
+          },
+          "404": {
+            "description": "No such handoff in this repository"
+          },
+          "409": {
+            "description": "Already accepted/cancelled (CONFLICT), VERSION_CONFLICT or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/health": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_health",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "path",
+            "description": "Inclusive start, RFC 3339 (default: `to` minus 7 days).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "to",
+            "in": "path",
+            "description": "Exclusive end, RFC 3339, not in the future (default: now).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "metrics",
+            "in": "path",
+            "description": "Comma-separated: `blocked_tasks`, `blocked_duration`, `handoff_waiting`,\n`open_questions`, `stale_path_claims` (default: all).",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Health metrics for the window [from, to) with metric_version, coverage_start, partial, computed_at, per-metric source/status and data_quality. Data before coverage_start is never counted as zero.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid window or metric id"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Repository admin access required"
+          },
+          "409": {
+            "description": "Too many events to compute the window (HEALTH_EVENT_LIMIT)"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/health/baseline": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "take_baseline",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Objects without any recorded event were recorded as 'observed now'. Repeating the call adds nothing for objects that already have events.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Repository admin access required"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/health/tasks": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_health_tasks",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "metric",
+            "in": "path",
+            "description": "`blocked_at_to`, `entered_blocked`, `blocked_duration`, `handoff_waiting`,\n`open_questions` or `unknown_state`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "to",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tasks behind one metric with the figures each contributes, ordered by task id (keyset pagination)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid window, metric or cursor"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Repository admin access required"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/inbox": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "session_inbox",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only items that became relevant after this RFC 3339 time.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Items waiting for the acting session: {items, as_of, truncated, consistency}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since"
+          },
+          "403": {
+            "description": "Read access denied or invalid session credentials"
+          },
+          "409": {
+            "description": "SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/inbox/user": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "user_inbox",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Only items that became relevant after this RFC 3339 time.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Questions waiting for the signed-in account and answers to its own questions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid since"
+          },
+          "403": {
+            "description": "Write access denied"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/notices": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_notices",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "`pending` (default: not acknowledged, not resolved) or `all`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The acting session's notices, oldest first: {items, next_cursor, as_of, authority}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid state or cursor"
+          },
+          "403": {
+            "description": "Read access denied or invalid session credentials"
+          },
+          "409": {
+            "description": "SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/notices/{id}/ack": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "ack_notice",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{notice, newly_acked}; repeating is harmless",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such notice for the acting session"
+          },
+          "409": {
+            "description": "SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/questions/{id}": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_question",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Question with its answer and `context_freshness` (fresh | stale | unknown)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such question in this repository"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/questions/{id}/answer": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "answer_question",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Answered (or an identical earlier answer replayed)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid option, empty answer or wrong acknowledged_context_hash"
+          },
+          "403": {
+            "description": "Write access denied, invalid session credentials or not the addressed recipient"
+          },
+          "404": {
+            "description": "No such question in this repository"
+          },
+          "409": {
+            "description": "QUESTION_NOT_OPEN, CONTEXT_STALE, VERSION_CONFLICT, IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/questions/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "cancel_question",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Question cancelled",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Write access denied or not the creator"
+          },
+          "404": {
+            "description": "No such question in this repository"
+          },
+          "409": {
+            "description": "QUESTION_NOT_OPEN, VERSION_CONFLICT or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/rules": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_rules",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ref",
+            "in": "query",
+            "description": "Branch, tag or commit; default `HEAD`. Resolved once to `resolved_commit`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "description": "Repository-relative file or directory the rules should govern; default\nthe repository root.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rule files that govern `path` at `resolved_commit`, shallowest first; empty for a repository without commits",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid path"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "Ref not found"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/search": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "One of task, question, decision, handoff, message, or work_package.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Literal substring, 1–256 bytes; LIKE wildcard characters are rejected.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Live search; no total or snippets",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query or cursor"
+          },
+          "403": {
+            "description": "Collaboration read access denied"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/sessions": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_sessions",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sessions, most recently seen first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Write access denied"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_session",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Session registered; the secret is returned once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid label"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Write access denied"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/sessions/{id}/declaration": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_declaration",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stale_after_seconds",
+            "in": "query",
+            "description": "A declaration older than this is flagged `stale` (default 86400, clamped\nto 60..2592000).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session's declaration with staleness, or status `undeclared` (unknown, not 'cannot'). Never an authorization",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such session in this repository"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "put_declaration",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "must be the authenticated session",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stale_after_seconds",
+            "in": "query",
+            "description": "A declaration older than this is flagged `stale` (default 86400, clamped\nto 60..2592000).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutDeclarationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Declaration replaced (or an identical earlier replace replayed). Self-reported, source user_content, authorization none",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field"
+          },
+          "403": {
+            "description": "Write access denied, or the session credentials do not match the session in the path"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT (error.details.current_version) or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/sessions/{id}/end": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "end_session",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session ended (idempotent)"
+          },
+          "403": {
+            "description": "Invalid session credentials"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/sessions/{id}/heartbeat": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "heartbeat",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Heartbeat recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Invalid session credentials"
+          },
+          "409": {
+            "description": "SESSION_EXPIRED: session ended or past its hard expiry"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_tasks",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by status.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tasks, most recently updated first (eventually consistent while tasks change)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid status or cursor"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Read access denied"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_task",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Task created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field or cross-repository reference"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "409": {
+            "description": "SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/from-template": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_task_from_template",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FromTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Task created and pinned to the template version; the checklist is copied into the description",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field, params not matching the title pattern, or unresolvable rules_ref"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such template or version in this repository"
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_task",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest task state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "update_task",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Task updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field or no field to update"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT (details.current_version) or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/budget": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_budget",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Budgets with matched usage (per exact unit and source; `unknown` + reason, never zero, when nothing was reported), derived `over_threshold` with its numbers, and unmatched usage. Informational: nothing is enforced",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/budgets": {
+      "put": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "set_budget",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetBudgetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Budget replaced (or an identical earlier replace replayed), with its current usage evaluation",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Budget created",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT, BUDGET_LIMIT_REACHED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/completion-status": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_completion_status",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the task claims versus what platform records support: per-condition satisfied | unsatisfied | stale | unknown. Read-only; never blocks or changes the task",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/decisions": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_decisions",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decisions by creation time: {items, next_cursor}; each item carries its terminal `change` (if any), `status` and `context_freshness` (fresh | stale | unknown)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor"
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_decision",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Immutable decision recorded. A decision is not an approval and grants no Git, CI or merge right.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field, commit, or a question/answer that does not belong to this task"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT (context.task_version is not the current version), IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/dependencies": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_dependencies",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Direct dependencies with their declared status: {task_id, graph_version, dependencies, blocked_by, status_source}. Statuses are declarations, not evidence",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "add_dependency",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddDependencyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Edge added: {dependency, graph_version, replayed}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Self dependency or malformed input"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task (or dependency task) in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT, DEPENDENCY_CYCLE, GRAPH_LIMIT_EXCEEDED, DEPENDENCY_EXISTS, IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/dependencies/{depends_on_id}": {
+      "delete": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "remove_dependency",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "depends_on_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveDependencyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "{removed, graph_version}; removed=false when the edge did not exist (idempotent)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/handoffs": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_handoffs",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Handoffs by creation time",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor"
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_handoff",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHandoffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Handoff created (pending)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field, target or commit"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/messages": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_messages",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after_seq",
+            "in": "query",
+            "description": "Return messages with `seq` greater than this (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Messages in sequence order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Negative after_seq"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "send_message",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier send replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Message stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field, reference or commit"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/messages/{message_id}/delivery": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_delivery",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{saved, target_session_id, read_at, replied_at, reply_message_id, status}; status is not_targeted | unknown | read | replied",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Not the author session, read access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task or message in this repository"
+          },
+          "409": {
+            "description": "SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/messages/{message_id}/read-receipt": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "confirm_receipt",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The target had already confirmed; the original read_at is returned",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Receipt recorded",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Not the target session, write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task or message in this repository"
+          },
+          "409": {
+            "description": "SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/questions": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_questions",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`open`, `answered` or `cancelled`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Questions by creation time: {items, next_cursor}; items carry no answer or freshness (read one question for those)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid status or cursor"
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_question",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Question opened",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field, recipient or commit"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT, IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/read": {
+      "put": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "mark_read",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Watermark after the update",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkReadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Negative, or beyond the last committed message"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/reassign": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "reassign_task",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReassignBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Task reassigned: {task, takeover, replayed}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "to_session_id is not a live session of this repository"
+          },
+          "403": {
+            "description": "Write access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT or IDEMPOTENCY_KEY_REUSED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/takeovers": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_takeovers",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ownership changes by time: {items, next_cursor}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "claim_task",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakeoverBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Task now owned by the acting session: {task, takeover, replayed}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "OWNER_MAY_BE_ACTIVE, VERSION_CONFLICT, TASK_DONE, IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/template": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_task_template",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pinned template version, the copy the task was created from, `rules_commit`, and whether a newer version exists now",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task, or the task was not created from a template"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/usage": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_usage",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "unit",
+            "in": "query",
+            "description": "Exact unit filter.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Exact source filter.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage records, newest reported first: {items, next_cursor}. Each is the reporter's claim",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "report_usage",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportUsageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Usage record appended",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED, USAGE_LIMIT_REACHED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/tasks/{id}/work-packages": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_work_packages",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revisions, newest first: {items, next_cursor}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_work_package",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkPackageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "New immutable revision",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field or commit"
+          },
+          "403": {
+            "description": "Write access denied or invalid session credentials"
+          },
+          "404": {
+            "description": "No such task in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT, IDEMPOTENCY_KEY_REUSED or SESSION_EXPIRED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/templates": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "list_templates",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Templates newest first, each with its latest version: {items, next_cursor}",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "create_template",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "Template created with version 1",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field"
+          },
+          "403": {
+            "description": "Repository admin access required"
+          },
+          "409": {
+            "description": "TEMPLATE_NAME_TAKEN or IDEMPOTENCY_KEY_REUSED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/templates/{id}": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_template",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version to read; default the latest.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The template with the requested version (default latest)",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such template or version in this repository"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/templates/{id}/versions": {
+      "post": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "new_template_version",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewTemplateVersionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Identical earlier request replayed",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "201": {
+            "description": "New immutable version; older versions and tasks made from them are unchanged",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field"
+          },
+          "403": {
+            "description": "Repository admin access required"
+          },
+          "404": {
+            "description": "No such template in this repository"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT (error.details.current_version) or IDEMPOTENCY_KEY_REUSED"
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/collaboration/work-packages/{id}": {
+      "get": {
+        "tags": [
+          "Collaboration"
+        ],
+        "operationId": "get_work_package",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Package with `evidence_resolution`: the platform's lookup of its pipeline references",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "403": {
+            "description": "Read access denied"
+          },
+          "404": {
+            "description": "No such work package in this repository"
           }
         }
       }
@@ -9744,6 +14243,128 @@
         }
       }
     },
+    "/repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/log": {
+      "get": {
+        "tags": [
+          "CI/CD"
+        ],
+        "summary": "GET /api/v1/repos/:owner/:name/pipelines/:id/jobs/:job_id/log\nIncremental or tail read of a job's log.",
+        "operationId": "get_job_log",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "description": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "pipeline id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "job id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Byte offset to resume from (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max bytes (default 65536, max 262144)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "description": "Last N lines instead of an offset window (max 2000, still bounded by limit)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "strip_ansi",
+            "in": "query",
+            "description": "Strip ANSI escapes from the returned text",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log window with offset, next_offset, total_bytes, eof, reset, text",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "offset and tail are mutually exclusive",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline or job not found",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/play": {
       "post": {
         "tags": [
@@ -9875,6 +14496,116 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/pipelines/{id}/wait": {
+      "get": {
+        "tags": [
+          "CI/CD"
+        ],
+        "summary": "GET /api/v1/repos/:owner/:name/pipelines/:id/wait\nLong-poll until the pipeline changes (or finishes) instead of polling.",
+        "operationId": "wait_pipeline",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "description": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "pipeline id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "Seconds to wait (default 30, max 60)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "etag",
+            "in": "query",
+            "description": "etag from the previous response; omit for an immediate snapshot",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "`terminal` to return only when the pipeline has finished",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current state with etag, changed, terminal, timed_out",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid `until`",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "429": {
+            "description": "Too many concurrent waits",
             "content": {
               "application/json": {
                 "schema": {}
@@ -14468,6 +19199,69 @@
   },
   "components": {
     "schemas": {
+      "AddDependencyBody": {
+        "type": "object",
+        "required": [
+          "client_request_id",
+          "depends_on_task_id",
+          "expected_graph_version"
+        ],
+        "properties": {
+          "client_request_id": {
+            "type": "string",
+            "description": "Client-chosen idempotency key, unique per acting session or user."
+          },
+          "depends_on_task_id": {
+            "type": "string",
+            "description": "The task this task waits for (same repository)."
+          },
+          "expected_graph_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The graph version last read from `GET .../dependencies` (0 = no edge yet)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AddLinkRequest": {
+        "type": "object",
+        "required": [
+          "client_request_id",
+          "target_repo_id",
+          "expected_group_version"
+        ],
+        "properties": {
+          "client_request_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per adding session or user."
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full 40/64-digit commit id that exists in the target repository now."
+          },
+          "expected_group_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The group's `version` as last read."
+          },
+          "target_repo_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stable id of the target repository (not its name)."
+          },
+          "target_task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A collaboration task of the target repository."
+          }
+        },
+        "additionalProperties": false
+      },
       "AddTimeRequest": {
         "type": "object",
         "description": "Request body for adding a time entry.",
@@ -14486,6 +19280,113 @@
             "format": "int64"
           }
         }
+      },
+      "AiTreeEntry": {
+        "type": "object",
+        "description": "One entry of the file tree. `path` is relative to the repository root.",
+        "required": [
+          "path",
+          "type",
+          "sha"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha": {
+            "type": "string"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Byte size, blobs only.",
+            "minimum": 0
+          },
+          "type": {
+            "type": "string",
+            "description": "`blob` | `tree` | `symlink` | `submodule`"
+          }
+        }
+      },
+      "AiTreeResponse": {
+        "type": "object",
+        "description": "File tree page.",
+        "required": [
+          "ref",
+          "path",
+          "entries",
+          "truncated"
+        ],
+        "properties": {
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Commit the ref resolved to; `None` for a repository without commits."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiTreeEntry"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` to fetch the next page."
+          },
+          "path": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "description": "The ref as requested (or the default branch)."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "More entries exist beyond this page."
+          }
+        }
+      },
+      "AnswerRequest": {
+        "type": "object",
+        "required": [
+          "client_answer_id",
+          "expected_version",
+          "acknowledged_context_hash"
+        ],
+        "properties": {
+          "acknowledged_context_hash": {
+            "type": "string",
+            "description": "`context_hash` of the question as read; proves the context was seen."
+          },
+          "body": {
+            "type": "string",
+            "description": "Up to 16 KiB; required unless the question has options."
+          },
+          "client_answer_id": {
+            "type": "string"
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The question `version` the caller last saw."
+          },
+          "option_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required when the question has options."
+          }
+        },
+        "additionalProperties": false
       },
       "ApplySuggestionsRequest": {
         "type": "object",
@@ -14665,6 +19566,28 @@
           }
         }
       },
+      "AuthMode": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "headers"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "AuthResponse": {
         "type": "object",
         "description": "Login/Register success response.",
@@ -14689,6 +19612,161 @@
             "type": "string"
           }
         }
+      },
+      "CallerAccess": {
+        "type": "object",
+        "required": [
+          "repo_collab_read",
+          "repo_write"
+        ],
+        "properties": {
+          "repo_collab_read": {
+            "type": "boolean"
+          },
+          "repo_write": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CancelQuestionRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CapabilitiesResponse": {
+        "type": "object",
+        "required": [
+          "contract_version",
+          "server_version",
+          "capabilities",
+          "limits",
+          "auth_modes",
+          "mcp_transport",
+          "deprecations"
+        ],
+        "properties": {
+          "auth_modes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthMode"
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapabilityEntry"
+            }
+          },
+          "contract_version": {
+            "type": "string",
+            "description": "`major.minor`. Same major = compatible; a higher minor only adds optional things."
+          },
+          "deprecations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeprecationEntry"
+            }
+          },
+          "limits": {},
+          "mcp_transport": {
+            "$ref": "#/components/schemas/McpTransport"
+          },
+          "server_version": {
+            "type": "string"
+          }
+        }
+      },
+      "CapabilityEntry": {
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "status",
+          "requires",
+          "mcp_tools"
+        ],
+        "properties": {
+          "mcp_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "MCP tools adapting the capability (empty when REST-only)."
+          },
+          "name": {
+            "type": "string"
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What a caller needs: any of `account`, `repo_collab_read`, `repo_write`,\n`session_credentials`, `repo_admin`, `site_admin`. Clients ignore names they do not know\nbut must not assume an unknown requirement is satisfied."
+          },
+          "status": {
+            "type": "string",
+            "description": "`stable` | `experimental`. Clients treat an unknown value as `experimental`."
+          },
+          "version": {
+            "type": "string",
+            "description": "`major.minor` of this capability."
+          }
+        }
+      },
+      "ChangeDecisionRequest": {
+        "type": "object",
+        "required": [
+          "client_change_id",
+          "kind",
+          "reason"
+        ],
+        "properties": {
+          "client_change_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per writing session or user."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`superseded` or `revoked`."
+          },
+          "reason": {
+            "type": "string",
+            "description": "1 byte to 4 KiB."
+          },
+          "replacement_decision_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required for `superseded`, forbidden for `revoked`. A decision of the\nsame task recorded after the one it replaces."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChecklistItemBody": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "description": "Informational; default `true`."
+          },
+          "text": {
+            "type": "string",
+            "description": "One line, at most 256 bytes."
+          }
+        },
+        "additionalProperties": false
       },
       "CleanupResponse": {
         "type": "object",
@@ -14743,6 +19821,33 @@
             "type": "string"
           }
         }
+      },
+      "ContextBody": {
+        "type": "object",
+        "properties": {
+          "base_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full commit ids that exist in this repository (existence only)."
+          },
+          "head_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Must equal the task's current version when given; defaults to it."
+          }
+        },
+        "additionalProperties": false
       },
       "CreateBoardRequest": {
         "type": "object",
@@ -14823,6 +19928,53 @@
           }
         }
       },
+      "CreateDecisionRequest": {
+        "type": "object",
+        "required": [
+          "client_decision_id",
+          "title",
+          "rationale"
+        ],
+        "properties": {
+          "answer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The answer of `question_id`; requires `question_id`."
+          },
+          "client_decision_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per writing session or user."
+          },
+          "context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DecisionContextBody"
+              }
+            ]
+          },
+          "question_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A question of this task. Optional."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "1 byte to 16 KiB. The writer's own account of why; not verified."
+          },
+          "title": {
+            "type": "string",
+            "description": "1–200 characters."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateDeployKeyRequest": {
         "type": "object",
         "required": [
@@ -14840,6 +19992,77 @@
             "type": "string"
           }
         }
+      },
+      "CreateGroupRequest": {
+        "type": "object",
+        "required": [
+          "client_request_id",
+          "title"
+        ],
+        "properties": {
+          "client_request_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per creating session or user."
+          },
+          "description": {
+            "type": "string",
+            "description": "Up to 16 KiB; same visibility warning as `title`."
+          },
+          "title": {
+            "type": "string",
+            "description": "1–200 characters. **Readable by everyone who can read the anchor\nrepository's collaboration data**, also people without access to the\nlinked repositories; never put confidential details of other repositories\nhere."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateHandoffRequest": {
+        "type": "object",
+        "required": [
+          "client_handoff_id",
+          "to_session_id",
+          "summary"
+        ],
+        "properties": {
+          "blockers": {
+            "type": "string",
+            "description": "Up to 16 KiB."
+          },
+          "client_handoff_id": {
+            "type": "string",
+            "description": "Client-chosen idempotency key, unique per session."
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full commit id that exists in this repository (existence only)."
+          },
+          "completed": {
+            "type": "string",
+            "description": "Up to 16 KiB."
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to 20 URIs or ids, each a single line of at most 2048 bytes. Claims,\nnot verification; readers must check them themselves."
+          },
+          "next_steps": {
+            "type": "string",
+            "description": "Up to 16 KiB."
+          },
+          "summary": {
+            "type": "string",
+            "description": "1 byte to 16 KiB."
+          },
+          "to_session_id": {
+            "type": "string",
+            "description": "Another session of this repository; it may be offline or expired."
+          }
+        },
+        "additionalProperties": false
       },
       "CreateMirrorRequest": {
         "type": "object",
@@ -14900,6 +20123,50 @@
             "description": "Blob SHA of the file being updated (required for updates, omit for creates)"
           }
         }
+      },
+      "CreateQuestionRequest": {
+        "type": "object",
+        "required": [
+          "client_question_id",
+          "recipient",
+          "title",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "1 byte to 16 KiB."
+          },
+          "client_question_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per asking session or user."
+          },
+          "context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContextBody"
+              }
+            ]
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 10 labels; the server assigns ids `o1`, `o2`, ..."
+          },
+          "recipient": {
+            "$ref": "#/components/schemas/RecipientBody"
+          },
+          "title": {
+            "type": "string",
+            "description": "1–200 characters."
+          }
+        },
+        "additionalProperties": false
       },
       "CreateRepoRequest": {
         "type": "object",
@@ -14974,6 +20241,40 @@
           }
         }
       },
+      "CreateSessionRequest": {
+        "type": "object",
+        "required": [
+          "display_name",
+          "client_kind"
+        ],
+        "properties": {
+          "client_kind": {
+            "type": "string",
+            "description": "Self-reported client type (e.g. `claude-code`), 1–64 characters."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Self-reported label, 1–80 characters. Duplicates are allowed."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateSessionResponse": {
+        "type": "object",
+        "required": [
+          "session",
+          "session_secret"
+        ],
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/SessionResponse"
+          },
+          "session_secret": {
+            "type": "string",
+            "description": "Shown exactly once. Store it securely; it cannot be recovered."
+          }
+        }
+      },
       "CreateSshKeyRequest": {
         "type": "object",
         "required": [
@@ -15010,6 +20311,99 @@
           }
         }
       },
+      "CreateTaskRequest": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Declared working branch (not checked against Git)."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Up to 16 KiB."
+          },
+          "issue_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "owner_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A live session of this repository; omit for an unowned task."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared repository-relative paths, at most 100, stored literally."
+          },
+          "pr_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "title": {
+            "type": "string",
+            "description": "1–200 characters."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateTemplateRequest": {
+        "type": "object",
+        "required": [
+          "client_template_id",
+          "name",
+          "title_pattern",
+          "goal"
+        ],
+        "properties": {
+          "checklist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChecklistItemBody"
+            }
+          },
+          "client_template_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per creating account."
+          },
+          "deliverables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "goal": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "1–100 characters, unique in the repository."
+          },
+          "title_pattern": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateTokenRequest": {
         "type": "object",
         "required": [
@@ -15032,6 +20426,98 @@
             ]
           }
         }
+      },
+      "CreateWorkPackageRequest": {
+        "type": "object",
+        "required": [
+          "client_package_id"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "client_package_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per author session or user."
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full commit id that exists in this repository (existence only)."
+          },
+          "completed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRefBody"
+            },
+            "description": "At most 50. Only `pipeline` references are resolved by the platform."
+          },
+          "expected_task_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When given, must equal the task's current version."
+          },
+          "goal": {
+            "type": "string"
+          },
+          "next_steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "open_items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DecisionContextBody": {
+        "type": "object",
+        "properties": {
+          "base_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full commit ids that exist in this repository (existence only)."
+          },
+          "head_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Must equal the task's current version when given; defaults to it."
+          }
+        },
+        "additionalProperties": false
       },
       "DeployKeyResponse": {
         "type": "object",
@@ -15074,6 +20560,33 @@
             "type": "boolean"
           },
           "title": {
+            "type": "string"
+          }
+        }
+      },
+      "DeprecationEntry": {
+        "type": "object",
+        "required": [
+          "capability",
+          "what",
+          "replacement",
+          "announced",
+          "earliest_removal"
+        ],
+        "properties": {
+          "announced": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "earliest_removal": {
+            "type": "string"
+          },
+          "replacement": {
+            "type": "string"
+          },
+          "what": {
             "type": "string"
           }
         }
@@ -15186,6 +20699,23 @@
           }
         }
       },
+      "EvidenceRefBody": {
+        "type": "object",
+        "required": [
+          "kind",
+          "reference"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`pipeline` (a pipeline id of this repository), `commit`, `url` or `note`."
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "ExternalCiResponse": {
         "type": "object",
         "required": [
@@ -15289,6 +20819,178 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "FromTemplateRequest": {
+        "type": "object",
+        "required": [
+          "client_task_id",
+          "template_id"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Declared working branch (not checked against Git)."
+          },
+          "client_task_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per creating session."
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free text appended to the task description (up to 4 KiB)."
+          },
+          "owner_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A live session of this repository; omit for an unowned task."
+          },
+          "params": {
+            "type": "object",
+            "description": "Values for the title pattern's placeholders, exactly those names.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rules_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional branch, tag or commit. When given, the commit it resolves to now\nis recorded on the task as `rules_commit` (O01); an unresolvable ref is a\n400. This records which rules were current, not that anyone read them."
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Pin this version; default the latest at the time of the request."
+          }
+        },
+        "additionalProperties": false
+      },
+      "HandoffListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HandoffResponse"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "HandoffResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "from_session_id",
+          "to_session_id",
+          "summary",
+          "completed",
+          "next_steps",
+          "blockers",
+          "evidence",
+          "client_handoff_id",
+          "status",
+          "version",
+          "created_at",
+          "origin"
+        ],
+        "properties": {
+          "accepted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "blockers": {
+            "type": "string"
+          },
+          "client_handoff_id": {
+            "type": "string"
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "completed": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "from_session_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "next_steps": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "description": "Always `user_content`: every text section and evidence entry is a claim."
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending` | `accepted` | `cancelled`."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "to_session_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -15476,6 +21178,151 @@
           }
         }
       },
+      "MarkReadRequest": {
+        "type": "object",
+        "required": [
+          "last_read_seq"
+        ],
+        "properties": {
+          "last_read_seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Highest message `seq` the session has processed."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MarkReadResponse": {
+        "type": "object",
+        "required": [
+          "last_read_seq"
+        ],
+        "properties": {
+          "last_read_seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The session's watermark after the call. Monotonic: a lower request leaves\nit unchanged, so `last_read_seq: 0` reads the current value."
+          }
+        }
+      },
+      "McpTransport": {
+        "type": "object",
+        "required": [
+          "transports",
+          "binary",
+          "tool_count",
+          "discovery"
+        ],
+        "properties": {
+          "binary": {
+            "type": "string"
+          },
+          "discovery": {
+            "type": "string"
+          },
+          "tool_count": {
+            "type": "integer",
+            "description": "Number of `collab_*` tools. The authoritative list is MCP `tools/list`.",
+            "minimum": 0
+          },
+          "transports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Only `stdio` exists; there is no HTTP/SSE MCP endpoint."
+          }
+        }
+      },
+      "MessageListResponse": {
+        "type": "object",
+        "required": [
+          "items",
+          "next_after_seq",
+          "has_more"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessageResponse"
+            }
+          },
+          "next_after_seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Use as the next `after_seq`; equals the request's value on an empty page."
+          }
+        }
+      },
+      "MessageResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "seq",
+          "author_session_id",
+          "kind",
+          "body",
+          "client_message_id",
+          "created_at",
+          "origin"
+        ],
+        "properties": {
+          "author_session_id": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "client_message_id": {
+            "type": "string"
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "description": "Always `user_content`."
+          },
+          "reply_to_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Position in the task's stream; poll with `after_seq`."
+          },
+          "target_session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_id": {
+            "type": "string"
+          }
+        }
+      },
       "MoveCardRequest": {
         "type": "object",
         "required": [
@@ -15492,6 +21339,45 @@
             "format": "int32"
           }
         }
+      },
+      "NewTemplateVersionRequest": {
+        "type": "object",
+        "required": [
+          "client_version_id",
+          "expected_version",
+          "title_pattern",
+          "goal"
+        ],
+        "properties": {
+          "checklist": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChecklistItemBody"
+            }
+          },
+          "client_version_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per creating account."
+          },
+          "deliverables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The template's `latest_version` the editor saw; a stale value is a\n`VERSION_CONFLICT`."
+          },
+          "goal": {
+            "type": "string"
+          },
+          "title_pattern": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "PaginatedRepoResponse": {
         "type": "object",
@@ -15674,6 +21560,49 @@
           }
         }
       },
+      "PutDeclarationRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "can_run_tests": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`yes` | `no` | `unknown` (default)."
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `version` of the declaration you last saw; 0 when you have not\ndeclared yet. A stale value is a `VERSION_CONFLICT`. Re-sending the\ncurrent version with unchanged content refreshes `declared_at`."
+          },
+          "network": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`unrestricted` | `restricted` | `offline` | `unknown` (default)."
+          },
+          "network_notes": {
+            "type": "string",
+            "description": "Up to 1 KiB, e.g. which hosts are reachable."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Free-form, up to 4 KiB."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tools the session says it has, at most 50 labels of up to 128 characters."
+          }
+        },
+        "additionalProperties": false
+      },
       "PutSecretRequest": {
         "type": "object",
         "required": [
@@ -15684,6 +21613,75 @@
             "type": "string"
           }
         }
+      },
+      "QuietHoursRequest": {
+        "type": "object",
+        "required": [
+          "start_minute",
+          "end_minute"
+        ],
+        "properties": {
+          "end_minute": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "start_minute": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReassignBody": {
+        "type": "object",
+        "required": [
+          "client_takeover_id",
+          "expected_task_version",
+          "to_session_id",
+          "reason"
+        ],
+        "properties": {
+          "client_takeover_id": {
+            "type": "string"
+          },
+          "expected_owner_session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_task_version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "to_session_id": {
+            "type": "string",
+            "description": "A live session of this repository that becomes the owner."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecipientBody": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`repo_writers`, `user` (id = user id) or `session` (id = session id)."
+          }
+        },
+        "additionalProperties": false
       },
       "RefreshRequest": {
         "type": "object",
@@ -15774,6 +21772,40 @@
           }
         }
       },
+      "RemoveDependencyBody": {
+        "type": "object",
+        "required": [
+          "client_request_id",
+          "expected_graph_version"
+        ],
+        "properties": {
+          "client_request_id": {
+            "type": "string"
+          },
+          "expected_graph_version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RemoveLinkRequest": {
+        "type": "object",
+        "required": [
+          "client_request_id",
+          "expected_group_version"
+        ],
+        "properties": {
+          "client_request_id": {
+            "type": "string"
+          },
+          "expected_group_version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
       "ReorderCardsRequest": {
         "type": "object",
         "required": [
@@ -15799,6 +21831,29 @@
             "description": "List of (card_id, new_position) pairs."
           }
         }
+      },
+      "RepoCapabilitiesResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CapabilitiesResponse"
+          },
+          {
+            "type": "object",
+            "required": [
+              "repo",
+              "caller"
+            ],
+            "properties": {
+              "caller": {
+                "$ref": "#/components/schemas/CallerAccess",
+                "description": "The caller's access to this repository, from the database (not the\n30s permission cache). Admin-only routes need more than this reports."
+              },
+              "repo": {
+                "type": "string"
+              }
+            }
+          }
+        ]
       },
       "RepoResponse": {
         "type": "object",
@@ -15924,6 +21979,43 @@
           }
         }
       },
+      "ReportUsageRequest": {
+        "type": "object",
+        "required": [
+          "client_usage_id",
+          "unit",
+          "source",
+          "amount",
+          "period_start",
+          "period_end"
+        ],
+        "properties": {
+          "amount": {
+            "type": "string",
+            "description": "Non-negative decimal consumed during the period (a delta, not a running\ntotal). A JSON string or number.",
+            "example": "0.42"
+          },
+          "client_usage_id": {
+            "type": "string",
+            "description": "Idempotency key, unique per reporting session or user."
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "period_start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "ResetPasswordRequest": {
         "type": "object",
         "description": "POST /api/v1/users/reset-password\n\nRequest body: { \"token\": \"...\", \"new_password\": \"...\" }",
@@ -16040,6 +22132,211 @@
             "format": "date-time"
           }
         }
+      },
+      "SendMessageRequest": {
+        "type": "object",
+        "required": [
+          "client_message_id",
+          "kind",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "1 byte to 32 KiB of text. It is data, never an instruction to the server."
+          },
+          "client_message_id": {
+            "type": "string",
+            "description": "Client-chosen idempotency key, unique per session (1–128 of `[A-Za-z0-9._:-]`)."
+          },
+          "commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full commit id that exists in this repository (existence only)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`note` | `help` | `blocker`."
+          },
+          "reply_to_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A message of the same task."
+          },
+          "target_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A session of this repository; the message stays visible to everyone."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionResponse"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "description": "A collaboration session. All label fields are self-reported.",
+        "required": [
+          "id",
+          "display_name",
+          "client_kind",
+          "state",
+          "created_at",
+          "last_seen_at",
+          "expires_at",
+          "origin"
+        ],
+        "properties": {
+          "client_kind": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "origin": {
+            "type": "string",
+            "description": "Always `user_content`: treat the labels as untrusted data."
+          },
+          "state": {
+            "type": "string",
+            "description": "`online` | `offline` | `expired` | `ended`. `offline` is not terminal."
+          }
+        }
+      },
+      "SetBudgetRequest": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "unit",
+          "source",
+          "amount",
+          "sampling_period"
+        ],
+        "properties": {
+          "alert_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional lower threshold in the same unit (not above `amount`);\n`over_threshold` is judged against it when present."
+          },
+          "amount": {
+            "type": "string",
+            "description": "Non-negative decimal, greater than zero, at most 18 integer and 6\nfractional digits. A JSON string or number.",
+            "example": "25.00"
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The budget's `version` you last saw for this unit and source; 0 when\nnone exists. A stale value is a `VERSION_CONFLICT`."
+          },
+          "sampling_period": {
+            "type": "string",
+            "description": "Required free text (up to 64 characters): the period the source's\nmeasurements cover or are sampled over, e.g. `task_total`, `per_day`."
+          },
+          "source": {
+            "type": "string",
+            "description": "Required, 1-64 of the same characters: where the figures come from."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Required, 1-32 of `[A-Za-z0-9._:/@+-]`. Compared exactly and never\nconverted (`USD` and `usd` are different units)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SettingsRequest": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "enabled",
+          "blocked_after_secs",
+          "question_after_secs",
+          "handoff_after_secs",
+          "repeat_after_secs"
+        ],
+        "properties": {
+          "blocked_after_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "handoff_after_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "question_after_secs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "quiet_hours": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QuietHoursRequest"
+              }
+            ]
+          },
+          "repeat_after_secs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
       },
       "SetupMfaResponse": {
         "type": "object",
@@ -16220,6 +22517,142 @@
           }
         }
       },
+      "TakeoverBody": {
+        "type": "object",
+        "required": [
+          "client_takeover_id",
+          "expected_task_version",
+          "reason"
+        ],
+        "properties": {
+          "client_takeover_id": {
+            "type": "string",
+            "description": "Client-chosen idempotency key, unique per acting session or user."
+          },
+          "expected_owner_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The owner the caller last saw; omit or `null` for an unowned task."
+          },
+          "expected_task_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The task `version` the caller last saw."
+          },
+          "reason": {
+            "type": "string",
+            "description": "1 byte to 2000 bytes; a claim, not verified."
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskListResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskResponse"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TaskResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "paths",
+          "version",
+          "last_message_seq",
+          "created_at",
+          "updated_at",
+          "origin"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "issue_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "last_message_seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sequence number of the newest message (0 = none)."
+          },
+          "origin": {
+            "type": "string",
+            "description": "Always `user_content`: every text field is a client declaration."
+          },
+          "owner_session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pr_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Send back as `expected_version` when updating."
+          }
+        }
+      },
       "TransferRequest": {
         "type": "object",
         "required": [
@@ -16230,6 +22663,20 @@
             "type": "string"
           }
         }
+      },
+      "TransitionRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The handoff `version` the caller last saw."
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateBoardRequest": {
         "type": "object",
@@ -16334,6 +22781,74 @@
             }
           }
         }
+      },
+      "UpdateTaskRequest": {
+        "type": "object",
+        "description": "Partial update guarded by `expected_version`. Omitted fields are unchanged;\nan explicit `null` clears `description`, `owner_session_id`, `branch`,\n`issue_number` or `pr_number`.",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "issue_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "owner_session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "paths": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "pr_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`open` | `in_progress` | `waiting` | `blocked` | `done`."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "UploadArtifactRequest": {
         "type": "object",
@@ -16469,6 +22984,10 @@
     }
   },
   "tags": [
+    {
+      "name": "Collaboration",
+      "description": "Same-account multi-agent sessions, tasks, messages and handoffs"
+    },
     {
       "name": "Users",
       "description": "User registration, authentication, and profile"

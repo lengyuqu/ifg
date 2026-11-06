@@ -14,11 +14,12 @@ license = "MIT"
 authors = ["Yu Qu <zdz945244799@yeah.net>"]
 repository = "https://git233.phynews.com:18443/aicodeing/ifg"
 
-# IronForge commit the API contract snapshot and the local Docker e2e instance
-# are built from (design doc §6.4). Bumping it is an explicit commit:
-# rebuild the image → sync the OpenAPI snapshot → run e2e.
+# Exact local image used for the API snapshot and isolated Docker e2e. The
+# image has no source-revision label, so its tag is not proof of a commit.
+# Replacing this baseline requires a fresh snapshot and an e2e run.
 [workspace.metadata.ifg]
-ironforge_rev = "ce4834f03a782ea872df88414ea6f4a406762757"
+ironforge_image_id = "sha256:2086e6696a627c9e92fcb75af8036c79c07e5434e54c5db6b718a85756addbb9"
+ironforge_version = "0.2.0"
 
 [workspace.dependencies]
 ifg-client = { path = "crates/ifg-client" }

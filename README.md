@@ -23,16 +23,25 @@ SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端
 手动安装：
 
 ```bash
-# 下载对应架构的 tar.gz 与 SHA256SUMS 后先校验
-shasum -a 256 -c SHA256SUMS 2>/dev/null || shasum -a 256 ifg-*.tar.gz
-tar xzf ifg-0.9.0-<target>.tar.gz && sudo mv ifg /usr/local/bin/
+# 下载对应架构的 tar.gz 与同一 Release 的 SHA256SUMS
+archive='ifg-0.9.0-<target>.tar.gz'  # 替换为实际文件名
+if awk -v f="$archive" '$2 == f { print; n++ } END { if (n != 1) exit 1 }' SHA256SUMS > "$archive.sha256" &&
+   shasum -a 256 -c "$archive.sha256"; then
+  tar xzf "$archive" && sudo mv ifg /usr/local/bin/
+else
+  echo '校验失败或找不到唯一的校验记录，停止安装' >&2
+fi
 ```
 
 Windows（PowerShell）：
 
 ```powershell
-Get-FileHash .\ifg-0.9.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256  # 对照 SHA256SUMS
-Expand-Archive .\ifg-0.9.0-x86_64-pc-windows-msvc.zip -DestinationPath C:\tools\ifg
+$archive = 'ifg-0.9.0-x86_64-pc-windows-msvc.zip'
+$entries = @(Get-Content .\SHA256SUMS | Where-Object { $_ -match ('^[0-9a-fA-F]{64}\s+\*?' + [regex]::Escape($archive) + '$') })
+if ($entries.Count -ne 1) { throw '找不到唯一的校验记录，停止安装' }
+$expected = ($entries[0] -split '\s+')[0]
+if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) { throw 'SHA-256 不匹配，停止安装' }
+Expand-Archive -LiteralPath $archive -DestinationPath C:\tools\ifg
 # 把 C:\tools\ifg 加入 PATH；升级前先退出正在运行的 ifg.exe
 ```
 
@@ -135,7 +144,9 @@ Windows（PowerShell，无需 Git Bash）：
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
 ```
 
-其余脚本：scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
+```bash
+bash scripts/e2e-docker.sh  # 用固定的本地镜像启动隔离实例，运行 5 项真实端到端测试
+scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
                     # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
 scripts/release.sh  # 发布产物：四架构 tar.gz + Windows zip + SHA256SUMS（Windows 部分需在 Windows 上运行 `--windows`）
 scripts/bump-tap.sh <version> <formula>  # 发版后同步 Homebrew formula（读 SHA256SUMS）
