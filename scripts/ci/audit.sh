@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
-# CNB stage 2 (push pipeline only): make sure cargo-audit really runs.
+# CNB stage 2 (push and PR pipelines): make sure cargo-audit really runs.
 #
 # scripts/check.sh prints "skipped" and carries on when the binary is missing,
 # which would turn the gate green without an audit. This stage therefore either
 # has a working cargo-audit or it fails.
 #
-# The PR pipeline does not include this stage on purpose. Probed in #7: the
-# `copy-on-write-read-only` volumes mount as `overlay rw` and the registry is
-# empty on every run, so `cargo install` succeeds but costs ~80s per build and
-# shares nothing. The advisory gate is enforced here, on the push that lands on
-# main, rather than on every PR. `scripts/check.sh` prints its own "skipped"
-# line on the PR run, which is the honest state.
+# The PR cache may be empty, making installation slower; the audit gate is
+# nevertheless enforced before merge as well as on main.
 set -euo pipefail
 
 if cargo audit --version >/dev/null 2>&1; then

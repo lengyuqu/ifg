@@ -116,6 +116,7 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 - [ifg 项目设计](docs/architecture/ifg-project-design-2026-11.md)：结构、关键决策、内部设计、测试、发布与里程碑
 - [客户端 CLI 设计草案](docs/architecture/client-cli-design-2026-11.md)：命令设计、配置格式、输出约定、服务端缺口
+- [发布验收清单](docs/release-checklist.md)：CNB 开发验证、git233 同步、GitHub 发布及产物验收
 
 ## 许可证
 

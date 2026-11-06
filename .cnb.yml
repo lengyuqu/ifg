@@ -24,13 +24,9 @@
 # not mtimes, cargo keys its fingerprints on mtime+size, so crate sources get
 # re-extracted and rebuilt either way.
 #
-# Advisory gate: only the push pipeline installs `cargo-audit` and enforces it.
-# A PR event deliberately runs without that stage — the PR cache is declared
-# `copy-on-write-read-only` but mounts as `overlay rw` with an empty registry on
-# every run (probed in #7), so installing there would spend ~80s per build for a
-# check that main repeats immediately after merge. The PR stages therefore list
-# `toolchain` and `check` only; `scripts/check.sh` prints its
-# "cargo-audit not installed; skipped" line there, which is the honest state.
+# Advisory gate: push and PR pipelines install cargo-audit before check.sh.
+# The PR cache has previously come up empty, so installation may add ~80s;
+# this cost is accepted to detect advisories before merging.
 #
 # Interpreters: CNB runs `script` under `sh`, which is dash in these Debian
 # images, so `set -euo pipefail` cannot live inline (first run died with
@@ -90,7 +86,7 @@ main:
         RUST_TOOLCHAIN: "1.99.1"
         RUSTUP_HOME: /usr/local/rustup
         CARGO_HOME: /usr/local/cargo
-      # `audit-stage` is deliberately absent: a PR never installs cargo-audit.
       stages:
         - *toolchain-stage
+        - *audit-stage
         - *check-stage

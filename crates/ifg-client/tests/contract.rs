@@ -86,3 +86,120 @@ fn used_paths_still_exist_in_the_openapi_snapshot() {
         drift.join("\n  ")
     );
 }
+
+// Check the operations as well as their schemas: an intact but unused schema
+// must not hide a response or request body that changed to an untyped shape.
+fn schema_ref<'a>(spec: &'a Value, pointer: &str) -> &'a Value {
+    let schema = spec.pointer(pointer).expect("operation schema exists");
+    let reference = schema["$ref"].as_str().expect("typed schema reference");
+    spec.pointer(reference.strip_prefix('#').expect("local schema reference"))
+        .expect("referenced schema exists")
+}
+
+fn check_fields(schema: &Value, fields: &[(&str, &str)], required: &[&str]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for (name, expected_type) in fields {
+        let ty = &schema["properties"][name]["type"];
+        let matches = ty.as_str() == Some(expected_type)
+            || ty
+                .as_array()
+                .is_some_and(|types| types.iter().any(|t| t.as_str() == Some(expected_type)));
+        if !matches {
+            errors.push(format!("{name}: expected type {expected_type}, got {ty}"));
+        }
+    }
+    for name in required {
+        if !schema["required"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|f| f.as_str() == Some(name)))
+        {
+            errors.push(format!("{name}: no longer required"));
+        }
+        if schema["properties"][name]["type"]
+            .as_array()
+            .is_some_and(|types| types.iter().any(|t| t.as_str() == Some("null")))
+        {
+            errors.push(format!("{name}: unexpectedly nullable"));
+        }
+    }
+    errors
+}
+
+#[test]
+fn critical_typed_operation_fields_match_client_contract() {
+    type OperationContract<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a [&'a str]);
+    let spec: Value = serde_json::from_str(
+        &fs::read_to_string(newest_snapshot(&fixtures_dir())).expect("readable snapshot"),
+    )
+    .expect("valid JSON snapshot");
+    let contracts: &[OperationContract<'_>] = &[
+        (
+            "/paths/~1users~1me/get/responses/200/content/application~1json/schema",
+            &[("id", "integer"), ("username", "string")],
+            &["id", "username"],
+        ),
+        (
+            "/paths/~1repos/post/requestBody/content/application~1json/schema",
+            &[
+                ("name", "string"),
+                ("description", "string"),
+                ("is_private", "boolean"),
+                ("org", "string"),
+                ("auto_init", "boolean"),
+                ("default_branch", "string"),
+                ("gitignores", "string"),
+                ("license", "string"),
+                ("readme", "string"),
+                ("issue_labels", "string"),
+            ],
+            &["name"],
+        ),
+        (
+            "/paths/~1repos/post/responses/201/content/application~1json/schema",
+            &[
+                ("id", "integer"),
+                ("owner_id", "integer"),
+                ("name", "string"),
+                ("is_private", "boolean"),
+                ("default_branch", "string"),
+                ("stars_count", "integer"),
+                ("forks_count", "integer"),
+            ],
+            &[
+                "id",
+                "owner_id",
+                "name",
+                "is_private",
+                "default_branch",
+                "stars_count",
+                "forks_count",
+            ],
+        ),
+    ];
+    for (pointer, fields, required) in contracts {
+        let errors = check_fields(schema_ref(&spec, pointer), fields, required);
+        assert!(
+            errors.is_empty(),
+            "contract drift at {pointer}: {}",
+            errors.join(", ")
+        );
+    }
+    let request = schema_ref(
+        &spec,
+        "/paths/~1repos/post/requestBody/content/application~1json/schema",
+    );
+    let required = request["required"]
+        .as_array()
+        .expect("request required fields");
+    assert!(
+        required.iter().all(|field| field.as_str() == Some("name")),
+        "repository creation gained a required field: {required:?}"
+    );
+}
+
+#[test]
+fn field_check_detects_removed_changed_and_optional_fields() {
+    let schema = serde_json::json!({"properties": {"id": {"type": "string"}}, "required": []});
+    let errors = check_fields(&schema, &[("id", "integer"), ("name", "string")], &["id"]);
+    assert_eq!(errors.len(), 3, "{errors:?}");
+}
