@@ -214,6 +214,381 @@ async fn cleanup(harness: &Harness, repos: &[String]) {
     let _ = harness.home_path;
 }
 
+/// Two independently persisted agent sessions on one account and repository.
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn collaboration_two_sessions_exchange_and_handoff() {
+    let h = harness().await;
+    let name = format!("{}-collab", run_id());
+    let repo = format!("{}/{}", h.user, name);
+    h.run_ok(&["repo", "create", &name, "--init"]);
+    let a = h.home_path.join("agent-a.json");
+    let b = h.home_path.join("agent-b.json");
+    let a_path = a.to_str().unwrap();
+    let b_path = b.to_str().unwrap();
+    let invoke = |args: &[&str]| -> Value {
+        let out = h.run_ok(args);
+        serde_json::from_str(&out).expect("collaboration JSON")
+    };
+    let started_a = invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "session",
+        "start",
+        "--name",
+        "Agent A",
+        "--client",
+        "ifg",
+    ]);
+    let started_b = invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        b_path,
+        "session",
+        "start",
+        "--name",
+        "Agent B",
+        "--client",
+        "ifg",
+    ]);
+    let a_id = started_a["id"].as_str().unwrap();
+    let b_id = started_b["id"].as_str().unwrap();
+    assert_ne!(a_id, b_id);
+    let secret_a: Value = serde_json::from_slice(&std::fs::read(&a).unwrap()).unwrap();
+    assert!(!started_a
+        .to_string()
+        .contains(secret_a["secret"].as_str().unwrap()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&a).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::set_permissions(&a, std::fs::Permissions::from_mode(0o644)).unwrap();
+        h.ifg()
+            .args([
+                "-R",
+                &repo,
+                "collab",
+                "--session-file",
+                a_path,
+                "session",
+                "heartbeat",
+            ])
+            .assert()
+            .failure();
+        std::fs::set_permissions(&a, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    h.ifg()
+        .args([
+            "-R",
+            &format!("{}/other", h.user),
+            "collab",
+            "--session-file",
+            a_path,
+            "session",
+            "heartbeat",
+        ])
+        .assert()
+        .failure();
+    h.ifg()
+        .args([
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            a_path,
+            "session",
+            "start",
+            "--name",
+            "duplicate",
+            "--client",
+            "ifg",
+        ])
+        .assert()
+        .failure();
+    let logged = h
+        .ifg()
+        .args([
+            "-vv",
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            a_path,
+            "session",
+            "heartbeat",
+        ])
+        .assert()
+        .success();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&logged.get_output().stdout),
+        String::from_utf8_lossy(&logged.get_output().stderr)
+    );
+    assert!(
+        !combined.contains(secret_a["secret"].as_str().unwrap()),
+        "session secret leaked to output"
+    );
+    let sessions = invoke(&["-R", &repo, "collab", "session", "list"]);
+    assert!(sessions["items"].as_array().unwrap().len() >= 2);
+    invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "session",
+        "heartbeat",
+    ]);
+    let task = invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "task",
+        "create",
+        "--title",
+        "Shared task",
+        "--owner-session",
+        a_id,
+    ]);
+    let task_id = task["id"].as_str().unwrap();
+    let version = task["version"].as_i64().unwrap().to_string();
+    let updated = invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "task",
+        "update",
+        task_id,
+        "--expected-version",
+        &version,
+        "--status",
+        "in_progress",
+    ]);
+    assert_eq!(updated["status"], "in_progress");
+    h.ifg()
+        .args([
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            a_path,
+            "task",
+            "update",
+            task_id,
+            "--expected-version",
+            &version,
+            "--status",
+            "done",
+        ])
+        .assert()
+        .failure();
+    let tasks = invoke(&["-R", &repo, "collab", "task", "list"]);
+    assert!(tasks["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|t| t["id"] == task_id));
+    let view = invoke(&["-R", &repo, "collab", "task", "view", task_id]);
+    assert_eq!(view["title"], "Shared task");
+    let send = [
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "message",
+        "send",
+        task_id,
+        "--key",
+        "message-1",
+        "--body",
+        "ready",
+        "--target-session",
+        b_id,
+    ];
+    let first = invoke(&send);
+    let replay = invoke(&send);
+    assert_eq!(first["id"], replay["id"]);
+    h.ifg()
+        .args([
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            a_path,
+            "message",
+            "send",
+            task_id,
+            "--key",
+            "message-1",
+            "--body",
+            "different",
+        ])
+        .assert()
+        .failure();
+    let list = invoke(&["-R", &repo, "collab", "message", "list", task_id]);
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        b_path,
+        "message",
+        "read",
+        task_id,
+        "--seq",
+        "1",
+    ]);
+    let handoff_args = [
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "handoff",
+        "create",
+        task_id,
+        "--key",
+        "handoff-1",
+        "--to",
+        b_id,
+        "--summary",
+        "please continue",
+    ];
+    let handoff = invoke(&handoff_args);
+    let replay = invoke(&handoff_args);
+    assert_eq!(handoff["id"], replay["id"]);
+    let handoff_id = handoff["id"].as_str().unwrap();
+    let handoff_version = handoff["version"].as_i64().unwrap().to_string();
+    let inbox = invoke(&["-R", &repo, "collab", "--session-file", b_path, "inbox"]);
+    assert!(!inbox["items"].as_array().unwrap().is_empty());
+    let list = invoke(&["-R", &repo, "collab", "handoff", "list", task_id]);
+    assert!(list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["id"] == handoff_id));
+    h.ifg()
+        .args([
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            a_path,
+            "handoff",
+            "accept",
+            handoff_id,
+            "--expected-version",
+            &handoff_version,
+        ])
+        .assert()
+        .failure();
+    let accepted = invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        b_path,
+        "handoff",
+        "accept",
+        handoff_id,
+        "--expected-version",
+        &handoff_version,
+    ]);
+    assert_eq!(accepted["status"], "accepted");
+    let second = invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "handoff",
+        "create",
+        task_id,
+        "--key",
+        "handoff-2",
+        "--to",
+        b_id,
+        "--summary",
+        "cancel this",
+    ]);
+    let second_id = second["id"].as_str().unwrap();
+    let second_version = second["version"].as_i64().unwrap().to_string();
+    let cancelled = invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "handoff",
+        "cancel",
+        second_id,
+        "--expected-version",
+        &second_version,
+    ]);
+    assert_eq!(cancelled["status"], "cancelled");
+    h.ifg()
+        .args([
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            b_path,
+            "handoff",
+            "accept",
+            second_id,
+            "--expected-version",
+            &second_version,
+        ])
+        .assert()
+        .failure();
+    invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a_path,
+        "session",
+        "end",
+    ]);
+    h.ifg()
+        .args([
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            a_path,
+            "session",
+            "heartbeat",
+        ])
+        .assert()
+        .failure();
+    invoke(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        b_path,
+        "session",
+        "end",
+    ]);
+    cleanup(&h, &[name]).await;
+}
+
 /// The M2 acceptance chain (design doc §9): 建仓 → Issue 建关 → PR 建/合并,
 /// through the real `ifg` binary, including `auth login --with-token`.
 #[tokio::test]

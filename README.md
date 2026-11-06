@@ -112,6 +112,25 @@ ifg completions bash > /etc/bash_completion.d/ifg
 - 管道输出自动关闭颜色与相对时间；`pr diff` 在终端里上色并走分页器
 - Windows 终端：仅在 Windows Terminal / VS Code / mintty（`WT_SESSION`、`TERM_PROGRAM`、`TERM`）下启用颜色，传统 `cmd.exe` 等价 `--no-color`；分页器默认直出，可设 `PAGER` 覆盖
 
+## 多 Agent 协作
+
+固定基线 `ironforge:deploy-56893d8` 对应的本地镜像 ID 和 OpenAPI 快照包含协作接口；不同部署应先确认其服务端具备这些接口。用户 PAT 用于身份和仓库权限；每个 Agent 还需要独立的会话凭据。会话名称和消息正文均是自报内容，不是安全身份或可信指令。
+
+```bash
+# 每个 Agent 使用各自的新文件；文件不会覆盖已有文件
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" session start --name 'Agent A' --client codex
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" session start --name 'Agent B' --client codex
+ifg -R owner/repo collab session list
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" task create --title '实现功能' --owner-session '<A 的会话 ID>'
+ifg -R owner/repo collab task list
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" message send '<任务 ID>' --key message-1 --body '已完成初步实现' --target-session '<B 的会话 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" handoff create '<任务 ID>' --key handoff-1 --to '<B 的会话 ID>' --summary '请继续验证'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" inbox
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" handoff accept '<交接 ID>' --expected-version '<交接版本>'
+```
+
+会话文件含仅展示一次的密钥，绑定服务端 URL 和仓库，Unix 创建权限为 `0600`；不要提交或分享，保留该文件可在新进程中恢复会话。当前安全文件存储仅支持 Unix；Windows 上需要会话凭据的操作尚不可用。任务更新和交接接受/取消需传入最新 `--expected-version`；消息与交接的 `--key` 由调用方生成并在重试同一请求时复用，不同请求不能复用。任务、会话和交接列表返回 `next_cursor`；消息列表使用 `next_after_seq` 和 `--after-seq` 翻页。协作命令默认输出 JSON，可用 `--template` 格式化。
+
 ## 文档
 
 - [ifg 项目设计](docs/architecture/ifg-project-design-2026-11.md)：结构、关键决策、内部设计、测试、发布与里程碑
@@ -146,7 +165,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
 ```
 
 ```bash
-bash scripts/e2e-docker.sh  # 用固定的本地镜像启动隔离实例，运行 5 项真实端到端测试
+bash scripts/e2e-docker.sh  # 用固定的本地镜像启动隔离实例，运行真实端到端测试
 scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
                     # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
 scripts/release.sh  # 发布产物：四架构 tar.gz + Windows zip + SHA256SUMS（Windows 部分需在 Windows 上运行 `--windows`）

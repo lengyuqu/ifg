@@ -8,6 +8,47 @@
 
 /// (method, path) pairs used by `ifg-client` and the CLI/e2e flows.
 pub const USED_PATHS: &[(&str, &str)] = &[
+    // Collaboration P0
+    ("GET", "/repos/{owner}/{name}/collaboration/sessions"),
+    ("POST", "/repos/{owner}/{name}/collaboration/sessions"),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/sessions/{id}/heartbeat",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/sessions/{id}/end",
+    ),
+    ("GET", "/repos/{owner}/{name}/collaboration/tasks"),
+    ("POST", "/repos/{owner}/{name}/collaboration/tasks"),
+    ("GET", "/repos/{owner}/{name}/collaboration/tasks/{id}"),
+    ("PATCH", "/repos/{owner}/{name}/collaboration/tasks/{id}"),
+    (
+        "GET",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/messages",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/messages",
+    ),
+    ("PUT", "/repos/{owner}/{name}/collaboration/tasks/{id}/read"),
+    (
+        "GET",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/handoffs",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/handoffs",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/handoffs/{id}/accept",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/handoffs/{id}/cancel",
+    ),
+    ("GET", "/repos/{owner}/{name}/collaboration/inbox"),
     // users
     ("GET", "/users/me"),
     ("GET", "/users/{username}"),

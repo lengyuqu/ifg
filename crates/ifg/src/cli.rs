@@ -136,6 +136,14 @@ pub enum Command {
         #[command(subcommand)]
         command: CiCommand,
     },
+    /// Coordinate agent sessions, tasks, messages and handoffs
+    Collab {
+        /// Private file holding this agent's session credentials
+        #[arg(long, global = true)]
+        session_file: Option<std::path::PathBuf>,
+        #[command(subcommand)]
+        command: CollabCommand,
+    },
     /// Work with releases and their assets
     ///
     /// `release download` verifies every asset against the server-provided
@@ -202,6 +210,203 @@ pub enum Command {
     Completions {
         /// Target shell
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabCommand {
+    /// Register, list, heartbeat or end agent sessions
+    Session {
+        #[command(subcommand)]
+        command: CollabSessionCommand,
+    },
+    /// Create, list, view and update collaboration tasks
+    Task {
+        #[command(subcommand)]
+        command: CollabTaskCommand,
+    },
+    /// Send, list and acknowledge task messages
+    Message {
+        #[command(subcommand)]
+        command: CollabMessageCommand,
+    },
+    /// Create, list, accept or cancel task handoffs
+    Handoff {
+        #[command(subcommand)]
+        command: CollabHandoffCommand,
+    },
+    /// List this session's inbox
+    Inbox {
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabSessionCommand {
+    /// Register and save the one-time secret to a new private session file
+    Start {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        client: String,
+    },
+    /// List repository sessions
+    List {
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Refresh this session's presence
+    Heartbeat,
+    /// End this session
+    End,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabTaskCommand {
+    /// List tasks with cursor pagination
+    List {
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Show a task and its current version
+    View { id: String },
+    /// Create a task under the current session
+    Create {
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        owner_session: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        path: Vec<String>,
+        #[arg(long)]
+        issue: Option<i64>,
+        #[arg(long)]
+        pr: Option<i64>,
+    },
+    /// Update a task using its expected version
+    Update {
+        id: String,
+        #[arg(long)]
+        expected_version: i64,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long, conflicts_with = "clear_description")]
+        description: Option<String>,
+        #[arg(long, conflicts_with = "description")]
+        clear_description: bool,
+        #[arg(long, conflicts_with = "clear_owner_session")]
+        owner_session: Option<String>,
+        #[arg(long, conflicts_with = "owner_session")]
+        clear_owner_session: bool,
+        #[arg(long, conflicts_with = "clear_branch")]
+        branch: Option<String>,
+        #[arg(long, conflicts_with = "branch")]
+        clear_branch: bool,
+        #[arg(long, conflicts_with = "clear_paths")]
+        path: Vec<String>,
+        #[arg(long, conflicts_with = "path")]
+        clear_paths: bool,
+        #[arg(long, conflicts_with = "clear_issue")]
+        issue: Option<i64>,
+        #[arg(long, conflicts_with = "issue")]
+        clear_issue: bool,
+        #[arg(long, conflicts_with = "clear_pr")]
+        pr: Option<i64>,
+        #[arg(long, conflicts_with = "pr")]
+        clear_pr: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabMessageCommand {
+    /// List task messages after a sequence number
+    List {
+        task: String,
+        #[arg(long, default_value_t = 0)]
+        after_seq: i64,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Send a message with a caller-supplied idempotency key
+    Send {
+        task: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long, default_value = "note")]
+        kind: String,
+        #[arg(long)]
+        body: String,
+        #[arg(long)]
+        reply_to: Option<String>,
+        #[arg(long)]
+        target_session: Option<String>,
+        #[arg(long)]
+        commit: Option<String>,
+    },
+    /// Mark a task's messages read through a sequence number
+    Read {
+        task: String,
+        #[arg(long)]
+        seq: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabHandoffCommand {
+    /// List handoffs for a task
+    List {
+        task: String,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Create a handoff with a caller-supplied idempotency key
+    Create {
+        task: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        summary: String,
+        #[arg(long, default_value = "")]
+        completed: String,
+        #[arg(long, default_value = "")]
+        next_steps: String,
+        #[arg(long, default_value = "")]
+        blockers: String,
+        #[arg(long)]
+        commit: Option<String>,
+        #[arg(long)]
+        evidence: Vec<String>,
+    },
+    /// Accept a handoff addressed to this session
+    Accept {
+        id: String,
+        #[arg(long)]
+        expected_version: i64,
+    },
+    /// Cancel a handoff created by this session
+    Cancel {
+        id: String,
+        #[arg(long)]
+        expected_version: i64,
     },
 }
 

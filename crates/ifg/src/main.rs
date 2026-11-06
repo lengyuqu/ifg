@@ -52,6 +52,10 @@ async fn run(cli: Cli) -> i32 {
         Command::Issue { command } => cmd::issue::run(command, &cli).await,
         Command::Pr { command } => cmd::pr::run(command, &cli).await,
         Command::Ci { command } => cmd::ci::run(command, &cli).await,
+        Command::Collab {
+            command,
+            session_file,
+        } => cmd::collab::run(command, session_file.as_deref(), &cli).await,
         Command::Release { command } => cmd::release::run(command, &cli).await,
         Command::Label { command } => cmd::label::run(command, &cli).await,
         Command::Milestone { command } => cmd::milestone::run(command, &cli).await,

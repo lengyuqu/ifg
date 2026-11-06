@@ -1,0 +1,40 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ifg-collab 1  "ifg-collab 0.9.0" 
+.SH NAME
+ifg\-collab \- Coordinate agent sessions, tasks, messages and handoffs
+.SH SYNOPSIS
+\fBifg collab\fR [\fB\-\-session\-file\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Coordinate agent sessions, tasks, messages and handoffs
+.SH OPTIONS
+.TP
+\fB\-\-session\-file\fR \fI<SESSION_FILE>\fR
+Private file holding this agent\*(Aqs session credentials
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+ifg\-collab\-session(1)
+Register, list, heartbeat or end agent sessions
+.TP
+ifg\-collab\-task(1)
+Create, list, view and update collaboration tasks
+.TP
+ifg\-collab\-message(1)
+Send, list and acknowledge task messages
+.TP
+ifg\-collab\-handoff(1)
+Create, list, accept or cancel task handoffs
+.TP
+ifg\-collab\-inbox(1)
+List this session\*(Aqs inbox
+.TP
+ifg\-collab\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.9.0

@@ -7,6 +7,7 @@
 //! declare fields the client uses; unknown fields are ignored (D4).
 
 mod ci;
+mod collab;
 mod contract;
 mod error;
 mod http;
@@ -24,6 +25,7 @@ mod secret;
 mod users;
 
 pub use ci::{Ci, Job, Pipeline, PipelineDetail, Stage, StageWithJobs};
+pub use collab::{segment as collab_segment, Collaboration, SessionCredentials, StartedSession};
 pub use contract::USED_PATHS;
 pub use error::Error;
 pub use http::{Client, ClientBuilder, DEFAULT_BACKOFF, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT};

@@ -40,6 +40,8 @@ pub struct Client {
     base: url::Url,
     /// API calls; each request carries `timeout` as its total limit.
     http: reqwest::Client,
+    /// Session credentials must never be forwarded across redirects.
+    collab_http: reqwest::Client,
     /// Asset downloads: no total limit, `timeout` as a per-read idle limit.
     transfer_http: reqwest::Client,
     token: Option<Secret>,
@@ -54,6 +56,7 @@ enum Transfer {
     Api,
     /// No total timeout; fails when the response body stalls.
     Download,
+    Collab,
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +178,12 @@ impl ClientBuilder {
             .unwrap_or_else(|| concat!("ifg-client/", env!("CARGO_PKG_VERSION")).to_string());
         let timeout = self.timeout.unwrap_or(DEFAULT_TIMEOUT);
         let connect_timeout = timeout.min(CONNECT_TIMEOUT);
+        let collab_http = reqwest::Client::builder()
+            .user_agent(user_agent.clone())
+            .connect_timeout(connect_timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(Error::Transport)?;
         let http = reqwest::Client::builder()
             .user_agent(user_agent.clone())
             .connect_timeout(connect_timeout)
@@ -192,6 +201,7 @@ impl ClientBuilder {
         Ok(Client {
             base,
             http,
+            collab_http,
             transfer_http,
             token: self.token,
             retry: self.retry,
@@ -340,15 +350,28 @@ impl Client {
         path: &str,
         body: Option<&Value>,
     ) -> Result<reqwest::Response, Error> {
-        self.send_with_retry(method, path, body, Transfer::Api)
+        self.send_with_retry(method, path, body, Transfer::Api, None)
             .await
     }
 
     /// `GET` a large body (release asset download) without a total timeout;
     /// reading fails only if the body stalls for one timeout period.
     pub(crate) async fn download_response(&self, path: &str) -> Result<reqwest::Response, Error> {
-        self.send_with_retry(reqwest::Method::GET, path, None, Transfer::Download)
+        self.send_with_retry(reqwest::Method::GET, path, None, Transfer::Download, None)
             .await
+    }
+
+    pub(crate) async fn collab_raw(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+        session: Option<&crate::collab::SessionCredentials>,
+    ) -> Result<Vec<u8>, Error> {
+        let response = self
+            .send_with_retry(method, path, body, Transfer::Collab, session)
+            .await?;
+        Ok(response.bytes().await.map_err(Error::Transport)?.to_vec())
     }
 
     async fn send_with_retry(
@@ -357,6 +380,7 @@ impl Client {
         path: &str,
         body: Option<&Value>,
         transfer: Transfer,
+        session: Option<&crate::collab::SessionCredentials>,
     ) -> Result<reqwest::Response, Error> {
         let url = join_path(&self.base, path);
         let idempotent = matches!(method, reqwest::Method::GET | reqwest::Method::HEAD);
@@ -370,9 +394,18 @@ impl Client {
                     .request(method.clone(), url.clone())
                     .timeout(self.timeout),
                 Transfer::Download => self.transfer_http.request(method.clone(), url.clone()),
+                Transfer::Collab => self
+                    .collab_http
+                    .request(method.clone(), url.clone())
+                    .timeout(self.timeout),
             };
             if let Some(token) = &self.token {
                 request = request.bearer_auth(token.expose());
+            }
+            if let Some(session) = session {
+                request = request
+                    .header("X-Ironforge-Session", &session.id)
+                    .header("X-Ironforge-Session-Secret", session.secret.expose());
             }
             if let Some(body) = body {
                 request = request.json(body);
@@ -406,7 +439,33 @@ impl Client {
                     tracing::debug!(headers = ?masked(response.headers()), "response headers");
                     if !status.is_success() {
                         let bytes = response.bytes().await.map_err(Error::Transport)?;
-                        return Err(error::api_error(status.as_u16(), &bytes));
+                        let mut err = error::api_error(status.as_u16(), &bytes);
+                        if matches!(transfer, Transfer::Collab) {
+                            if let Error::Api {
+                                code,
+                                message,
+                                request_id,
+                                ..
+                            } = &mut err
+                            {
+                                if code.is_none() {
+                                    *message = "unstructured collaboration error response".into();
+                                }
+                                if let Some(session) =
+                                    session.filter(|s| !s.secret.expose().is_empty())
+                                {
+                                    *message =
+                                        message.replace(session.secret.expose(), "[REDACTED]");
+                                    if let Some(id) = request_id {
+                                        *id = id.replace(session.secret.expose(), "[REDACTED]");
+                                    }
+                                    if let Some(code) = code {
+                                        *code = code.replace(session.secret.expose(), "[REDACTED]");
+                                    }
+                                }
+                            }
+                        }
+                        return Err(err);
                     }
                     return Ok(response);
                 }
