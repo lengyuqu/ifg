@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::cli::{
-    Cli, CollabCommand, CollabHandoffCommand, CollabMessageCommand, CollabSessionCommand,
-    CollabTaskCommand,
+    Cli, CollabCommand, CollabHandoffCommand, CollabMessageCommand, CollabQuestionCommand,
+    CollabSessionCommand, CollabTaskCommand,
 };
 use crate::context::resolve_repo;
 use crate::error::AppError;
@@ -189,16 +189,39 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
         CollabCommand::Session {
             command: CollabSessionCommand::Heartbeat | CollabSessionCommand::End
         } | CollabCommand::Task {
-            command: CollabTaskCommand::Create { .. } | CollabTaskCommand::Update { .. }
+            command: CollabTaskCommand::Create { .. }
+                | CollabTaskCommand::Update { .. }
+                | CollabTaskCommand::Claim { .. }
         } | CollabCommand::Message {
             command: CollabMessageCommand::Send { .. } | CollabMessageCommand::Read { .. }
         } | CollabCommand::Handoff {
             command: CollabHandoffCommand::Create { .. }
                 | CollabHandoffCommand::Accept { .. }
                 | CollabHandoffCommand::Cancel { .. }
-        } | CollabCommand::Inbox { .. }
+        } | CollabCommand::Inbox { user: false, .. }
     );
-    let session = if need_session {
+    let optional_session = matches!(
+        command,
+        CollabCommand::Question {
+            command: CollabQuestionCommand::Ask { .. }
+                | CollabQuestionCommand::Answer { .. }
+                | CollabQuestionCommand::Cancel { .. }
+        }
+    );
+    if file.is_some()
+        && matches!(
+            command,
+            CollabCommand::Inbox { user: true, .. }
+                | CollabCommand::Task {
+                    command: CollabTaskCommand::Reassign { .. }
+                }
+        )
+    {
+        return Err(AppError::Usage(
+            "this operation acts as the account user; omit --session-file".into(),
+        ));
+    }
+    let session = if need_session || (optional_session && file.is_some()) {
         Some(load_session(session_path(file)?, &ctx.host.url, &repo_key)?)
     } else {
         None
@@ -320,6 +343,44 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
                 }
                 (Method::PATCH, format!("tasks/{}", encoded(id)), Some(body))
             }
+            CollabTaskCommand::Claim {
+                id,
+                key,
+                expected_version,
+                expected_owner,
+                reason,
+            } => (
+                Method::POST,
+                format!("tasks/{}/takeovers", encoded(id)),
+                Some(
+                    json!({"client_takeover_id":key,"expected_task_version":expected_version,"expected_owner_session_id":expected_owner,"reason":reason}),
+                ),
+            ),
+            CollabTaskCommand::Reassign {
+                id,
+                key,
+                expected_version,
+                expected_owner,
+                to,
+                reason,
+            } => (
+                Method::POST,
+                format!("tasks/{}/reassign", encoded(id)),
+                Some(
+                    json!({"client_takeover_id":key,"expected_task_version":expected_version,"expected_owner_session_id":expected_owner,"to_session_id":to,"reason":reason}),
+                ),
+            ),
+            CollabTaskCommand::Takeovers { id, cursor, limit } => (
+                Method::GET,
+                query(
+                    &format!("tasks/{}/takeovers", encoded(id)),
+                    &[
+                        ("cursor", cursor.clone()),
+                        ("limit", limit.map(|n| n.to_string())),
+                    ],
+                ),
+                None,
+            ),
         },
         CollabCommand::Message { command } => match command {
             CollabMessageCommand::List {
@@ -408,10 +469,79 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
                 Some(json!({"expected_version":expected_version})),
             ),
         },
-        CollabCommand::Inbox { since, limit } => (
+        CollabCommand::Question { command } => {
+            match command {
+                CollabQuestionCommand::Ask {
+                    task,
+                    key,
+                    title,
+                    body,
+                    recipient,
+                    recipient_id,
+                    option,
+                    task_version,
+                    base_sha,
+                    head_sha,
+                } => {
+                    if (recipient == "repo_writers") != recipient_id.is_none() {
+                        return Err(AppError::Usage("recipient user/session requires --recipient-id; repo_writers must omit it".into()));
+                    }
+                    (
+                        Method::POST,
+                        format!("tasks/{}/questions", encoded(task)),
+                        Some(
+                            json!({"client_question_id":key,"recipient":{"kind":recipient,"id":recipient_id},"title":title,"body":body,"options":option,"context":{"task_version":task_version,"base_sha":base_sha,"head_sha":head_sha}}),
+                        ),
+                    )
+                }
+                CollabQuestionCommand::List {
+                    task,
+                    status,
+                    cursor,
+                    limit,
+                } => (
+                    Method::GET,
+                    query(
+                        &format!("tasks/{}/questions", encoded(task)),
+                        &[
+                            ("status", status.clone()),
+                            ("cursor", cursor.clone()),
+                            ("limit", limit.map(|n| n.to_string())),
+                        ],
+                    ),
+                    None,
+                ),
+                CollabQuestionCommand::View { id } => {
+                    (Method::GET, format!("questions/{}", encoded(id)), None)
+                }
+                CollabQuestionCommand::Answer {
+                    id,
+                    key,
+                    expected_version,
+                    context_hash,
+                    body,
+                    option_id,
+                } => (
+                    Method::POST,
+                    format!("questions/{}/answer", encoded(id)),
+                    Some(
+                        json!({"client_answer_id":key,"expected_version":expected_version,"acknowledged_context_hash":context_hash,"body":body,"option_id":option_id}),
+                    ),
+                ),
+                CollabQuestionCommand::Cancel {
+                    id,
+                    expected_version,
+                } => (
+                    Method::POST,
+                    format!("questions/{}/cancel", encoded(id)),
+                    Some(json!({"expected_version":expected_version})),
+                ),
+            }
+        }
+        CollabCommand::Inbox { user, since, limit } => (
             Method::GET,
             query(
-                "inbox",
+                if *user { "inbox/user" } else { "inbox" },
                 &[
                     ("since", since.clone()),
                     ("limit", limit.map(|n| n.to_string())),

@@ -18,6 +18,28 @@ pub async fn run(command: &CiCommand, cli: &Cli) -> Result<(), AppError> {
     let ctx = bootstrap(cli)?;
     let repo = resolve_repo(cli.repo.as_deref(), &ctx.host)?;
     match command {
+        CiCommand::Run {
+            ref_name,
+            wait,
+            timeout,
+        } => {
+            if *wait && *timeout == 0 {
+                return Err(AppError::Usage("--timeout must be positive".into()));
+            }
+            let ci = ctx.client.ci(&repo.owner, &repo.name);
+            let created = ci.trigger(ref_name.as_deref()).await?;
+            let id = created["id"]
+                .as_i64()
+                .ok_or_else(|| AppError::Other("trigger response lacks pipeline id".into()))?;
+            if *wait {
+                eprintln!("Triggered pipeline {id}; waiting for completion");
+                wait_pipeline(&ctx, cli, &repo, id, *timeout).await
+            } else {
+                print_result(cli, &created);
+                Ok(())
+            }
+        }
+        CiCommand::Wait { id, timeout } => wait_pipeline(&ctx, cli, &repo, *id, *timeout).await,
         CiCommand::Runs {
             branch,
             status,
@@ -28,6 +50,69 @@ pub async fn run(command: &CiCommand, cli: &Cli) -> Result<(), AppError> {
         CiCommand::Cancel { id } => act(&ctx, &repo, *id, "cancel").await,
         CiCommand::Retry { id } => act(&ctx, &repo, *id, "retry").await,
         CiCommand::Approve { id, job } => approve(&ctx, &repo, *id, job).await,
+    }
+}
+
+fn print_result(cli: &Cli, value: &Value) {
+    if let Some(template) = &cli.template {
+        output::print_template(std::slice::from_ref(value), template);
+    } else {
+        output::print_json(value);
+    }
+}
+
+async fn wait_pipeline(
+    ctx: &super::CommandContext,
+    cli: &Cli,
+    repo: &RepoContext,
+    id: i64,
+    timeout: u64,
+) -> Result<(), AppError> {
+    if timeout == 0 {
+        return Err(AppError::Usage("--timeout must be positive".into()));
+    }
+    let deadline = tokio::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(timeout))
+        .ok_or_else(|| AppError::Usage("--timeout is too large".into()))?;
+    let ci = ctx.client.ci(&repo.owner, &repo.name);
+    loop {
+        let result = tokio::time::timeout_at(deadline, ci.get_raw(id))
+            .await
+            .map_err(|_| {
+                AppError::Other(format!("pipeline {id} did not finish within {timeout}s"))
+            })??;
+        let status = result["pipeline"]["status"]
+            .as_str()
+            .ok_or_else(|| AppError::Other(format!("pipeline {id} response lacks status")))?;
+        match status {
+            "success" | "succeeded" => {
+                print_result(cli, &result);
+                return Ok(());
+            }
+            "failed" | "failure" | "error" | "canceled" | "cancelled" => {
+                print_result(cli, &result);
+                return Err(AppError::Other(format!(
+                    "pipeline {id} finished with status {status}"
+                )));
+            }
+            "manual" | "waiting_approval" => {
+                print_result(cli, &result);
+                return Err(AppError::Other(format!(
+                    "pipeline {id} is blocked ({status}); inspect jobs with ifg ci view {id}"
+                )));
+            }
+            "pending" | "running" => {}
+            _ => {
+                return Err(AppError::Other(format!(
+                    "pipeline {id} has unknown status {status}"
+                )))
+            }
+        }
+        tokio::time::timeout_at(deadline, tokio::time::sleep(POLL_INTERVAL))
+            .await
+            .map_err(|_| {
+                AppError::Other(format!("pipeline {id} did not finish within {timeout}s"))
+            })?;
     }
 }
 

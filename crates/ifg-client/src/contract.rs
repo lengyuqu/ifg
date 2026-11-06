@@ -49,6 +49,36 @@ pub const USED_PATHS: &[(&str, &str)] = &[
         "/repos/{owner}/{name}/collaboration/handoffs/{id}/cancel",
     ),
     ("GET", "/repos/{owner}/{name}/collaboration/inbox"),
+    ("GET", "/repos/{owner}/{name}/collaboration/inbox/user"),
+    (
+        "GET",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/questions",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/questions",
+    ),
+    ("GET", "/repos/{owner}/{name}/collaboration/questions/{id}"),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/questions/{id}/answer",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/questions/{id}/cancel",
+    ),
+    (
+        "GET",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/takeovers",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/takeovers",
+    ),
+    (
+        "POST",
+        "/repos/{owner}/{name}/collaboration/tasks/{id}/reassign",
+    ),
     // users
     ("GET", "/users/me"),
     ("GET", "/users/{username}"),
@@ -73,6 +103,13 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("GET", "/repos/{owner}/{name}/pulls"),
     ("POST", "/repos/{owner}/{name}/pulls"),
     ("GET", "/repos/{owner}/{name}/pulls/{number}"),
+    ("PATCH", "/repos/{owner}/{name}/pulls/{number}"),
+    ("GET", "/repos/{owner}/{name}/pulls/{number}/reviewers"),
+    ("POST", "/repos/{owner}/{name}/pulls/{number}/reviewers"),
+    (
+        "DELETE",
+        "/repos/{owner}/{name}/pulls/{number}/reviewers/{username}",
+    ),
     ("GET", "/repos/{owner}/{name}/pulls/{number}/diff"),
     ("POST", "/repos/{owner}/{name}/pulls/{number}/merge"),
     ("PUT", "/repos/{owner}/{name}/pulls/{number}/auto-merge"),
@@ -80,6 +117,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("POST", "/repos/{owner}/{name}/pulls/{number}/reviews"),
     // ci (M3)
     ("GET", "/repos/{owner}/{name}/pipelines"),
+    ("POST", "/repos/{owner}/{name}/pipelines"),
     ("GET", "/repos/{owner}/{name}/pipelines/{id}"),
     ("POST", "/repos/{owner}/{name}/pipelines/{id}/retry"),
     ("POST", "/repos/{owner}/{name}/pipelines/{id}/cancel"),

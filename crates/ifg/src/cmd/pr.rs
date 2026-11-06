@@ -1,10 +1,10 @@
 //! `ifg pr …` (design doc §4.4, minus `checkout` which lands in M3).
 
-use ifg_client::{CreatePrOptions, MergeStrategy, ReviewAction};
+use ifg_client::{CreatePrOptions, MergeStrategy, ReviewAction, UpdatePrOptions};
 use serde_json::Value;
 
 use super::bootstrap;
-use crate::cli::{Cli, PrCommand};
+use crate::cli::{Cli, PrCommand, PrReviewersCommand};
 use crate::context::{resolve_repo, RepoContext};
 use crate::error::AppError;
 use crate::output;
@@ -69,6 +69,104 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
             .await
         }
         PrCommand::Checkout { number } => checkout(&ctx, &repo, *number).await,
+        PrCommand::Edit {
+            number,
+            title,
+            body,
+            draft,
+            ready,
+        } => {
+            if title.is_none() && body.is_none() && !draft && !ready {
+                return Err(AppError::Usage(
+                    "provide --title, --body, --draft or --ready".into(),
+                ));
+            }
+            let options = UpdatePrOptions {
+                title: title.clone(),
+                body: body.clone(),
+                draft: if *draft {
+                    Some(true)
+                } else if *ready {
+                    Some(false)
+                } else {
+                    None
+                },
+                ..Default::default()
+            };
+            let value = ctx
+                .client
+                .pulls(&repo.owner, &repo.name)
+                .update_raw(*number, &options)
+                .await?;
+            show_value(cli, &value);
+            Ok(())
+        }
+        PrCommand::Close { number } | PrCommand::Reopen { number } => {
+            let state = if matches!(command, PrCommand::Close { .. }) {
+                "closed"
+            } else {
+                "open"
+            };
+            let options = UpdatePrOptions {
+                state: Some(state.into()),
+                ..Default::default()
+            };
+            let value = ctx
+                .client
+                .pulls(&repo.owner, &repo.name)
+                .update_raw(*number, &options)
+                .await?;
+            show_value(cli, &value);
+            Ok(())
+        }
+        PrCommand::Comment { number, body } => {
+            if body.trim().is_empty() {
+                return Err(AppError::Usage("comment body must not be empty".into()));
+            }
+            let value = ctx
+                .client
+                .pulls(&repo.owner, &repo.name)
+                .review_raw(*number, ReviewAction::Comment, Some(body))
+                .await?;
+            show_value(cli, &value);
+            Ok(())
+        }
+        PrCommand::Reviews { number } => {
+            let value = ctx
+                .client
+                .pulls(&repo.owner, &repo.name)
+                .reviews_raw(*number)
+                .await?;
+            show_value(cli, &value);
+            Ok(())
+        }
+        PrCommand::Reviewers { command } => {
+            let pulls = ctx.client.pulls(&repo.owner, &repo.name);
+            let value = match command {
+                PrReviewersCommand::List { number } => pulls.reviewers(*number).await?,
+                PrReviewersCommand::Add { number, username } => {
+                    pulls.request_reviewer(*number, username).await?
+                }
+                PrReviewersCommand::Remove { number, username } => {
+                    pulls.remove_reviewer(*number, username).await?;
+                    serde_json::json!({"removed":username})
+                }
+            };
+            show_value(cli, &value);
+            Ok(())
+        }
+    }
+}
+
+fn show_value(cli: &Cli, value: &Value) {
+    if let Some(template) = &cli.template {
+        if let Some(items) = value.as_array() {
+            output::print_template(items, template);
+        } else {
+            output::print_template(std::slice::from_ref(value), template);
+        }
+    } else {
+        output::print_json(value);
     }
 }
 

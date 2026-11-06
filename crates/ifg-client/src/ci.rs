@@ -161,6 +161,17 @@ impl Ci<'_> {
         format!("{}/{id}", self.pipelines_path())
     }
 
+    /// Trigger a pipeline for a ref. The server resolves the ref to a commit.
+    pub async fn trigger(&self, ref_name: Option<&str>) -> Result<Value, Error> {
+        let body = match ref_name {
+            Some(name) => serde_json::json!({ "ref_name": name }),
+            None => serde_json::json!({}),
+        };
+        self.client
+            .send(crate::Method::POST, &self.pipelines_path(), Some(&body))
+            .await
+    }
+
     /// List pipelines (paginated; no server-side filters — filter locally).
     pub fn list(&self) -> Paginator<Pipeline> {
         self.client.paginate(self.pipelines_path())

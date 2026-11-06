@@ -66,6 +66,19 @@ pub struct CreatePrOptions {
     pub draft: bool,
 }
 
+/// Partial PR update; omitted fields remain unchanged.
+#[derive(Debug, Default, Serialize)]
+pub struct UpdatePrOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+}
+
 /// Merge strategy (`merge` / `squash` / `rebase`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeStrategy {
@@ -155,6 +168,61 @@ impl Pulls<'_> {
 
     fn pull_path(&self, number: i64) -> String {
         format!("{}/pulls/{number}", repo_path(&self.owner, &self.repo))
+    }
+
+    pub async fn update_raw(&self, number: i64, options: &UpdatePrOptions) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::PATCH,
+                &self.pull_path(number),
+                Some(&to_body(options)?),
+            )
+            .await
+    }
+
+    pub async fn reviewers(&self, number: i64) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::GET,
+                &format!("{}/reviewers", self.pull_path(number)),
+                None,
+            )
+            .await
+    }
+
+    pub async fn reviews_raw(&self, number: i64) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::GET,
+                &format!("{}/reviews", self.pull_path(number)),
+                None,
+            )
+            .await
+    }
+
+    pub async fn request_reviewer(&self, number: i64, username: &str) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::POST,
+                &format!("{}/reviewers", self.pull_path(number)),
+                Some(&serde_json::json!({"username": username})),
+            )
+            .await
+    }
+
+    pub async fn remove_reviewer(&self, number: i64, username: &str) -> Result<(), Error> {
+        self.client
+            .raw(
+                crate::Method::DELETE,
+                &format!(
+                    "{}/reviewers/{}",
+                    self.pull_path(number),
+                    crate::collab_segment(username)
+                ),
+                None,
+            )
+            .await?;
+        Ok(())
     }
 
     /// List pull requests, optionally filtered by state (paginated).

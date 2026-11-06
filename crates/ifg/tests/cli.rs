@@ -48,6 +48,72 @@ fn no_arguments_shows_help_with_usage_exit_code() {
     assert!(stderr.contains("Usage: ifg"), "stderr was: {stderr}");
 }
 
+#[tokio::test]
+async fn pr_collaboration_commands_use_server_contracts() {
+    let server = MockServer::start().await;
+    let home = TempDir::new().unwrap();
+    let pr = "/api/v1/repos/alice/demo/pulls/4";
+    Mock::given(method("PATCH"))
+        .and(path(pr))
+        .and(body_json(json!({"title":"new title", "draft":false})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"title":"new title", "is_draft":false})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{pr}/reviews")))
+        .and(body_json(json!({"action":"comment", "body":"looks good"})))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({"body":"looks good"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{pr}/reviewers")))
+        .and(body_json(json!({"username":"bob"})))
+        .respond_with(
+            ResponseTemplate::new(409)
+                .set_body_json(error_body("CONFLICT", "reviewer already requested")),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{pr}/reviewers/bob")))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let command = |args: &[&str]| {
+        let mut command = ifg();
+        command
+            .env("IRONFORGE_URL", server.uri())
+            .env("IRONFORGE_PAT", "ifp_test")
+            .env("XDG_CONFIG_HOME", home.path())
+            .args(["-R", "alice/demo"])
+            .args(args);
+        command
+    };
+    command(&["pr", "edit", "4", "--title", "new title", "--ready"])
+        .assert()
+        .success();
+    command(&["pr", "comment", "4", "--body", "looks good"])
+        .assert()
+        .success();
+    command(&["pr", "reviewers", "add", "4", "bob"])
+        .assert()
+        .failure();
+    command(&["pr", "reviewers", "remove", "4", "bob"])
+        .assert()
+        .success();
+    command(&["pr", "edit", "4"]).assert().code(2);
+    command(&["pr", "comment", "4", "--body", " "])
+        .assert()
+        .code(2);
+}
+
 /// Login with a token piped from stdin, against a mock `/users/me`.
 #[tokio::test]
 async fn auth_login_with_token_saves_config() {

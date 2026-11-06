@@ -37,6 +37,7 @@ pub use orgs::{CreateOrgOptions, OrgMember, Organization, Orgs};
 pub use pagination::{Page, PaginationMeta, Paginator, PER_PAGE};
 pub use pulls::{
     CreatePrOptions, MergeOutcome, MergeStrategy, PullRequest, Pulls, ReviewAction, ReviewComment,
+    UpdatePrOptions,
 };
 pub use releases::{Asset, CreateReleaseOptions, Release, Releases, UpdateReleaseOptions};
 pub use repos::{CreateRepoOptions, Repo, Repos};

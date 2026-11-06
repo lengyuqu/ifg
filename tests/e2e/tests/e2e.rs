@@ -591,6 +591,275 @@ async fn collaboration_two_sessions_exchange_and_handoff() {
 
 /// The M2 acceptance chain (design doc §9): 建仓 → Issue 建关 → PR 建/合并,
 /// through the real `ifg` binary, including `auth login --with-token`.
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn collaboration_questions_and_task_takeover() {
+    let h = harness().await;
+    let name = format!("{}-questions", run_id());
+    let repo = format!("{}/{}", h.user, name);
+    h.run_ok(&["repo", "create", &name, "--init"]);
+    let a = h.home_path.join("question-a.json");
+    let b = h.home_path.join("question-b.json");
+    let a = a.to_str().unwrap();
+    let b = b.to_str().unwrap();
+    let run = |args: &[&str]| -> Value { serde_json::from_str(&h.run_ok(args)).unwrap() };
+    let sa = run(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a,
+        "session",
+        "start",
+        "--name",
+        "A",
+        "--client",
+        "ifg",
+    ]);
+    let sb = run(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        b,
+        "session",
+        "start",
+        "--name",
+        "B",
+        "--client",
+        "ifg",
+    ]);
+    let aid = sa["id"].as_str().unwrap();
+    let bid = sb["id"].as_str().unwrap();
+    let task = run(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a,
+        "task",
+        "create",
+        "--title",
+        "Question task",
+        "--owner-session",
+        aid,
+    ]);
+    let tid = task["id"].as_str().unwrap();
+    let version = task["version"].as_i64().unwrap().to_string();
+    let q = run(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a,
+        "question",
+        "ask",
+        tid,
+        "--key",
+        "question-1",
+        "--title",
+        "Choose",
+        "--body",
+        "What next?",
+        "--option",
+        "one",
+        "--option",
+        "two",
+    ]);
+    let qid = q["id"].as_str().unwrap();
+    let listed = run(&["-R", &repo, "collab", "question", "list", tid]);
+    assert!(listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|q| q["id"] == qid));
+    let inbox = run(&["-R", &repo, "collab", "inbox", "--user"]);
+    assert!(inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["type"] == "open_question"));
+    let refused = h
+        .ifg()
+        .args([
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            b,
+            "task",
+            "claim",
+            tid,
+            "--key",
+            "claim-active",
+            "--expected-version",
+            &version,
+            "--expected-owner",
+            aid,
+            "--reason",
+            "try claim",
+        ])
+        .assert()
+        .code(1);
+    assert!(String::from_utf8_lossy(&refused.get_output().stderr).contains("OWNER_MAY_BE_ACTIVE"));
+    let reassign_args = [
+        "-R",
+        &repo,
+        "collab",
+        "task",
+        "reassign",
+        tid,
+        "--key",
+        "reassign-1",
+        "--expected-version",
+        &version,
+        "--expected-owner",
+        aid,
+        "--to",
+        bid,
+        "--reason",
+        "user assigns B",
+    ];
+    let moved = run(&reassign_args);
+    assert_eq!(moved["task"]["owner_session_id"], bid);
+    assert_eq!(run(&reassign_args)["replayed"], true);
+    let history = run(&["-R", &repo, "collab", "task", "takeovers", tid]);
+    assert_eq!(history["items"].as_array().unwrap().len(), 1);
+    let old = run(&["-R", &repo, "collab", "question", "view", qid]);
+    assert_eq!(old["context_freshness"], "stale");
+    let qver = old["version"].as_i64().unwrap().to_string();
+    let hash = old["context_hash"].as_str().unwrap();
+    let refused = h
+        .ifg()
+        .args([
+            "-R",
+            &repo,
+            "collab",
+            "question",
+            "answer",
+            qid,
+            "--key",
+            "answer-stale",
+            "--expected-version",
+            &qver,
+            "--context-hash",
+            hash,
+            "--option-id",
+            "o1",
+        ])
+        .assert()
+        .code(1);
+    assert!(String::from_utf8_lossy(&refused.get_output().stderr).contains("CONTEXT_STALE"));
+    let q2 = run(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        b,
+        "question",
+        "ask",
+        tid,
+        "--key",
+        "question-2",
+        "--title",
+        "Choose again",
+        "--body",
+        "Which option?",
+        "--option",
+        "one",
+        "--option",
+        "two",
+    ]);
+    let q2id = q2["id"].as_str().unwrap();
+    let read = run(&["-R", &repo, "collab", "question", "view", q2id]);
+    let ver = read["version"].as_i64().unwrap().to_string();
+    let hash = read["context_hash"].as_str().unwrap();
+    let answered = run(&[
+        "-R",
+        &repo,
+        "collab",
+        "question",
+        "answer",
+        q2id,
+        "--key",
+        "answer-2",
+        "--expected-version",
+        &ver,
+        "--context-hash",
+        hash,
+        "--option-id",
+        "o1",
+    ]);
+    assert_eq!(answered["status"], "answered");
+    assert_eq!(answered["answer"]["actor_kind"], "user");
+    let q3 = run(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        b,
+        "question",
+        "ask",
+        tid,
+        "--key",
+        "question-3",
+        "--title",
+        "Cancel",
+        "--body",
+        "cancel this",
+    ]);
+    let q3id = q3["id"].as_str().unwrap();
+    let q3ver = q3["version"].as_i64().unwrap().to_string();
+    assert_eq!(
+        run(&[
+            "-R",
+            &repo,
+            "collab",
+            "--session-file",
+            b,
+            "question",
+            "cancel",
+            q3id,
+            "--expected-version",
+            &q3ver
+        ])["status"],
+        "cancelled"
+    );
+    let free = run(&[
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        a,
+        "task",
+        "create",
+        "--title",
+        "Unowned",
+    ]);
+    let freeid = free["id"].as_str().unwrap();
+    let freever = free["version"].as_i64().unwrap().to_string();
+    let claim_args = [
+        "-R",
+        &repo,
+        "collab",
+        "--session-file",
+        b,
+        "task",
+        "claim",
+        freeid,
+        "--key",
+        "claim-1",
+        "--expected-version",
+        &freever,
+        "--reason",
+        "available",
+    ];
+    assert_eq!(run(&claim_args)["task"]["owner_session_id"], bid);
+    assert_eq!(run(&claim_args)["replayed"], true);
+    cleanup(&h, &[name]).await;
+}
+
 #[tokio::test]
 #[ignore = "needs a live IronForge (scripts/e2e.sh)"]
 async fn full_chain_create_issue_pr_merge() {
@@ -603,6 +872,46 @@ async fn full_chain_create_issue_pr_merge() {
     let result = full_chain(&harness, &repo_arg).await;
     cleanup(&harness, &created).await;
     result.expect("M2 chain");
+}
+
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn trigger_pipeline_and_report_manual_gate() {
+    let h = harness().await;
+    let name = format!("{}-pipeline", run_id());
+    let repo = format!("{}/{}", h.user, name);
+    h.run_ok(&["repo", "create", &name, "--init"]);
+    let work = h.home_path.join("ci-work");
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["clone", &h.clone_url(&h.user, &name), "clone"]);
+    let clone = work.join("clone");
+    std::fs::write(clone.join(".ironforge-ci.yml"), "stages:\n  - test\nmanual_check:\n  stage: test\n  script:\n    - echo ok\n  when: manual\n").unwrap();
+    git(&clone, &["add", ".ironforge-ci.yml"]);
+    git(&clone, &["commit", "-m", "add manual pipeline"]);
+    git(&clone, &["push", "origin", "main"]);
+    let commit = StdCommand::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&clone)
+        .output()
+        .unwrap();
+    let commit = String::from_utf8(commit.stdout).unwrap().trim().to_string();
+    let triggered: Value =
+        serde_json::from_str(&h.run_ok(&["-R", &repo, "ci", "run", "--ref", "refs/heads/main"]))
+            .unwrap();
+    assert_eq!(triggered["commit_sha"], commit);
+    let by_commit: Value =
+        serde_json::from_str(&h.run_ok(&["-R", &repo, "ci", "run", "--ref", &commit])).unwrap();
+    assert_eq!(by_commit["commit_sha"], commit);
+    let id = triggered["id"].as_i64().unwrap().to_string();
+    let waited = h
+        .ifg()
+        .args(["-R", &repo, "ci", "wait", &id, "--timeout", "45"])
+        .assert()
+        .failure();
+    let output = String::from_utf8_lossy(&waited.get_output().stdout);
+    let detail: Value = serde_json::from_str(&output).expect("blocked pipeline details");
+    assert_eq!(detail["pipeline"]["status"], "manual");
+    cleanup(&h, &[name]).await;
 }
 
 async fn full_chain(harness: &Harness, repo_arg: &str) -> Result<(), String> {
@@ -665,6 +974,64 @@ async fn full_chain(harness: &Harness, repo_arg: &str) -> Result<(), String> {
     assert!(out.contains("#1"), "pr create: {out}");
     let out = harness.run_in(&clone_dir, &["pr", "list"]);
     assert!(out.contains("e2e PR"), "pr list: {out}");
+
+    // Edit, close/reopen, general review comment and reviewer lifecycle.
+    let value: Value = serde_json::from_str(&harness.run_in(
+        &clone_dir,
+        &[
+            "pr",
+            "edit",
+            "1",
+            "--title",
+            "updated PR",
+            "--body",
+            "updated description",
+            "--draft",
+        ],
+    ))
+    .unwrap();
+    assert_eq!(value["title"], "updated PR");
+    assert_eq!(value["body"], "updated description");
+    assert_eq!(value["is_draft"], true);
+    let value: Value =
+        serde_json::from_str(&harness.run_in(&clone_dir, &["pr", "edit", "1", "--ready"])).unwrap();
+    assert_eq!(value["is_draft"], false);
+    let value: Value =
+        serde_json::from_str(&harness.run_in(&clone_dir, &["pr", "close", "1"])).unwrap();
+    assert_eq!(value["state"], "closed");
+    let value: Value =
+        serde_json::from_str(&harness.run_in(&clone_dir, &["pr", "reopen", "1"])).unwrap();
+    assert_eq!(value["state"], "open");
+    harness.run_in(
+        &clone_dir,
+        &["pr", "comment", "1", "--body", "general review comment"],
+    );
+    let reviews: Value =
+        serde_json::from_str(&harness.run_in(&clone_dir, &["pr", "reviews", "1"])).unwrap();
+    assert!(reviews
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["body"] == "general review comment"));
+    let (reviewer, _) = bootstrap_second(&format!("{}-reviewer", run_id())).await;
+    harness.run_in(&clone_dir, &["pr", "reviewers", "add", "1", &reviewer]);
+    let reviewers: Value =
+        serde_json::from_str(&harness.run_in(&clone_dir, &["pr", "reviewers", "list", "1"]))
+            .unwrap();
+    assert!(reviewers
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["username"] == reviewer));
+    harness.run_in(&clone_dir, &["pr", "reviewers", "remove", "1", &reviewer]);
+    let reviewers: Value =
+        serde_json::from_str(&harness.run_in(&clone_dir, &["pr", "reviewers", "list", "1"]))
+            .unwrap();
+    assert!(!reviewers
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["username"] == reviewer));
 
     // 6. merge (squash) and verify.
     let out = harness.run_in(&clone_dir, &["pr", "merge", "1", "--squash"]);

@@ -459,9 +459,12 @@ impl Client {
                                     if let Some(id) = request_id {
                                         *id = id.replace(session.secret.expose(), "[REDACTED]");
                                     }
-                                    if let Some(code) = code {
+                                    if let Some(code) = code.as_mut() {
                                         *code = code.replace(session.secret.expose(), "[REDACTED]");
                                     }
+                                }
+                                if let Some(code) = code.as_ref() {
+                                    *message = format!("{message} [{code}]");
                                 }
                             }
                         }

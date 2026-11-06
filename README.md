@@ -62,7 +62,14 @@ ifg issue list -R yourname/demo
 ifg pr checkout 12                                     # 同仓或 fork PR 都可用，重复执行会快进更新；分支已删时走 refs/pull
 ifg pr view 12 --comments                              # 含行内评审评论
 ifg pr create -t "标题"                                 # head 默认当前分支，未推送会拦截
+ifg pr edit 12 --title '新标题' --ready               # 修改标题并标记为可评审
+ifg pr close 12 && ifg pr reopen 12                    # 关闭、重新打开
+ifg pr comment 12 -b '请检查测试结果'                   # 提交普通评审评论
+ifg pr reviews 12                                      # 查看评审及普通评论
+ifg pr reviewers add 12 alice                          # 请求评审；也可 list / remove
 ifg ci logs 7 --follow                                 # WebSocket 流式日志（断线自动续传；无 WS 时退回轮询）
+ifg ci run --ref refs/heads/main --wait --timeout 600  # 触发并等待；也可传提交 SHA
+ifg ci wait 7 --timeout 600                            # 等待已有流水线
 ifg label create bug -c ff0000 -d "坏了"                # 标签
 ifg milestone create v1 --due 2026-12-31               # 里程碑
 ifg issue edit 3 --label bug --milestone v1 --assignee alice
@@ -80,6 +87,10 @@ ifg release edit v1.0.0 -n "修订说明" --prerelease       # 改发布说明/�
 ifg release download v1.0.0 -p 'pkg*'                   # SHA-256 校验后落盘
 git config --global credential.https://your-forge.example.com.helper "!ifg auth git-credential"   # git clone/push 免密
 ```
+
+`pr comment` 提交的是带正文的普通评审（`action=comment`），不是文件行内评论；可通过 `pr reviews` 查看。行内评论仍由 `pr view --comments` 查看。
+
+`ci run` 的 ref 由 IronForge 服务端解析，省略时使用服务端默认的 `refs/heads/main`。`ci wait` 或 `ci run --wait` 只有流水线成功才返回 0；失败、取消、人工门禁、未知状态和超时都返回非零。人工门禁可先用 `ci view` 查看作业并按服务端流程处理。触发成功后即使等待超时也不会取消流水线，流水线编号会输出到 stderr。
 
 凭据助手按主机配置，只对 IronForge 生效，不会替换其他站点已有的 helper（如 osxkeychain）。
 
@@ -127,9 +138,17 @@ ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" message send '
 ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" handoff create '<任务 ID>' --key handoff-1 --to '<B 的会话 ID>' --summary '请继续验证'
 ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" inbox
 ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" handoff accept '<交接 ID>' --expected-version '<交接版本>'
+# Agent 发起问题；不带 --session-file 时以用户身份操作
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" question ask '<任务 ID>' --key q-1 --title '选择方案' --body '请选择' --option 方案一 --option 方案二
+ifg -R owner/repo collab inbox --user
+ifg -R owner/repo collab question view '<问题 ID>'
+ifg -R owner/repo collab question answer '<问题 ID>' --key a-1 --expected-version '<版本>' --context-hash '<已查看的 context_hash>' --option-id o1
+ifg -R owner/repo collab task reassign '<任务 ID>' --key move-1 --expected-version '<任务版本>' --expected-owner '<原会话 ID>' --to '<新会话 ID>' --reason '用户重新分配'
 ```
 
 会话文件含仅展示一次的密钥，绑定服务端 URL 和仓库，Unix 创建权限为 `0600`；不要提交或分享，保留该文件可在新进程中恢复会话。当前安全文件存储仅支持 Unix；Windows 上需要会话凭据的操作尚不可用。任务更新和交接接受/取消需传入最新 `--expected-version`；消息与交接的 `--key` 由调用方生成并在重试同一请求时复用，不同请求不能复用。任务、会话和交接列表返回 `next_cursor`；消息列表使用 `next_after_seq` 和 `--after-seq` 翻页。协作命令默认输出 JSON，可用 `--template` 格式化。
+
+`question view` 返回上下文及 `context_freshness`；回答时应先检查上下文，再明确传入读取到的版本和哈希，服务端会拒绝过期上下文。`task claim` 以会话身份接管空闲或已离线任务，活跃的原负责人可能导致拒绝；`task reassign` 以用户身份操作且不得携带会话文件。两者都要求调用方提供看到的任务版本、原负责人和幂等键；无负责人时省略 `--expected-owner`。问答与接管列表使用 `next_cursor` 翻页。
 
 ## 文档
 

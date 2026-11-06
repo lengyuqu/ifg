@@ -235,8 +235,16 @@ pub enum CollabCommand {
         #[command(subcommand)]
         command: CollabHandoffCommand,
     },
-    /// List this session's inbox
+    /// Ask, inspect, answer or cancel collaboration questions
+    Question {
+        #[command(subcommand)]
+        command: CollabQuestionCommand,
+    },
+    /// List the session's or user's inbox
     Inbox {
+        /// Read the account inbox instead of a session inbox
+        #[arg(long)]
+        user: bool,
         #[arg(long)]
         since: Option<String>,
         #[arg(long)]
@@ -329,6 +337,99 @@ pub enum CollabTaskCommand {
         pr: Option<i64>,
         #[arg(long, conflicts_with = "pr")]
         clear_pr: bool,
+    },
+    /// Claim an unowned or abandoned task as this session
+    Claim {
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        expected_version: i64,
+        #[arg(long)]
+        expected_owner: Option<String>,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Reassign a task as the account user
+    Reassign {
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        expected_version: i64,
+        #[arg(long)]
+        expected_owner: Option<String>,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// List task ownership changes
+    Takeovers {
+        id: String,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabQuestionCommand {
+    /// Ask a session, user or repository writers a question
+    Ask {
+        task: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        body: String,
+        /// repo_writers, user or session
+        #[arg(long, default_value = "repo_writers", value_parser = ["repo_writers", "user", "session"])]
+        recipient: String,
+        #[arg(long)]
+        recipient_id: Option<String>,
+        #[arg(long)]
+        option: Vec<String>,
+        #[arg(long)]
+        task_version: Option<i64>,
+        #[arg(long)]
+        base_sha: Option<String>,
+        #[arg(long)]
+        head_sha: Option<String>,
+    },
+    /// List questions on a task
+    List {
+        task: String,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// View a question, its context and freshness
+    View { id: String },
+    /// Answer with the exact version and context hash that were read
+    Answer {
+        id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        expected_version: i64,
+        #[arg(long)]
+        context_hash: String,
+        #[arg(long, default_value = "")]
+        body: String,
+        #[arg(long)]
+        option_id: Option<String>,
+    },
+    /// Cancel a question using its current version
+    Cancel {
+        id: String,
+        #[arg(long)]
+        expected_version: i64,
     },
 }
 
@@ -581,6 +682,16 @@ pub enum IssueCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum PrReviewersCommand {
+    /// List requested reviewers
+    List { number: i64 },
+    /// Request a reviewer by username
+    Add { number: i64, username: String },
+    /// Remove a requested reviewer
+    Remove { number: i64, username: String },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum PrCommand {
     /// List pull requests
     List {
@@ -620,6 +731,35 @@ pub enum PrCommand {
         #[arg(long)]
         editor: bool,
     },
+    /// Update the PR title, body or draft state
+    Edit {
+        number: i64,
+        #[arg(short = 't', long)]
+        title: Option<String>,
+        #[arg(short = 'b', long)]
+        body: Option<String>,
+        #[arg(long, conflicts_with = "ready")]
+        draft: bool,
+        #[arg(long, conflicts_with = "draft")]
+        ready: bool,
+    },
+    /// Close an open PR
+    Close { number: i64 },
+    /// Reopen a closed PR
+    Reopen { number: i64 },
+    /// Add a general review comment to a PR
+    Comment {
+        number: i64,
+        #[arg(short = 'b', long)]
+        body: String,
+    },
+    /// List PR reviews and their general comments
+    Reviews { number: i64 },
+    /// Manage requested reviewers
+    Reviewers {
+        #[command(subcommand)]
+        command: PrReviewersCommand,
+    },
     /// Merge a pull request
     Merge {
         number: i64,
@@ -649,6 +789,25 @@ pub enum PrCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum CiCommand {
+    /// Trigger a pipeline on a branch, tag ref or commit
+    Run {
+        /// Git ref to resolve on the server; defaults to server's main branch
+        #[arg(long = "ref")]
+        ref_name: Option<String>,
+        /// Wait for a terminal pipeline result
+        #[arg(long)]
+        wait: bool,
+        /// Maximum wait in seconds (used with --wait)
+        #[arg(long, default_value_t = 600, requires = "wait")]
+        timeout: u64,
+    },
+    /// Wait for a pipeline and return nonzero on failure, block or timeout
+    Wait {
+        id: i64,
+        /// Maximum wait in seconds
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+    },
     /// List pipeline runs
     Runs {
         /// Filter by ref (branch or tag), applied locally
