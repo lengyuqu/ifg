@@ -16,7 +16,7 @@ repository = "https://git233.phynews.com:18443/aicodeing/ifg"
 
 # The unmodified baseline snapshot and isolated Docker e2e use this local image.
 # The newer ~ifg-compat snapshot is generated from the IronForge development
-# branch (IronForge b5c37ec) and is not a claim about the image below.
+# branch (IronForge e1628e0) and is not a claim about the image below.
 # The image has no
 # source-revision label, so its tag is not proof of a commit.
 # Replacing this baseline requires a fresh snapshot and an e2e run.
