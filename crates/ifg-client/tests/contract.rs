@@ -233,3 +233,31 @@ fn field_check_detects_removed_changed_and_optional_fields() {
     let errors = check_fields(&schema, &[("id", "integer"), ("name", "string")], &["id"]);
     assert_eq!(errors.len(), 3, "{errors:?}");
 }
+
+#[test]
+fn critical_mutations_document_request_and_conflict_statuses() {
+    let spec: Value =
+        serde_json::from_str(&fs::read_to_string(newest_snapshot(&fixtures_dir())).unwrap())
+            .unwrap();
+    for (path, method) in [
+        ("/repos/{owner}/{name}", "patch"),
+        ("/repos/{owner}/{name}/wiki", "post"),
+        ("/repos/{owner}/{name}/wiki/{title}", "patch"),
+        ("/repos/{owner}/{name}/pulls/{number}", "patch"),
+        ("/repos/{owner}/{name}/pipelines", "post"),
+    ] {
+        for status in ["415", "422"] {
+            assert!(
+                spec["paths"][path][method]["responses"]
+                    .get(status)
+                    .is_some(),
+                "{method} {path} missing {status}"
+            );
+        }
+    }
+    assert!(
+        spec["paths"]["/repos/{owner}/{name}/wiki/{title}"]["patch"]["responses"]
+            .get("409")
+            .is_some()
+    );
+}
