@@ -101,9 +101,27 @@ pub async fn run(command: &WikiCommand, cli: &Cli) -> Result<(), AppError> {
             body,
             file,
             message,
+            expected_version,
         } => {
+            let expected_version = match expected_version {
+                Some(version) => version.clone(),
+                None => wiki.view(title).await?["version"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        AppError::Other(
+                            "server does not expose a Wiki version; refusing an unprotected edit"
+                                .into(),
+                        )
+                    })?
+                    .to_owned(),
+            };
             let value = wiki
-                .update(title, &content(body, file)?, message.as_deref())
+                .update(
+                    title,
+                    &content(body, file)?,
+                    &expected_version,
+                    message.as_deref(),
+                )
                 .await?;
             if cli.json || cli.template.is_some() {
                 structured(cli, &value);

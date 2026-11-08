@@ -275,6 +275,13 @@ impl Client {
         crate::pagination::Paginator::new_with_body(self, method, path, Some(body))
     }
 
+    /// Discover build provenance and versioned capabilities when the server
+    /// supports its authenticated discovery endpoint.
+    pub async fn capabilities(&self) -> Result<Value, Error> {
+        self.send(reqwest::Method::GET, "collaboration/capabilities", None)
+            .await
+    }
+
     /// `GET /health` — outside `/api/v1/`. Returns the parsed JSON body
     /// (includes `version`; D10 uses it for server-version checks). A
     /// degraded `503` still parses, because "server is up" is the signal

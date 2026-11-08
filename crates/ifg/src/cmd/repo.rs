@@ -26,6 +26,60 @@ pub async fn run(command: &RepoCommand, cli: &Cli) -> Result<(), AppError> {
             }
             view(&ctx, cli, &repo).await
         }
+        RepoCommand::Edit {
+            target,
+            description,
+            clear_description,
+            visibility,
+            default_branch,
+            expected_version,
+        } => {
+            let repo = resolve_target(cli, &ctx, target.clone())?;
+            if description.is_none()
+                && !clear_description
+                && visibility.is_none()
+                && default_branch.is_none()
+            {
+                return Err(AppError::Other(
+                    "provide at least one setting to change".into(),
+                ));
+            }
+            let repos = ctx.client.repos();
+            let version = match expected_version {
+                Some(v) => v.clone(),
+                None => repos
+                    .get(&repo.owner, &repo.name)
+                    .await?
+                    .settings_version
+                    .ok_or_else(|| {
+                        AppError::Other(
+                            "server does not expose a repository settings version".into(),
+                        )
+                    })?,
+            };
+            let mut body = serde_json::json!({"expected_version": version});
+            if *clear_description {
+                body["description"] = Value::Null;
+            }
+            if let Some(description) = description {
+                body["description"] = serde_json::json!(description);
+            }
+            if let Some(visibility) = visibility {
+                body["is_private"] = serde_json::json!(visibility == "private");
+            }
+            if let Some(branch) = default_branch {
+                body["default_branch"] = serde_json::json!(branch);
+            }
+            let updated = repos
+                .update_settings(&repo.owner, &repo.name, &body)
+                .await?;
+            if cli.json {
+                output::print_json(&updated);
+            } else {
+                println!("Updated repository settings for {repo}.");
+            }
+            Ok(())
+        }
         RepoCommand::Create {
             name,
             description,

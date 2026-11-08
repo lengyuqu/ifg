@@ -51,13 +51,14 @@ impl Wiki<'_> {
         &self,
         title: &str,
         content: &str,
+        expected_version: &str,
         message: Option<&str>,
     ) -> Result<Value, Error> {
         self.client
             .send(
                 Method::PATCH,
                 &self.page(title),
-                Some(&json!({"content":content,"message":message})),
+                Some(&json!({"content":content,"message":message,"expected_version":expected_version})),
             )
             .await
     }
