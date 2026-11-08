@@ -60,3 +60,25 @@ async fn version_uses_repo_scoped_discovery_when_global_scope_is_denied() {
     assert!(out.contains("1234567890abcdef1234567890abcdef12345678"));
     assert!(out.contains("wiki.concurrent_update.v1"));
 }
+
+#[tokio::test]
+async fn version_reports_unknown_when_discovery_is_unavailable() {
+    let server = MockServer::start().await;
+    let home = TempDir::new().unwrap();
+    Mock::given(method("GET"))
+        .and(path("/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"version":"0.2.0"})))
+        .mount(&server)
+        .await;
+    let result = Command::cargo_bin("ifg")
+        .unwrap()
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_test")
+        .env("XDG_CONFIG_HOME", home.path())
+        .args(["-R", "a/r", "version"])
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&result.get_output().stdout);
+    assert!(out.contains("build:  unknown (capability discovery unavailable)"));
+    assert!(out.contains("api capabilities: unknown"));
+}
