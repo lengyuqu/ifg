@@ -54,6 +54,20 @@ impl Wiki<'_> {
         expected_version: &str,
         message: Option<&str>,
     ) -> Result<Value, Error> {
+        let capabilities = self.client.capabilities().await?;
+        let supported = capabilities["api_capabilities"]
+            .as_array()
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item.as_str() == Some("wiki.concurrent_update.v1"))
+            });
+        if !supported {
+            return Err(Error::Config(
+                "server does not advertise protected Wiki updates; refusing an unprotected edit"
+                    .into(),
+            ));
+        }
         self.client
             .send(
                 Method::PATCH,
