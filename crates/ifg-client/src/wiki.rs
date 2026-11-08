@@ -54,7 +54,15 @@ impl Wiki<'_> {
         expected_version: &str,
         message: Option<&str>,
     ) -> Result<Value, Error> {
-        let capabilities = self.client.capabilities().await?;
+        let repo_path = self.path.strip_suffix("/wiki").expect("Wiki path suffix");
+        let capabilities: Value = self
+            .client
+            .send(
+                Method::GET,
+                &format!("{repo_path}/collaboration/capabilities"),
+                None,
+            )
+            .await?;
         let supported = capabilities["api_capabilities"]
             .as_array()
             .is_some_and(|items| {

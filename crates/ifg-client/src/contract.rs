@@ -17,6 +17,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("DELETE", "/repos/{owner}/{name}/wiki/{title}"),
     ("GET", "/repos/{owner}/{name}/wiki/{title}/history"),
     ("GET", "/collaboration/capabilities"),
+    ("GET", "/repos/{owner}/{name}/collaboration/capabilities"),
     // Collaboration P0
     ("GET", "/repos/{owner}/{name}/collaboration/sessions"),
     ("POST", "/repos/{owner}/{name}/collaboration/sessions"),

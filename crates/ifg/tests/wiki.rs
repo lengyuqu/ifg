@@ -80,7 +80,7 @@ async fn wiki_edit_sends_the_observed_version_and_rejects_old_servers() {
     let server = MockServer::start().await;
     let home = TempDir::new().unwrap();
     Mock::given(method("GET"))
-        .and(path("/api/v1/collaboration/capabilities"))
+        .and(path("/api/v1/repos/a/r/collaboration/capabilities"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_json(json!({"api_capabilities":["wiki.concurrent_update.v1"]})),
@@ -137,7 +137,7 @@ async fn explicit_version_cannot_bypass_missing_server_capability() {
     let server = MockServer::start().await;
     let home = TempDir::new().unwrap();
     Mock::given(method("GET"))
-        .and(path("/api/v1/collaboration/capabilities"))
+        .and(path("/api/v1/repos/a/r/collaboration/capabilities"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"capabilities":[]})))
         .expect(1)
         .mount(&server)
