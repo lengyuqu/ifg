@@ -36,20 +36,28 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         None => println!("pull    (no open pull request for this branch)"),
     }
 
-    let pipelines = ctx
-        .client
-        .ci(&repo.owner, &repo.name)
-        .list()
-        .limit(20)
-        .collect()
-        .await?;
-    let runs: Vec<&ifg_client::Pipeline> = pipelines
-        .iter()
-        .filter(|pipeline| pipeline.ref_name == branch)
-        .take(5)
-        .collect();
+    // Pipelines have no server-side filter (`Ci::list`), so scan pages until
+    // five runs for this branch are found. A single 20-row page used to hide
+    // the branch whenever other branches were busier.
+    const WANTED: usize = 5;
+    const SCAN_LIMIT: usize = 500;
+    let mut paginator = ctx.client.ci(&repo.owner, &repo.name).list();
+    let mut runs: Vec<ifg_client::Pipeline> = Vec::new();
+    let mut scanned = 0usize;
+    while let Some(page) = paginator.next_page().await? {
+        scanned += page.data.len();
+        runs.extend(
+            page.data
+                .into_iter()
+                .filter(|pipeline| pipeline.ref_name == branch),
+        );
+        if runs.len() >= WANTED || scanned >= SCAN_LIMIT {
+            break;
+        }
+    }
+    runs.truncate(WANTED);
     if runs.is_empty() {
-        println!("runs    (no pipeline runs for this branch)");
+        println!("runs    (no pipeline runs for this branch in the latest {scanned})");
         return Ok(());
     }
     println!();

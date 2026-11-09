@@ -7,6 +7,8 @@ use crate::error::AppError;
 use crate::output;
 
 const DEFAULT_LIMIT: u64 = 30;
+/// The server caps `per_page`; asking for more does not return more.
+const SERVER_PER_PAGE: u64 = 100;
 
 pub async fn run(
     cli: &Cli,
@@ -15,36 +17,55 @@ pub async fn run(
     limit: Option<u64>,
 ) -> Result<(), AppError> {
     let ctx = bootstrap(cli)?;
-    let per_page = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 100);
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).max(1);
+    // Fetch whole pages and stop at `limit`: clamping a single page to 100
+    // used to make `--limit 200` silently return 100 hits.
+    let per_page = limit.min(SERVER_PER_PAGE);
 
-    if cli.json || cli.template.is_some() {
-        let value = ctx
+    let mut hits: Vec<ifg_client::SearchHit> = Vec::new();
+    // Assigned on the first iteration, which always runs before the loop can
+    // break, so the later read is definite.
+    let mut total: u64;
+    let mut page_no = 1u64;
+    loop {
+        let page = ctx
             .client
             .search()
-            .query_raw(query, search_type, 1, per_page)
+            .query(query, search_type, page_no, per_page)
             .await?;
-        let hits = value["results"].clone();
+        total = page.total;
+        let received = page.results.len();
+        hits.extend(page.results);
+        let short_page = received < per_page as usize;
+        if received == 0 || short_page || hits.len() as u64 >= limit {
+            break;
+        }
+        page_no += 1;
+    }
+    hits.truncate(limit as usize);
+
+    if cli.json || cli.template.is_some() {
+        let results: Vec<serde_json::Value> = hits
+            .iter()
+            .map(|hit| serde_json::to_value(hit).unwrap_or(serde_json::Value::Null))
+            .collect();
         match &cli.template {
-            Some(template) => output::print_template(
-                hits.as_array().cloned().unwrap_or_default().as_slice(),
-                template,
-            ),
-            None => output::print_json(&value),
+            Some(template) => output::print_template(&results, template),
+            None => output::print_json(&serde_json::json!({
+                "results": results,
+                "total": total,
+                "page": 1,
+                "per_page": per_page,
+            })),
         }
         return Ok(());
     }
 
-    let page = ctx
-        .client
-        .search()
-        .query(query, search_type, 1, per_page)
-        .await?;
-    if page.results.is_empty() {
+    if hits.is_empty() {
         println!("No matches for '{query}'.");
         return Ok(());
     }
-    let rows: Vec<Vec<String>> = page
-        .results
+    let rows: Vec<Vec<String>> = hits
         .iter()
         .map(|hit| {
             vec![
@@ -60,7 +81,11 @@ pub async fn run(
         })
         .collect();
     output::print_table(&["TYPE", "REPO", "NUMBER", "TITLE"], &rows);
-    eprintln!("({} of {} match(es))", page.results.len(), page.total);
+    eprintln!(
+        "({} of {} match(es))",
+        hits.len(),
+        total.max(hits.len() as u64)
+    );
     Ok(())
 }
 

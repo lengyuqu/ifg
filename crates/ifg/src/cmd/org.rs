@@ -52,7 +52,12 @@ pub async fn run(command: &OrgCommand, cli: &Cli) -> Result<(), AppError> {
                 return Ok(());
             }
             let org = orgs.get(name).await?;
-            let members = orgs.members(name).await.unwrap_or_default();
+            // A failed member listing must not read as "this org has nobody":
+            // show the count as unknown and say why on stderr.
+            let (member_count, member_error) = match orgs.members(name).await {
+                Ok(members) => (members.len().to_string(), None),
+                Err(error) => ("unknown".to_string(), Some(error.to_string())),
+            };
             let rows = vec![
                 vec!["name".into(), org.name.clone()],
                 vec![
@@ -71,13 +76,16 @@ pub async fn run(command: &OrgCommand, cli: &Cli) -> Result<(), AppError> {
                     "owner id".into(),
                     org.owner_id.map(|id| id.to_string()).unwrap_or_default(),
                 ],
-                vec!["members".into(), members.len().to_string()],
+                vec!["members".into(), member_count],
                 vec![
                     "created".into(),
                     output::human_time(org.created_at.as_deref()),
                 ],
             ];
             output::print_table(&["FIELD", "VALUE"], &rows);
+            if let Some(error) = member_error {
+                eprintln!("ifg: warning: could not list members: {error}");
+            }
             Ok(())
         }
         OrgCommand::Create {

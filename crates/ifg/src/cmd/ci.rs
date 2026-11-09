@@ -299,11 +299,21 @@ async fn logs(
         .as_deref()
         .map(|log| log.split('\n').count())
         .unwrap_or(0);
-    if follow_websocket(ctx, repo, id, selected.id, printed_lines).await {
-        eprintln!("==> stream closed (job finished)");
-        return Ok(());
+    match follow_websocket(ctx, repo, id, selected.id, printed_lines).await {
+        FollowOutcome::Finished => {
+            eprintln!("==> stream closed (job finished)");
+            return Ok(());
+        }
+        FollowOutcome::Unavailable => {
+            eprintln!("ifg: note: WebSocket streaming unavailable; falling back to polling");
+        }
+        FollowOutcome::Interrupted(lines_seen) => {
+            // Never report a lost stream as "finished": resume from the last
+            // printed line so the tail of the log is not silently missing.
+            eprintln!("ifg: note: log stream lost; resuming by polling from line {lines_seen}");
+            printed = lines_seen;
+        }
     }
-    eprintln!("ifg: note: WebSocket streaming unavailable; falling back to polling");
 
     loop {
         tokio::time::sleep(POLL_INTERVAL).await;
@@ -382,24 +392,38 @@ fn reconnect_delay(failures: u32) -> std::time::Duration {
     std::time::Duration::from_millis(millis.min(2_000))
 }
 
+/// How a WebSocket follow ended.
+enum FollowOutcome {
+    /// The job reached a terminal state; the log is complete.
+    Finished,
+    /// The first handshake failed: streaming is unsupported here, poll instead.
+    Unavailable,
+    /// Streaming started but could not be kept alive; the caller resumes by
+    /// polling from this line count.
+    Interrupted(usize),
+}
+
 /// Stream a job log over `/api/v1/ws/job/{id}` until the job is terminal.
 ///
-/// The first handshake decides availability: `false` means the caller should
-/// poll instead. Once streaming, an interrupted connection is **resumed**
-/// (`?since=<lines printed>`) rather than falling back — the server replays
-/// only the missing suffix, so nothing is printed twice.
+/// The first handshake decides availability: [`FollowOutcome::Unavailable`]
+/// means the caller should poll instead. Once streaming, an interrupted
+/// connection is **resumed** (`?since=<lines printed>`) rather than falling
+/// back — the server replays only the missing suffix, so nothing is printed
+/// twice. If reconnects keep failing the outcome is
+/// [`FollowOutcome::Interrupted`] so the caller can finish the tail by
+/// polling; treating that as "finished" used to hide the rest of the log.
 async fn follow_websocket(
     ctx: &super::CommandContext,
     repo: &RepoContext,
     pipeline_id: i64,
     job_id: i64,
     printed_lines: usize,
-) -> bool {
+) -> FollowOutcome {
     use futures_util::StreamExt;
     use std::io::Write as _;
 
     let Some(mut socket) = connect_job_log(&ctx.host, job_id, printed_lines).await else {
-        return false;
+        return FollowOutcome::Unavailable;
     };
 
     let ci = ctx.client.ci(&repo.owner, &repo.name);
@@ -439,16 +463,16 @@ async fn follow_websocket(
         }
         let _ = socket.close(None).await;
         if finished {
-            return true;
+            return FollowOutcome::Finished;
         }
 
         // Interrupted while the job is still running: resume where we left off.
         failures += 1;
         if failures > 10 {
             eprintln!(
-                "ifg: note: log stream lost after 10 reconnect attempts; stopping the follow"
+                "ifg: note: log stream lost after 10 reconnect attempts; finishing the tail by polling"
             );
-            return true;
+            return FollowOutcome::Interrupted(lines_seen);
         }
         let delay = reconnect_delay(failures);
         eprintln!(
