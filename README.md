@@ -108,7 +108,11 @@ Wiki 编辑要求服务端支持版本保护。未指定 `--expected-version` �
 
 `ifg api <path> --jq '<表达式>'` 使用 PATH 中的 `jq` 处理 GET 的 JSON 响应，`--jq-raw` 输出未加引号的字符串；缺少 jq、响应不是 JSON 或表达式出错时返回非零。`--paginate --jq` 将各页合并为数组后再执行表达式。该选项当前仅属于 `api` 子命令且仅支持 GET；其他子命令可继续使用 `--json | jq ...`。
 
-`ifg api` 输出服务端原始字节，**不做**终端控制字符清洗（它的用途是管道给 jq 或重定向到文件）。其余子命令会剥离 `ESC` 等控制序列，避免仓库里的正文劫持终端；直接查看不受信任的原始响应时请走 `--jq` 或 `| cat -v`。
+`ifg api` 输出服务端原始字节，不追加换行，**不做**终端控制字符清洗（它的用途是管道给 jq 或重定向到文件）。其余子命令会剥离 `ESC` 等控制序列，避免仓库里的正文劫持终端；直接查看不受信任的原始响应时请走 `--jq` 或 `| cat -v`。
+
+`ifg status --json` 返回聚合对象：`repository` 为 `OWNER/NAME`，`branch` 为当前分支，`pull` 为匹配的 PR 原始对象（没有时为 `null`），`runs` 为最近最多 5 条分支流水线的原始对象数组，`scanned_runs` 为本次检查的流水线条数（最多扫描最近 500 条）。`--template` 可读取同一对象，例如 `ifg status -q '{{.branch}}: {{range .runs}}{{.id}} {{end}}'`。短分支名和 `refs/heads/` 格式都会匹配，同名 `refs/tags/` 不会计入。
+
+`ifg release create --json` 和 `--template` 都支持携带附件；指定附件时，结果对象的 `assets` 数组包含本次上传的附件原始字段。进度写入 stderr，stdout 只在全部成功后输出一次结果。若上传失败，命令返回非零，stderr 会保留已创建的 Release 编号，Release 和已上传的附件不会自动删除。
 
 Wiki 的 `edit` 替换整个页面，并使用服务端版本进行并发保护；正文基于较早读取时应显式传入当时的 `--expected-version`。固定基线已修复单条历史版本接口的跨仓库授权问题；`history` 列出当前授权仓库中该页面的历史。旧服务端可能仍受影响，应先更新部署。
 

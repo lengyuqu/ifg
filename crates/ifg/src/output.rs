@@ -233,9 +233,6 @@ pub fn print_bytes(bytes: &[u8]) {
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
     let _ = handle.write_all(bytes);
-    if !bytes.ends_with(b"\n") {
-        let _ = handle.write_all(b"\n");
-    }
     let _ = handle.flush();
 }
 

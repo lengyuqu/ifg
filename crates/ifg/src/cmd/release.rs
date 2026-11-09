@@ -220,8 +220,24 @@ async fn create(
         is_prerelease: Some(prerelease),
     };
     let releases = ctx.client.releases(&repo.owner, &repo.name);
-    if cli.json && files.is_empty() {
-        let value = releases.create_raw(&options).await?;
+    if cli.json || cli.template.is_some() {
+        let mut value = releases.create_raw(&options).await?;
+        if !files.is_empty() {
+            let id = value["id"].as_i64().ok_or_else(|| {
+                AppError::Other("created release response lacks id; cannot upload assets".into())
+            })?;
+            // Creation has already succeeded if an upload fails. Keep that
+            // fact on stderr while reserving stdout for a complete result.
+            eprintln!(
+                "Created release {} ({id}); uploading assets",
+                output::sanitize(tag)
+            );
+            let mut assets = Vec::with_capacity(files.len());
+            for file in files {
+                assets.push(upload_asset(ctx, repo, id, file).await?);
+            }
+            value["assets"] = Value::Array(assets);
+        }
         match &cli.template {
             Some(template) => output::print_template(std::slice::from_ref(&value), template),
             None => output::print_json(&value),
@@ -265,21 +281,37 @@ async fn upload_file(
     release_id: i64,
     file: &str,
 ) -> Result<(), AppError> {
+    let value = upload_asset(ctx, repo, release_id, file).await?;
+    let asset: ifg_client::Asset = serde_json::from_value(value)
+        .map_err(|e| AppError::Other(format!("could not decode uploaded asset: {e}")))?;
+    println!(
+        "Uploaded {} ({} bytes, {})",
+        asset.filename,
+        asset.size,
+        guess_content_type(std::path::Path::new(file))
+    );
+    Ok(())
+}
+
+/// Return the server's asset fields unchanged so machine modes can attach
+/// upload results without losing fields unknown to the display DTO.
+async fn upload_asset(
+    ctx: &super::CommandContext,
+    repo: &RepoContext,
+    release_id: i64,
+    file: &str,
+) -> Result<Value, AppError> {
     let path = std::path::Path::new(file);
     if !path.is_file() {
         return Err(AppError::Usage(format!("{file} is not a file")));
     }
     let content_type = guess_content_type(path);
-    let asset = ctx
+    let value = ctx
         .client
         .releases(&repo.owner, &repo.name)
-        .upload_file(release_id, path, &content_type)
+        .upload_file_raw(release_id, path, &content_type)
         .await?;
-    println!(
-        "Uploaded {} ({} bytes, {})",
-        asset.filename, asset.size, content_type
-    );
-    Ok(())
+    Ok(value)
 }
 
 async fn download(
