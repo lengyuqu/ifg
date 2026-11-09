@@ -206,7 +206,10 @@ fn compose_with_editor(
         .suffix(".md")
         .tempfile()
         .map_err(|e| AppError::Io(format!("could not create editor file: {e}")))?;
-    let path = file.path();
+    // External editors may request sharing modes incompatible with an open
+    // writable handle on Windows. Keep cleanup ownership, not the handle.
+    let temp_path = file.into_temp_path();
+    let path = &*temp_path;
     let template = format!(
         "{initial_title}\n\n{initial_body}\n\n# First line above is the title; the rest is the body.\n# Lines starting with '#' are dropped. Save an empty file to abort.\n"
     );
