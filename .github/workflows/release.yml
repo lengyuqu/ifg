@@ -18,7 +18,8 @@ permissions:
 
 jobs:
   unix:
-    runs-on: macos-14
+    # Explicit Intel runner complements the local arm64 acceptance run.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 

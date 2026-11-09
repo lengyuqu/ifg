@@ -54,10 +54,9 @@ jobs:
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test -p ifg -p ifg-client
 
-  # e2e drives the real `ifg` binary against a live IronForge instance, so it
-  # needs a runner that can reach one. Enable by setting the repository
-  # variable IFG_E2E_ENABLED=true and providing the IFG_E2E_URL / IFG_E2E_PAT
-  # secrets; the runner must carry the `ifg-e2e` label (see scripts/e2e.sh).
+  # e2e uses a disposable instance of the pinned local Docker image. Enable
+  # IFG_E2E_ENABLED on a Docker-capable runner carrying the `ifg-e2e` label.
+  # No deployed instance or saved user PAT is used (see docs/ci-e2e-runner.md).
   e2e:
     # Self-hosted runners must never execute code from forks: this job only
     # runs for pushes to main on the owning repository, even though the
@@ -78,8 +77,5 @@ jobs:
       - name: build the CLI the tests drive
         run: cargo build -p ifg --locked
 
-      - name: e2e (full chain, fork checkout, metadata + status)
-        run: cargo test -p ifg-e2e --locked -- --ignored
-        env:
-          IFG_E2E_URL: ${{ secrets.IFG_E2E_URL }}
-          IFG_E2E_PAT: ${{ secrets.IFG_E2E_PAT }}
+      - name: isolated Docker e2e (full chain, fork checkout, metadata + status)
+        run: bash scripts/e2e-docker.sh

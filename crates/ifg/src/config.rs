@@ -382,6 +382,8 @@ mod tests {
         assert!(!std::fs::read_to_string(&path)
             .unwrap()
             .contains("new-native-test-credential"));
+        drop(_cleanup);
+        assert!(crate::keyring::load(&host).is_none());
     }
 
     #[test]
