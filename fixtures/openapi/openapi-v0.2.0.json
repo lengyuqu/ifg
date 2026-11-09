@@ -945,6 +945,89 @@
         }
       }
     },
+    "/ai/repos/{owner}/{name}/pulls/{number}/context": {
+      "get": {
+        "tags": [
+          "AI"
+        ],
+        "summary": "GET /api/v1/ai/repos/:owner/:name/pulls/:number/context",
+        "operationId": "pr_context",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "description": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "description": "pull request number",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "budget",
+            "in": "query",
+            "description": "Approximate answer size in tokens (default 6000, 500-50000)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pull request context cut to the budget",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Bad budget",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/ai/repos/{owner}/{name}/index": {
       "post": {
         "tags": [
@@ -3232,6 +3315,108 @@
                 "schema": {}
               }
             }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Repositories"
+        ],
+        "operationId": "update_repo_settings",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRepoSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input or branch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Repository administrator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Repository not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Settings changed; reload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json content type"
+          },
+          "422": {
+            "description": "Missing or malformed request fields"
           }
         }
       }
@@ -10779,6 +10964,118 @@
         }
       }
     },
+    "/repos/{owner}/{name}/events": {
+      "get": {
+        "tags": [
+          "Repositories"
+        ],
+        "summary": "GET /api/v1/repos/:owner/:name/events",
+        "operationId": "list_events",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "description": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Return events after this cursor; omit to get only the current cursor",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "types",
+            "in": "query",
+            "description": "Comma-separated event names",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Most events to return (default 100, at most 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "Seconds to wait for a new event (default 0, at most 60)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events after the cursor, with next_cursor",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Bad parameters",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Repository not found",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "429": {
+            "description": "Too many concurrent waits",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/repos/{owner}/{name}/fork": {
       "post": {
         "tags": [
@@ -14740,7 +15037,9 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/TriggerPipelineRequest"
+              }
             }
           },
           "required": true
@@ -14750,7 +15049,9 @@
             "description": "Created",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerPipelineResponse"
+                }
               }
             }
           },
@@ -14758,7 +15059,9 @@
             "description": "Bad request",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -14766,9 +15069,47 @@
             "description": "Unauthorized",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Repository not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json content type"
+          },
+          "422": {
+            "description": "Malformed request fields"
           }
         }
       }
@@ -15792,7 +16133,9 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePrRequest"
+              }
             }
           },
           "required": true
@@ -15802,7 +16145,19 @@
             "description": "Updated",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/UpdatedPrResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -15810,9 +16165,47 @@
             "description": "Unauthorized",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json content type"
+          },
+          "422": {
+            "description": "Malformed request fields"
           }
         }
       }
@@ -16306,6 +16699,71 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/repos/{owner}/{name}/pulls/{number}/export": {
+      "get": {
+        "tags": [
+          "Pull Requests"
+        ],
+        "summary": "GET /api/v1/repos/:owner/:name/pulls/:number/export",
+        "operationId": "export_pr",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "description": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "description": "pull request number",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pull request export",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {}
@@ -18515,7 +18973,9 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/CreateWikiPageRequest"
+              }
             }
           },
           "required": true
@@ -18525,7 +18985,9 @@
             "description": "Created",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WikiPageResponse"
+                }
               }
             }
           },
@@ -18533,7 +18995,9 @@
             "description": "Bad request",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -18541,7 +19005,9 @@
             "description": "Unauthorized",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -18549,9 +19015,27 @@
             "description": "Forbidden",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
+          },
+          "409": {
+            "description": "Page already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json content type"
+          },
+          "422": {
+            "description": "Missing or malformed request fields"
           }
         }
       }
@@ -18596,7 +19080,9 @@
             "description": "Success",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WikiPageResponse"
+                }
               }
             }
           },
@@ -18604,7 +19090,39 @@
             "description": "Unauthorized",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Page changed during read; retry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           }
@@ -18711,7 +19229,9 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWikiPageRequest"
+              }
             }
           },
           "required": true
@@ -18721,7 +19241,19 @@
             "description": "Updated",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WikiPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -18729,7 +19261,9 @@
             "description": "Unauthorized",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -18737,9 +19271,37 @@
             "description": "Forbidden",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Version conflict; reload page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json content type"
+          },
+          "422": {
+            "description": "Missing or invalid request fields"
           }
         }
       }
@@ -20422,6 +20984,7 @@
         "required": [
           "contract_version",
           "server_version",
+          "api_capabilities",
           "capabilities",
           "limits",
           "auth_modes",
@@ -20429,11 +20992,32 @@
           "deprecations"
         ],
         "properties": {
+          "api_capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Versioned, instance-wide REST behaviors; unknown names may be ignored."
+          },
           "auth_modes": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AuthMode"
             }
+          },
+          "build_commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Source commit supplied at build time, or null when unavailable."
+          },
+          "build_dirty": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "True for a modified checkout; null when the build source is unknown."
           },
           "capabilities": {
             "type": "array",
@@ -20938,6 +21522,20 @@
             "type": "string",
             "description": "File content (UTF-8 string, not base64)"
           },
+          "dry_run": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Check everything and report what would happen without writing. The\n`X-Dry-Run: 1` header means the same."
+          },
+          "expected_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The commit the branch must be at. If the branch has moved, nothing is\nwritten and the answer is 409 with `reason: \"REF_ADVANCED\"`."
+          },
           "message": {
             "type": "string",
             "description": "Commit message"
@@ -21246,6 +21844,16 @@
           "name": {
             "type": "string"
           },
+          "refs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Limit the branches the token may write to (patterns such as `agent/*`).\nNeeds `repos`. Omit for no limit."
+          },
           "repos": {
             "type": [
               "array",
@@ -21261,6 +21869,27 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "CreateWikiPageRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
           }
         }
       },
@@ -21533,6 +22162,66 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code, e.g. \"NOT_FOUND\", \"BAD_REQUEST\"."
+          },
+          "details": {
+            "description": "Structured, machine-readable context for coded errors (e.g.\n`{\"current_version\": 3}` on `VERSION_CONFLICT`)."
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One sentence on what to do next, for a client that cannot guess."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable error message."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable, finer-grained cause inside `code` (e.g. `REF_ADVANCED` under\n`CONFLICT`). Clients branch on this instead of parsing `message`. Present\nonly on the errors that have one."
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Request ID (injected by request-id middleware for error responses)."
+          },
+          "retryable": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether repeating the request after re-reading state can succeed."
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Structured error response body.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
           }
         }
       },
@@ -22812,6 +23501,13 @@
             "type": "integer",
             "format": "int64"
           },
+          "settings_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque version of the editable settings, present on repository reads."
+          },
           "stars_count": {
             "type": "integer",
             "format": "int64"
@@ -23569,6 +24265,41 @@
         },
         "additionalProperties": false
       },
+      "TriggerPipelineRequest": {
+        "type": "object",
+        "properties": {
+          "ref_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TriggerPipelineResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "commit_sha",
+          "ref_name"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ref_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateBoardRequest": {
         "type": "object",
         "properties": {
@@ -23658,6 +24389,76 @@
           }
         }
       },
+      "UpdatePrRequest": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "draft": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "milestone_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Tri-state: absent = untouched, JSON null = clear, integer = set (A4)."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UpdateRepoSettingsRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "default_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Existing Git branch to use as the default."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omit to leave unchanged, null to clear."
+          },
+          "expected_version": {
+            "type": "string",
+            "description": "Token from the repository GET response."
+          },
+          "is_private": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateTagProtectionRequest": {
         "type": "object",
         "required": [
@@ -23740,6 +24541,175 @@
           }
         },
         "additionalProperties": false
+      },
+      "UpdateWikiPageRequest": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "expected_version": {
+            "type": "string",
+            "description": "Opaque version returned by the most recent page read."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UpdatedPrResponse": {
+        "type": "object",
+        "description": "Response returned when a pull request is updated.",
+        "required": [
+          "id",
+          "repo_id",
+          "number",
+          "title",
+          "state",
+          "is_draft",
+          "auto_merge_enabled",
+          "author_id",
+          "head_branch",
+          "base_branch",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "author_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "auto_merge_enabled": {
+            "type": "boolean"
+          },
+          "auto_merge_enabled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "auto_merge_enabled_by_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "auto_merge_strategy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "base_branch": {
+            "type": "string"
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "head_branch": {
+            "type": "string"
+          },
+          "head_repo_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "head_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "is_draft": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merge_strategy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "merged_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "milestone_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "repo_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reviewer_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "state": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "UploadArtifactRequest": {
         "type": "object",
@@ -23869,6 +24839,52 @@
         "properties": {
           "state": {
             "type": "string"
+          }
+        }
+      },
+      "WikiPageResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "title",
+          "content",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "author_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "content": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "Opaque version to send with a subsequent update."
           }
         }
       }

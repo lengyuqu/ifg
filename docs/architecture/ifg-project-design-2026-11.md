@@ -208,7 +208,7 @@ host 的优先级不变：`--host` > `IRONFORGE_URL` + `IRONFORGE_PAT` > git rem
 
 客户端与服务端分仓库发布后，最大的风险是服务端改了字段而 CLI 不知道。措施：
 
-1. **契约快照**：`fixtures/openapi/openapi-<ironforge 版本>.json` 存一份服务端 `GET /api-docs/openapi.json`。脚本 `scripts/sync-openapi.sh <url>` 拉取新快照；契约测试检查手工登记的路径与方法是否存在，并不检查所有字段。OpenAPI 覆盖不全的接口登记在 `fixtures/openapi/uncovered.txt`，需另行验证。
+1. **契约快照**：`fixtures/openapi/openapi-v<ironforge 版本>.json` 存一份服务端 `GET /api-docs/openapi.json`，契约测试按 `Cargo.toml` 中的 `ironforge_version` 选择基线。脚本 `scripts/sync-openapi.sh <url>` 拉取新快照；契约测试检查手工登记的路径与方法以及选定字段，并不检查所有字段。OpenAPI 覆盖不全的接口登记在 `fixtures/openapi/uncovered.txt`，需另行验证。
 2. **响应样本**：`fixtures/responses/` 存真实响应，DTO 测试直接反序列化这些文件。样本从 e2e 测试中录制，避免手写样本与现实不符。
 3. **运行时探测**：`ifg auth status` 与 `ifg version` 调 `GET /health` 显示服务端版本；低于 `MIN_SERVER_VERSION` 时提示升级（D10）。注意 OpenAPI 文档中的 `info.version` 是硬编码的 `0.1.0`（`确认`：`rg-http/src/openapi.rs`），与实际版本 `0.2.0` 不一致，不能用它判断版本，应以 `/health` 为准（这一点值得在 IronForge 侧顺手修掉）。
 4. **固定基线**：`Cargo.toml` 的 `[workspace.metadata.ifg]` 记录本地镜像 ID 和服务版本；当前镜像无源码版本标签，无法证明其构建提交，不能仅凭镜像名称推断。快照从该镜像的隔离实例提取。更换基线需记录镜像来源、同步快照并重新运行 e2e。

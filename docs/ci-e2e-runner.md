@@ -2,7 +2,7 @@
 
 本地优先使用 `bash scripts/e2e-docker.sh`：它读取 `Cargo.toml` 中固定的本地镜像 ID，启动隔离实例并在结束时清理容器和临时数据。需要 Docker、`curl`、`openssl`、Git 和 Rust；设置 `IFG_E2E_IMAGE` 可测试另一张已存在的本地镜像。脚本打印镜像 ID、客户端提交、工作区状态和服务健康信息，不复用 `IFG_E2E_PAT`。该本地测试尚未接入 CNB 自动流水线。
 
-当前基线服务版本为 0.2.0，OpenAPI 快照从同一镜像启动的隔离实例获取。镜像没有源码提交标签，`deploy-6dcc61d` 只是本地标签，不能作为源码来源证明。更新基线时记录可验证的镜像来源、更新 `Cargo.toml`，从新实例用 `scripts/sync-openapi.sh` 更新快照，并运行契约检查和隔离 e2e。
+当前基线服务版本为 0.2.0，镜像 ID 和服务端能力接口自报的构建提交记录在 `Cargo.toml`；OpenAPI 快照从该镜像启动的隔离实例获取。镜像没有 OCI 源码提交标签，自报构建信息不是供应链签名。更新基线时记录可验证的镜像来源、更新 `Cargo.toml`，从新实例用 `scripts/sync-openapi.sh` 更新快照，并运行契约检查和隔离 e2e。
 
 `scripts/e2e.sh` 驱动真实的 `ifg` 二进制去连一台**在跑的 IronForge 实例**：建仓、开 PR、合并、走 CI、发布 release。
 公共 runner 到不了内网实例，所以这段放在自托管 runner 上，并用开关控制。

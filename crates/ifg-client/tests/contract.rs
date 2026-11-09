@@ -1,5 +1,5 @@
 //! Contract drift test (design doc §6.1): every path in
-//! [`ifg_client::USED_PATHS`] must exist in the newest OpenAPI snapshot
+//! [`ifg_client::USED_PATHS`] must exist in the configured baseline snapshot
 //! (`fixtures/openapi/openapi-*.json`), or be explicitly registered in
 //! `fixtures/openapi/uncovered.txt`. A path that becomes covered but stays
 //! in `uncovered.txt` also fails, so the lists cannot rot.
@@ -18,24 +18,32 @@ fn fixtures_dir() -> PathBuf {
         .expect("fixtures/openapi exists")
 }
 
-fn newest_snapshot(dir: &Path) -> PathBuf {
-    let mut snapshots: Vec<PathBuf> = fs::read_dir(dir)
-        .expect("read fixtures/openapi")
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name.starts_with("openapi-v") && name.ends_with(".json"))
-                .unwrap_or(false)
+fn baseline_snapshot(dir: &Path) -> PathBuf {
+    let manifest = include_str!("../../../Cargo.toml");
+    let version = manifest
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == "ironforge_version").then(|| value.trim().trim_matches('"'))
         })
-        .collect();
+        .expect("workspace metadata must set ironforge_version");
+    let snapshot = dir.join(format!("openapi-v{version}.json"));
     assert!(
-        !snapshots.is_empty(),
-        "no OpenAPI snapshot in {}; run scripts/sync-openapi.sh <url>",
-        dir.display()
+        snapshot.is_file(),
+        "missing baseline snapshot {}; run scripts/sync-openapi.sh <url>",
+        snapshot.display()
     );
-    snapshots.sort();
-    snapshots.pop().expect("at least one snapshot")
+    snapshot
+}
+
+#[test]
+fn baseline_selection_ignores_unrelated_newer_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let actual = baseline_snapshot(&fixtures_dir());
+    let baseline = dir.path().join(actual.file_name().unwrap());
+    fs::write(&baseline, "{}").unwrap();
+    fs::write(dir.path().join("openapi-v999.0.0~experimental.json"), "{}").unwrap();
+    assert_eq!(baseline_snapshot(dir.path()), baseline);
 }
 
 fn uncovered_entries(dir: &Path) -> HashSet<String> {
@@ -51,7 +59,7 @@ fn uncovered_entries(dir: &Path) -> HashSet<String> {
 #[test]
 fn used_paths_still_exist_in_the_openapi_snapshot() {
     let dir = fixtures_dir();
-    let snapshot_path = newest_snapshot(&dir);
+    let snapshot_path = baseline_snapshot(&dir);
     let spec: Value =
         serde_json::from_str(&fs::read_to_string(&snapshot_path).expect("readable snapshot"))
             .expect("valid JSON snapshot");
@@ -129,7 +137,7 @@ fn check_fields(schema: &Value, fields: &[(&str, &str)], required: &[&str]) -> V
 fn critical_typed_operation_fields_match_client_contract() {
     type OperationContract<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a [&'a str]);
     let spec: Value = serde_json::from_str(
-        &fs::read_to_string(newest_snapshot(&fixtures_dir())).expect("readable snapshot"),
+        &fs::read_to_string(baseline_snapshot(&fixtures_dir())).expect("readable snapshot"),
     )
     .expect("valid JSON snapshot");
     let contracts: &[OperationContract<'_>] = &[
@@ -237,7 +245,7 @@ fn field_check_detects_removed_changed_and_optional_fields() {
 #[test]
 fn critical_mutations_document_request_and_conflict_statuses() {
     let spec: Value =
-        serde_json::from_str(&fs::read_to_string(newest_snapshot(&fixtures_dir())).unwrap())
+        serde_json::from_str(&fs::read_to_string(baseline_snapshot(&fixtures_dir())).unwrap())
             .unwrap();
     for (path, method) in [
         ("/repos/{owner}/{name}", "patch"),

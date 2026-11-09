@@ -1314,6 +1314,17 @@ async fn repository_collaborator_permissions() {
         .iter()
         .any(|v| v["id"] == record_id && v["user_id"] == user_id));
     assert!(pat_client(&pat).repos().get(&h.user, &name).await.is_ok());
+    let labels_path = format!("repos/{repo}/labels");
+    let label_body = json!({"name":"collaborator-write-proof", "color":"ff0000"});
+    let read_denied = pat_client(&pat)
+        .raw(Method::POST, &labels_path, Some(&label_body))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        read_denied.status(),
+        Some(403),
+        "read access must not permit repository writes"
+    );
     let write_path = format!("repos/{repo}/collaborators");
     let write_probe = json!({"username": username, "permission": "read"});
     let before = pat_client(&pat)
@@ -1363,9 +1374,14 @@ async fn repository_collaborator_permissions() {
         .unwrap_err();
     assert_eq!(
         after.status(),
-        Some(409),
-        "write permission must pass authorization and reach duplicate check"
+        Some(403),
+        "write access must not grant collaborator administration"
     );
+    let created = pat_client(&pat)
+        .raw(Method::POST, &labels_path, Some(&label_body))
+        .await
+        .expect("write collaborator can create a repository label");
+    assert_eq!(json_of(created)["name"], "collaborator-write-proof");
     h.run_ok(&[
         "-R",
         &repo,

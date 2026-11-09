@@ -14,15 +14,13 @@ license = "MIT"
 authors = ["Yu Qu <zdz945244799@yeah.net>"]
 repository = "https://git233.phynews.com:18443/aicodeing/ifg"
 
-# The unmodified baseline snapshot and isolated Docker e2e use this local image.
-# The newer ~ifg-compat snapshot is generated from the IronForge development
-# branch (IronForge e1628e0) and is not a claim about the image below.
-# The image has no
-# source-revision label, so its tag is not proof of a commit.
+# The canonical OpenAPI snapshot and isolated Docker e2e use this image.
+# The commit below is reported by its capability endpoint (not an OCI label).
 # Replacing this baseline requires a fresh snapshot and an e2e run.
 [workspace.metadata.ifg]
-ironforge_image_id = "sha256:db92748f9ff91257805e647742e8c056d13f2054c1571a0537e2e75909fbd2b8"
+ironforge_image_id = "sha256:257a6167ab94a4735abfe53060d758bbe080b36f0f419aed0950d8ac208fa627"
 ironforge_version = "0.2.0"
+ironforge_reported_commit = "7d27c2d519674194ab016bcfb8f13f235fe4ed81"
 
 [workspace.dependencies]
 ifg-client = { path = "crates/ifg-client" }
