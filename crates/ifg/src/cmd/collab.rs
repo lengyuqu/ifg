@@ -2,7 +2,9 @@
 //! and repository, and are never printed or accepted as command-line flags.
 use std::path::Path;
 
-use ifg_client::{collab_segment, Method, Secret, SessionCredentials};
+#[cfg(unix)]
+use ifg_client::Secret;
+use ifg_client::{collab_segment, Method, SessionCredentials};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -68,9 +70,9 @@ fn load_session(path: &Path, host: &str, repo: &str) -> Result<SessionCredential
     #[cfg(not(unix))]
     {
         let _ = (host, repo);
-        return Err(AppError::Other(
+        Err(AppError::Other(
             "secure session file storage is not yet supported on this platform".into(),
-        ));
+        ))
     }
     #[cfg(unix)]
     {
