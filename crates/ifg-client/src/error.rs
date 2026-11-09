@@ -94,9 +94,9 @@ pub(crate) fn api_error(status: u16, body: &[u8]) -> Error {
     match serde_json::from_slice::<ErrorEnvelope>(body) {
         Ok(envelope) => Error::Api {
             status,
-            code: envelope.error.code,
-            message: envelope.error.message,
-            request_id: envelope.error.request_id,
+            code: envelope.error.code.map(|code| crate::sanitize(&code)),
+            message: crate::sanitize(&envelope.error.message),
+            request_id: envelope.error.request_id.map(|id| crate::sanitize(&id)),
         },
         Err(_) => Error::Api {
             status,
@@ -107,10 +107,11 @@ pub(crate) fn api_error(status: u16, body: &[u8]) -> Error {
     }
 }
 
-/// First [`SNIPPET_BYTES`] bytes of a body, lossy-decoded and trimmed.
+/// First [`SNIPPET_BYTES`] bytes of a body, lossy-decoded, trimmed and
+/// stripped of control characters (it is shown on a terminal).
 pub(crate) fn snippet(body: &[u8]) -> String {
     let cut = &body[..body.len().min(SNIPPET_BYTES)];
-    String::from_utf8_lossy(cut).trim().to_string()
+    crate::sanitize(String::from_utf8_lossy(cut).trim())
 }
 
 /// Decode a body that may be empty (204) or JSON; empty becomes `null`.

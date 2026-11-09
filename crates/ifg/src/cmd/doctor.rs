@@ -154,11 +154,17 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
                 "  {:<width$}  {}  {}",
                 check.name,
                 check.status.mark(),
-                check.detail,
+                output::sanitize(&check.detail),
                 width = width
             );
             if let Some(hint) = &check.hint {
-                println!("  {:<width$}  {:<4}  → {hint}", "", "", width = width);
+                println!(
+                    "  {:<width$}  {:<4}  → {}",
+                    "",
+                    "",
+                    output::sanitize(hint),
+                    width = width
+                );
             }
         }
         println!();

@@ -27,7 +27,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         Some(pr) => println!(
             "pull    #{:<4} {} [{}] {} → {}{}",
             pr.number,
-            pr.title,
+            output::sanitize(&pr.title),
             pr.state,
             pr.head_branch,
             pr.base_branch,

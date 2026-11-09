@@ -84,6 +84,11 @@ fn colorize(text: &str, color_enabled: bool) -> Cell {
     }
 }
 
+/// Strip terminal control characters from server-provided text. The
+/// implementation lives in `ifg-client` so error messages and rendered output
+/// share one rule set.
+pub use ifg_client::sanitize;
+
 /// A plain table. Cells that are exactly a known state word are colored when
 /// the terminal supports it; long tables go through the pager.
 pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
@@ -94,7 +99,7 @@ pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     for row in rows {
         table.add_row(
             row.iter()
-                .map(|cell| colorize(cell, caps.color))
+                .map(|cell| colorize(&sanitize(cell), caps.color))
                 .collect::<Vec<_>>(),
         );
     }
@@ -161,7 +166,9 @@ fn default_pager() -> Option<String> {
 pub fn print_diff(text: &str) {
     let caps = caps();
     let mut out = String::with_capacity(text.len() + 64);
-    for line in text.lines() {
+    for raw_line in text.lines() {
+        let line = sanitize(raw_line);
+        let line = line.as_str();
         if caps.color {
             if line.starts_with("+++") || line.starts_with("---") {
                 out.push_str(line);
@@ -230,6 +237,20 @@ pub fn print_bytes(bytes: &[u8]) {
     let _ = handle.flush();
 }
 
+/// Print a server-provided document (wiki page, notes) with control
+/// characters stripped. `ifg api` stays a raw pass-through; commands that
+/// render text into a terminal sanitize first.
+pub fn print_document(text: &str) {
+    let clean = sanitize(text);
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    let _ = handle.write_all(clean.as_bytes());
+    if !clean.ends_with('\n') {
+        let _ = handle.write_all(b"\n");
+    }
+    let _ = handle.flush();
+}
+
 /// Timestamps for humans: relative on a terminal ("3m ago"), absolute
 /// (YYYY-MM-DD) in pipes and scripts (design doc §5.4).
 pub fn human_time(iso: Option<&str>) -> String {
@@ -245,4 +266,23 @@ pub fn human_time(iso: Option<&str>) -> String {
 
 fn date_part(iso: &str) -> String {
     iso.chars().take(10).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_strips_terminal_and_bidi_controls() {
+        // OSC 0 (title), BEL terminator, and CSI clear-screen.
+        assert_eq!(
+            sanitize("a\u{1b}]0;pwned\u{7}b\u{1b}[2Jc"),
+            "a]0;pwnedb[2Jc"
+        );
+        assert_eq!(sanitize("line1\nline2\ttab"), "line1\nline2\ttab");
+        assert_eq!(sanitize("rtl\u{202e}evil\u{202c}"), "rtlevil");
+        assert_eq!(sanitize("nul\u{0}del\u{7f}c1\u{9b}"), "nuldelc1");
+        // Ordinary text, including CJK and emoji, is untouched.
+        assert_eq!(sanitize("中文 ✅ ok"), "中文 ✅ ok");
+    }
 }

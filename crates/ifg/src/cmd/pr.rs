@@ -278,13 +278,13 @@ async fn view(
                 };
                 println!(
                     "{} (author {}, {}):\n  {}\n",
-                    location,
+                    output::sanitize(&location),
                     comment
                         .author_id
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "—".into()),
                     short_date(comment.created_at.as_deref()),
-                    comment.body.trim().replace('\n', "\n  ")
+                    output::sanitize(comment.body.trim()).replace('\n', "\n  ")
                 );
             }
         }

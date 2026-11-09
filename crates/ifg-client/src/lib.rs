@@ -22,6 +22,7 @@ mod releases;
 mod repos;
 mod search;
 mod secret;
+mod text;
 mod users;
 mod wiki;
 
@@ -49,5 +50,6 @@ pub use repos::{Collaborator, CreateRepoOptions, Repo, Repos};
 pub use reqwest::Method;
 pub use search::{Search, SearchHit, SearchPage};
 pub use secret::Secret;
+pub use text::sanitize;
 pub use users::{has_scope, TokenInfo, UserProfile, Users};
 pub use wiki::Wiki;

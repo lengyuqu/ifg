@@ -194,11 +194,11 @@ async fn view(
             println!("No comments.");
         }
         for comment in list {
+            let author = output::sanitize(&comment.author.unwrap_or_else(|| "—".into()));
+            let body = output::sanitize(&comment.body);
             println!(
-                "\n{} at {}: {}",
-                comment.author.unwrap_or_else(|| "—".into()),
-                short_date(comment.created_at.as_deref()),
-                comment.body
+                "\n{author} at {}: {body}",
+                short_date(comment.created_at.as_deref())
             );
         }
     }

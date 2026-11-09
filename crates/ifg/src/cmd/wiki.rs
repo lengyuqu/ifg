@@ -74,7 +74,9 @@ pub async fn run(command: &WikiCommand, cli: &Cli) -> Result<(), AppError> {
                 let text = value["content"]
                     .as_str()
                     .ok_or_else(|| AppError::Other("invalid Wiki page content".into()))?;
-                output::print_bytes(text.as_bytes());
+                // Server-provided markdown: strip terminal control sequences
+                // before it reaches the tty.
+                output::print_document(text);
             }
         }
         WikiCommand::History { title } => {
