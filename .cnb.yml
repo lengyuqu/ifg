@@ -41,6 +41,10 @@
 main:
   push:
     - name: ci
+      # The default 8-core node pre-freezes 80 core-minutes. One core keeps
+      # this small workspace runnable within the remaining monthly quota.
+      runner:
+        cpus: 1
       # Supersede an in-flight run on the same branch instead of queueing.
       lock:
         key: ci
@@ -72,6 +76,8 @@ main:
 
   pull_request:
     - name: ci
+      runner:
+        cpus: 1
       lock:
         key: ci-pr
         cancel-in-progress: true

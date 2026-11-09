@@ -8,11 +8,13 @@
 name: release
 
 on:
+  # A manual run builds and verifies candidate artifacts without publishing.
+  workflow_dispatch:
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   unix:
@@ -34,6 +36,20 @@ jobs:
       - name: build artifacts (adds rustup targets itself)
         run: bash scripts/release.sh
 
+      - name: verify checksums and install the native archive
+        run: |
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+          case "$(uname -m)" in
+            arm64) target=aarch64-apple-darwin ;;
+            x86_64) target=x86_64-apple-darwin ;;
+            *) exit 1 ;;
+          esac
+          candidate_dir=$(mktemp -d)
+          trap 'rm -rf "$candidate_dir"' EXIT
+          tar -xzf dist/ifg-*-$target.tar.gz -C "$candidate_dir"
+          "$candidate_dir/ifg" --version
+          test -f "$candidate_dir/man/ifg.1"
+
       - uses: actions/upload-artifact@v4
         with:
           name: unix
@@ -53,13 +69,26 @@ jobs:
         shell: bash
         run: bash scripts/release.sh --windows
 
+      - name: verify checksum and install the Windows zip
+        shell: pwsh
+        run: |
+          $archive = @(Get-ChildItem dist/ifg-*-x86_64-pc-windows-msvc.zip)
+          if ($archive.Count -ne 1) { throw 'Expected one Windows archive' }
+          $expected = ((Get-Content dist/SHA256SUMS) -split '\s+')[0]
+          if ((Get-FileHash -LiteralPath $archive[0].FullName -Algorithm SHA256).Hash -ne $expected) { throw 'Checksum mismatch' }
+          $candidateDir = Join-Path $env:RUNNER_TEMP 'ifg-candidate-install'
+          Expand-Archive -LiteralPath $archive[0].FullName -DestinationPath $candidateDir -Force
+          & (Join-Path $candidateDir 'ifg.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'Installed binary failed' }
+          if (-not (Test-Path (Join-Path $candidateDir 'man/ifg.1'))) { throw 'Man page missing' }
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: dist/*.zip
           if-no-files-found: error
 
-  publish:
+  checksums:
     needs: [unix, windows]
     runs-on: ubuntu-latest
     steps:
@@ -73,6 +102,25 @@ jobs:
           cd dist
           sha256sum ifg-*.tar.gz ifg-*.zip > SHA256SUMS
           cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    # Manual candidate builds can never publish, even when dispatched on a tag.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [checksums]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-${{ github.sha }}
+          path: dist
 
       - name: publish release assets
         uses: softprops/action-gh-release@v2

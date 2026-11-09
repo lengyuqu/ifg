@@ -8,6 +8,8 @@
 
 /// (method, path) pairs used by `ifg-client` and the CLI/e2e flows.
 pub const USED_PATHS: &[(&str, &str)] = &[
+    // Setup for the explicitly selected newer-server fork-mirror E2E only.
+    ("DELETE", "/repos/{owner}/{name}/branches/{branch}"),
     // Wiki: revision-by-id is intentionally not used because the server must
     // verify that the requested revision belongs to the authorized page.
     ("GET", "/repos/{owner}/{name}/wiki"),

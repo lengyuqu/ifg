@@ -1,3 +1,6 @@
 # Endpoints used by ifg-client but absent from the OpenAPI snapshot
 # (missing utoipa annotations server-side). The contract test tolerates
 # exactly these entries; remove a line once the snapshot covers it.
+# Compatibility-only E2E setup: available in server 1c1559f, absent from the
+# canonical 7d27c2d snapshot. Default baseline E2E does not invoke this route.
+DELETE /repos/{owner}/{name}/branches/{branch}

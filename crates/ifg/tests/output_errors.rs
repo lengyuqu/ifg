@@ -1,4 +1,3 @@
-#![cfg(unix)]
 use std::process::{Command, Stdio};
 use tempfile::TempDir;
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -52,6 +51,7 @@ async fn failed_stdout_writes_fail_for_raw_structured_scalar_and_completion_outp
 }
 
 #[tokio::test]
+#[cfg(unix)]
 async fn broken_pipe_is_still_an_expected_success() {
     use std::os::fd::OwnedFd;
     use std::os::unix::net::UnixStream;

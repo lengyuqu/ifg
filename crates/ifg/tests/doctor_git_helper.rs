@@ -1,4 +1,3 @@
-#![cfg(unix)]
 use assert_cmd::Command;
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -6,7 +5,6 @@ use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn doctor_hint_configures_a_working_host_scoped_helper() {
-    use std::os::unix::fs::PermissionsExt;
     let server = MockServer::start().await;
     for (route, body) in [
         ("/health", json!({"version":"0.2.0"})),
@@ -32,7 +30,11 @@ async fn doctor_hint_configures_a_working_host_scoped_helper() {
         ),
     )
     .unwrap();
-    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let git_config = home.path().join("gitconfig");
     let doctor = || {
         Command::cargo_bin("ifg")
@@ -58,14 +60,27 @@ async fn doctor_hint_configures_a_working_host_scoped_helper() {
         .find(|v| v["check"] == "git")
         .unwrap();
     let hint = git["hint"].as_str().unwrap();
-    assert!(hint.contains("!ifg auth git-credential"), "{hint}");
+    let helper = if cfg!(windows) {
+        "!ifg.exe auth git-credential"
+    } else {
+        "!ifg auth git-credential"
+    };
+    assert!(hint.contains(helper), "{hint}");
     assert!(
         hint.contains(&format!("credential.{}.helper", server.uri())),
         "{hint}"
     );
     // Execute exactly the emitted hint against an isolated global config.
-    let result = std::process::Command::new("sh")
-        .args(["-c", hint])
+    let mut shell = if cfg!(windows) {
+        let mut shell = std::process::Command::new("pwsh");
+        shell.args(["-NoProfile", "-NonInteractive", "-Command", hint]);
+        shell
+    } else {
+        let mut shell = std::process::Command::new("sh");
+        shell.args(["-c", hint]);
+        shell
+    };
+    let result = shell
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", &git_config)
         .current_dir(work.path())

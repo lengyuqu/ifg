@@ -204,6 +204,8 @@ ifg -R owner/repo collab task reassign '<任务 ID>' --key move-1 --expected-ver
 | Linux（musl，arm64 / x86_64） | 已发布 |
 | Windows（x86_64-msvc） | 已支持：构建 / 测试 / zip 产物，CI `windows-latest` 覆盖（e2e 仍只在 macOS） |
 
+平台实现和历史发布状态不代表每个新候选提交都已在所有平台验收；本轮 Unreleased 的具体提交、CI、原生凭据及产物证据见 [发布验收记录](docs/release-checklist.md)。
+
 Windows 已知限制：颜色仅在 Windows Terminal / VS Code / mintty 下启用；默认不启分页器（可用 `PAGER` 覆盖）；未签名 exe 可能触发杀软告警。带参数编辑器配置支持解析 Windows 路径，但尚需在 Windows 上实测。
 
 ## 开发
@@ -220,6 +222,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
 
 ```bash
 bash scripts/e2e-docker.sh  # 用固定的本地镜像启动隔离实例，运行真实端到端测试
+# 使用明确支持 fork PR 镜像的较新镜像，单独验证源分支和 fork 删除后的恢复：
+IFG_E2E_IMAGE=<本地兼容镜像> bash scripts/e2e-docker.sh --fork-mirror
 scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
                     # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
 scripts/release.sh  # 发布产物：四架构 tar.gz + Windows zip + SHA256SUMS（Windows 部分需在 Windows 上运行 `--windows`）

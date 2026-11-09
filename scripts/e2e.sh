@@ -11,8 +11,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Fork-mirror recovery needs a newer server than the canonical baseline.
+# Select it explicitly so a baseline pass never claims this extra coverage.
+case "${1:-}" in
+    "") unset IFG_E2E_FORK_MIRROR ;;
+    --fork-mirror) export IFG_E2E_FORK_MIRROR=1 ;;
+    *) echo 'usage: scripts/e2e.sh [--fork-mirror]' >&2; exit 2 ;;
+esac
+
 # `cargo test -p ifg-e2e` alone would not rebuild the `ifg` binary the tests
 # drive, so build it explicitly first.
 cargo build -p ifg --locked
 
-exec cargo test -p ifg-e2e --locked -- --ignored --nocapture
+if [[ "${IFG_E2E_FORK_MIRROR:-}" == 1 ]]; then
+    exec cargo test -p ifg-e2e --test e2e --locked fork_pull_request_checkout_and_update -- --ignored --nocapture
+fi
+exec cargo test -p ifg-e2e --test e2e --locked -- --ignored --nocapture

@@ -2,6 +2,10 @@
 # Run the real-service E2E suite against an isolated local IronForge image.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+case "${1:-}" in
+    ""|--fork-mirror) ;;
+    *) echo 'usage: scripts/e2e-docker.sh [--fork-mirror]' >&2; exit 2 ;;
+esac
 
 baseline=$(sed -n 's/^ironforge_image_id = "\([^"]*\)"/\1/p' Cargo.toml)
 image=${IFG_E2E_IMAGE:-$baseline}
@@ -30,6 +34,7 @@ fi
 url="http://127.0.0.1:$port"
 echo "IronForge image: $(docker image inspect "$image" --format '{{.Id}}')"
 echo "ifg commit: $(git rev-parse HEAD)"
+echo "E2E scenario: ${1:-baseline}"
 if [[ -n "$(git status --porcelain)" ]]; then echo 'ifg worktree: modified'; else echo 'ifg worktree: clean'; fi
 for ((i=0; i<30; i++)); do
     if health=$(curl -fsS --max-time 2 "$url/health" 2>/dev/null); then break; fi
@@ -42,4 +47,4 @@ if [[ -z "${health:-}" ]]; then
 fi
 echo "IronForge health: $health"
 # Never reuse a PAT intended for an existing installation.
-env -u IFG_E2E_PAT IFG_E2E_URL="$url" bash scripts/e2e.sh
+env -u IFG_E2E_PAT IFG_E2E_URL="$url" bash scripts/e2e.sh "$@"

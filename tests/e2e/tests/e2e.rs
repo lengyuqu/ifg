@@ -1258,7 +1258,74 @@ async fn fork_chain(
     // Second run: fast-forward / already up to date, not an error.
     let out = harness.run_in(&upstream_clone, &["pr", "checkout", "1"]);
     assert!(out.contains("updated"), "second checkout: {out}");
+
+    if std::env::var("IFG_E2E_FORK_MIRROR").as_deref() == Ok("1") {
+        let head_sha = pr["head_sha"].as_str().expect("fork PR head SHA");
+        let pull_ref = "refs/pull/1/head";
+        let target_url = format!("{}/git/{upstream_arg}.git", e2e_url());
+        let fork_url = format!("{}/git/{fork_user}/{upstream_name}.git", e2e_url());
+        assert!(git_refs(&target_url, &harness.pat, pull_ref).starts_with(head_sha));
+        // The server refuses deletion while an open PR uses the source branch.
+        harness.run_ok(&["-R", upstream_arg, "pr", "close", "1"]);
+        forker.raw(Method::DELETE,
+            &format!("repos/{fork_user}/{upstream_name}/branches/fork-feature?expected_sha={head_sha}"),
+            None).await.expect("newer server deletes a closed PR's source branch");
+        assert!(git_refs(&fork_url, fork_pat, "refs/heads/fork-feature").is_empty());
+        let result = harness
+            .ifg()
+            .args(["pr", "checkout", "1"])
+            .current_dir(&upstream_clone)
+            .assert()
+            .success();
+        assert!(String::from_utf8_lossy(&result.get_output().stderr).contains(pull_ref));
+        assert_eq!(
+            std::fs::read_to_string(upstream_clone.join("fork.txt")).unwrap(),
+            "from the fork"
+        );
+        assert_eq!(git_head(&upstream_clone), head_sha);
+        // The target mirror must remain usable even after the entire fork goes.
+        forker
+            .repos()
+            .delete(fork_user, upstream_name)
+            .await
+            .expect("delete test fork");
+        harness.run_in(&upstream_clone, &["pr", "checkout", "1"]);
+        assert_eq!(git_head(&upstream_clone), head_sha);
+        println!(
+            "fork-mirror recovery verified: source branch and repository deleted; head={head_sha}"
+        );
+    }
     Ok(())
+}
+
+fn git_refs(url: &str, token: &str, reference: &str) -> String {
+    let result = StdCommand::new("git")
+        .args(["ls-remote", url, reference])
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "http.extraheader")
+        .env(
+            "GIT_CONFIG_VALUE_0",
+            format!("Authorization: Bearer {token}"),
+        )
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("git ls-remote");
+    assert!(
+        result.status.success(),
+        "git ls-remote failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    String::from_utf8(result.stdout).unwrap().trim().to_string()
+}
+
+fn git_head(dir: &Path) -> String {
+    let result = StdCommand::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .expect("git rev-parse");
+    assert!(result.status.success());
+    String::from_utf8(result.stdout).unwrap().trim().to_string()
 }
 
 /// `git` wrapper without asserting silence (fork flow prints more).

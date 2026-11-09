@@ -326,6 +326,64 @@ fn has_group_or_other_permissions(_path: &std::path::Path) -> bool {
 mod tests {
     use super::*;
 
+    /// Exercise recovery against an actual native keychain entry. The write
+    /// failure itself is represented by the same durable fallback state as
+    /// auth login; no user's keychain settings or credentials are changed.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn native_file_fallback_recovery() {
+        #[cfg(target_os = "macos")]
+        if std::env::var_os("IFG_KEYRING_TEST").is_none() {
+            return;
+        }
+        struct EntryCleanup(String);
+        impl Drop for EntryCleanup {
+            fn drop(&mut self) {
+                let _ = crate::keyring::delete(&self.0);
+            }
+        }
+        let host = format!("ifg-native-fallback-{}", std::process::id());
+        let _cleanup = EntryCleanup(host.clone());
+        crate::keyring::store(&host, "old-native-test-credential").unwrap();
+        assert_eq!(
+            crate::keyring::load(&host).as_deref(),
+            Some("old-native-test-credential")
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hosts.toml");
+        let mut config = Config {
+            token_store: Some("keyring".into()),
+            ..Default::default()
+        };
+        config
+            .hosts
+            .insert(host.clone(), HostEntry::new("https://native-test.invalid"));
+        config.set_file_token(&host, "new-native-test-credential".into());
+        write_atomic(dir.path(), &path, &config).unwrap();
+        let loaded = load_from(&path).unwrap();
+        assert_eq!(
+            loaded.hosts[&host].token.as_deref(),
+            Some("new-native-test-credential")
+        );
+        write_atomic(dir.path(), &path, &loaded).unwrap();
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("new-native-test-credential"));
+        crate::keyring::store(&host, "new-native-test-credential").unwrap();
+        let mut config = loaded;
+        config.clear_token(&host);
+        write_atomic(dir.path(), &path, &config).unwrap();
+        let loaded = load_from(&path).unwrap();
+        assert_eq!(
+            loaded.hosts[&host].token.as_deref(),
+            Some("new-native-test-credential")
+        );
+        write_atomic(dir.path(), &path, &loaded).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("new-native-test-credential"));
+    }
+
     #[test]
     fn file_fallback_survives_keychain_recovery_and_config_updates() {
         let dir = tempfile::tempdir().unwrap();
