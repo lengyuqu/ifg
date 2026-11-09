@@ -1,0 +1,53 @@
+{
+  "source_commit": "1f31c8b08efe765d0fe8af00667bb547987e0933",
+  "version_marker": "Unreleased",
+  "workflow_run": "https://github.com/lengyuqu/ifg/actions/runs/42681756618",
+  "artifacts": [
+    {
+      "archive": "ifg-0.9.0-aarch64-apple-darwin.tar.gz",
+      "sha256": "eac0ea8688c3289e62ec474ecb07ae9d4ca80a243dc9b1d3a1cbe2f8ce51655e",
+      "checksum": "passed",
+      "man_page": "present",
+      "run_mode": "native macOS arm64",
+      "smoke": "passed"
+    },
+    {
+      "archive": "ifg-0.9.0-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "c45de6b4c10a35dfd4184a7def9178068de99a9180b3f36004f30e6c8b430096",
+      "checksum": "passed",
+      "man_page": "present",
+      "run_mode": "linux/arm64 container",
+      "smoke": "passed"
+    },
+    {
+      "archive": "ifg-0.9.0-x86_64-apple-darwin.tar.gz",
+      "sha256": "42364835a776bc6caf13f48e94e2e61f45682d5f3486d77988567f6a2e1953bc",
+      "checksum": "passed",
+      "man_page": "present",
+      "native_smoke": "passed in Intel macOS release job"
+    },
+    {
+      "archive": "ifg-0.9.0-x86_64-pc-windows-msvc.zip",
+      "sha256": "efd2dc48334e9eced00f05dc592dc6065bc258a2bdd154e271c675cc8cc6b122",
+      "checksum": "passed",
+      "man_page": "present",
+      "native_smoke": "passed in Windows release job"
+    },
+    {
+      "archive": "ifg-0.9.0-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "22e8e3bc57468a87ce94375363faa6be4b5c83df3ef9079823ed36ecdf03d8be",
+      "checksum": "passed",
+      "man_page": "present",
+      "run_mode": "linux/amd64 container",
+      "smoke": "passed"
+    }
+  ],
+  "validated_at": "2026-11-09T19:47:51.927835+00:00",
+  "manifest_source": "GitHub checksums job; downloaded combined candidate artifact",
+  "publish": "skipped; workflow_dispatch; no tag or Release created",
+  "native_jobs": {
+    "macos_x86_64": 129377840249,
+    "windows_x86_64": 129377840910
+  },
+  "linux_stdout_error": "Both Linux archives return exit 1 and an error for /dev/full"
+}

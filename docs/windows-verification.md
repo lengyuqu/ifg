@@ -2,6 +2,8 @@
 
 在 Windows 上逐项执行，确认已发布/待发布产物的行为。每项给出**命令**、**预期**和**判定方法**；任何一条不符即为缺陷，按末尾模板回报。
 
+> 本轮选择仅完成自动验证。具体 CI、原生凭据与安装包结果见 [Unreleased 验收记录](release-checklist.md)。V3 浏览器、V6 终端外观、V7 GUI 编辑器与 SmartScreen 提示仍需实机交互验收；自动测试通过不能勾选这些项目。
+
 > 覆盖范围：构建与门禁、凭据后端（Credential Manager）、`--web` 的打开方式与命令注入防护、路径段编码、配置并发写、终端行为、编辑器、发布产物。
 > 不在范围内：真实服务端 e2e（`scripts/e2e.sh` 只在 macOS runner 上跑），如需覆盖请在 Windows 上自建实例后执行 `cargo test -p ifg-e2e -- --ignored`。
 
@@ -21,6 +23,17 @@ cargo build --locked
 ```
 
 后续命令都在仓库根目录执行，二进制为 `.\target\debug\ifg.exe`（可用 `$ifg = '.\target\debug\ifg.exe'` 简化）。
+
+凭据和配置检查使用专用测试账号、测试 host 和临时配置目录。测试 host 不得与日常已登录的 host 相同：`XDG_CONFIG_HOME` 不隔离系统凭据管理器中按 host 保存的条目。
+
+```powershell
+$previousXdg = $env:XDG_CONFIG_HOME
+$testRoot = Join-Path $env:TEMP ('ifg-acceptance-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $testRoot | Out-Null
+$env:XDG_CONFIG_HOME = $testRoot
+```
+
+结束时先对本轮测试 host 执行 `auth logout` 清除测试凭据，再恢复 `$env:XDG_CONFIG_HOME = $previousXdg`。不要删除或修改其他 host 的凭据。
 
 ## V1 构建与门禁
 
@@ -45,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
 ### V2.1 钥匙串写入不落盘
 
 ```powershell
-$cfg = Join-Path $env:APPDATA 'ironforge\hosts.toml'
+$cfg = Join-Path $env:XDG_CONFIG_HOME 'ironforge\hosts.toml'
 New-Item -ItemType Directory -Force (Split-Path $cfg) | Out-Null
 'token_store = "keyring"' | Set-Content -Path $cfg -Encoding utf8
 'ifp_paste_your_pat_here' | & $ifg auth login --host https://your-forge.example.com --with-token
@@ -139,18 +152,17 @@ $env:IRONFORGE_PAT  = 'ifp_dummy'
 两个 `ifg auth login` 同时写同一份配置，验证不丢 host：
 
 ```powershell
-$env:XDG_CONFIG_HOME = Join-Path $env:TEMP 'ifg-concurrent'
-Remove-Item -Recurse -Force $env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue
+$env:XDG_CONFIG_HOME = Join-Path $testRoot 'concurrent'
 $cfg2 = Join-Path $env:XDG_CONFIG_HOME 'ironforge\hosts.toml'
 $exe = (Resolve-Path $ifg).Path
 
-Set-Content "$env:TEMP\t1.txt" -Value 'ifp_one' -NoNewline
-Set-Content "$env:TEMP\t2.txt" -Value 'ifp_two' -NoNewline
+Set-Content "$testRoot\t1.txt" -Value 'ifp_one' -NoNewline
+Set-Content "$testRoot\t2.txt" -Value 'ifp_two' -NoNewline
 
 $p1 = Start-Process -FilePath $exe -ArgumentList 'auth','login','--host','http://127.0.0.1:8935','--with-token' `
-      -RedirectStandardInput "$env:TEMP\t1.txt" -RedirectStandardOutput "$env:TEMP\o1.txt" -PassThru
+      -RedirectStandardInput "$testRoot\t1.txt" -RedirectStandardOutput "$testRoot\o1.txt" -PassThru
 $p2 = Start-Process -FilePath $exe -ArgumentList 'auth','login','--host','http://127.0.0.1:8936','--with-token' `
-      -RedirectStandardInput "$env:TEMP\t2.txt" -RedirectStandardOutput "$env:TEMP\o2.txt" -PassThru
+      -RedirectStandardInput "$testRoot\t2.txt" -RedirectStandardOutput "$testRoot\o2.txt" -PassThru
 Wait-Process -Id $p1.Id, $p2.Id
 Get-Content $cfg2
 ```

@@ -36,20 +36,28 @@ CNB PR 与 main push 均执行 `cargo-audit`，失败即为该流水线失败；
 - 修改接口拒绝非空的无效 JSON 响应；stdout 写入失败返回非零，BrokenPipe 保持正常结束。
 - 统一 JSON/模板支持规则、保留搜索扩展字段，并修复 doctor 的按主机凭据助手提示。
 - 增加原生 keyring 恢复验证和显式选择的 fork 镜像真实服务兼容性场景。
+- Windows 原生验收发现并修复协作模块条件编译与编辑器临时文件共享冲突；测试改用跨平台临时目录，并兼容 jq 的 CRLF 输出。
+- 自托管 CI 使用独立 `CARGO_HOME` 和缓存前缀，防止缓存清理删除 runner 用户已有工具或注册表凭据。
 
 ### 证据与边界
 
 | 项目 | 状态 | 证据或后续动作 |
 |---|---|---|
-| 核心修复源码 | 已提交 | `2ee746c45c4220edb0404dfeb0943011f0e6664f`；验收补充源码 `70c85734a48bcb34f903b23b2b0081020cb1f292` |
-| 本地核心门禁 | 通过 | 补充后 251 项测试；fmt、Clippy、man、依赖边界与 cargo-audit 通过 |
-| 固定基线 E2E | 通过 | `70c8573` 的干净检出，11 项通过；镜像 `sha256:257a6167ab94a4735abfe53060d758bbe080b36f0f419aed0950d8ac208fa627` |
-| macOS 原生 keyring | 通过 | `IFG_KEYRING_TEST=1 cargo test -p ifg --bin ifg native_ --locked -- --test-threads=1`，2 项通过；只操作独立测试条目。恢复测试构造写失败后的文件状态，并使用真实钥匙串读写，不锁定用户钥匙串 |
-| CNB CI | 已恢复并通过 | [`70c8573` 的完整门禁](https://cnb.cool/zdzso/ifg/-/build/logs/cnb-r0i-1k70oi6eu)；节点设为 1 核，工具链、审计、检查全部实际执行并成功 |
-| GitHub Linux / Windows CI | 待运行 | 发布前验证用途；需记录候选 SHA 对应的 run |
-| fork 删除场景 | 通过 | 干净 `70c8573`，`--fork-mirror` 专项 1 项通过：删除源分支、再删除 fork 仓库后，仍从目标镜像恢复相同 head SHA |
+| 候选源码 | 已提交并同步 | `1f31c8b08efe765d0fe8af00667bb547987e0933`；包含核心修复 `2ee746c`、验收补充 `70c8573`、Windows 修复 `dba2032` / `e69837a` 和 CI / 测试修正；候选已同步至 CNB、git233、GitHub 的 `main`，后续归档提交仅含文档 |
+| 本地核心门禁 | 通过 | 候选 `1f31c8b`，macOS 251 项测试；fmt、Clippy、man、依赖边界与 cargo-audit（263 个依赖、1430 条公告）通过 |
+| 固定基线 E2E | 通过 | `1f31c8b` 的干净检出，11 项通过；镜像 `sha256:257a6167ab94a4735abfe53060d758bbe080b36f0f419aed0950d8ac208fa627`，服务端提交 `7d27c2d519674194ab016bcfb8f13f235fe4ed81` |
+| macOS 原生 keyring | 通过 | 候选 `1f31c8b`：`IFG_KEYRING_TEST=1 cargo test -p ifg --bin ifg native_ --locked -- --test-threads=1`，2 项通过；只操作独立测试条目并检查清理。恢复测试构造写失败后的文件状态，并使用真实钥匙串读写，不锁定用户钥匙串 |
+| CNB CI | 已恢复并通过 | [`e69837a` 完整门禁](https://cnb.cool/zdzso/ifg/-/build/logs/cnb-kk6-1k70qn12p)：1 核节点，Linux 249 项测试及工具链、审计、检查全部成功；此前 [`70c8573`](https://cnb.cool/zdzso/ifg/-/build/logs/cnb-r0i-1k70oi6eu) 亦通过 |
+| 后续 CNB 同步 | 明确跳过重跑 | 验收时查询本月剩余 256 核秒，不足一次任务预留。`e69837a..1f31c8b` 只修改 CI、两个测试及 runner 文档，运行时代码和依赖完全相同；按 [CNB 跳过机制](https://docs.cnb.cool/en/build/skip-pipeline.html) 以 `git push -o ci.skip` 同步，最终文档提交使用 `[ci skip]`。跳过不算 CI 通过，候选精确 SHA 由 GitHub 验证 |
+| GitHub Linux / Windows CI | 通过 | [候选 `1f31c8b` 的完整运行](https://github.com/lengyuqu/ifg/actions/runs/42680895047)：Linux 249 项、Windows 244 项、隔离固定基线 E2E 11 项全部通过；Windows 原生凭据读写、删除及文件回退恢复测试实际执行成功 |
+| fork 删除场景 | 通过 | 干净 `1f31c8b`，`--fork-mirror` 专项 1 项通过：删除源分支、再删除 fork 仓库后，仍从目标镜像恢复 head `bbb676e4b84f7967075eff7e101b33d1cdced86a` |
 | 兼容服务端来源 | 已核对 | 从提交 `1c1559f32bd777cfb5c5c6279027f2ea60dfd75c` 的 `git archive` 构建；镜像 `sha256:a1900f680da2ebe9cc3f831e614761476a5e0d774adf62ef5e69f5ca651c0f8d`；能力接口报告相同提交、`build_dirty=false`；未修改 IronForge 工作区或部署 |
-| 本地 Unix 候选包 | 构建与哈希通过 | 4 个 tar.gz 和 man 页齐全；macOS arm64、Linux arm64/amd64 容器基本运行通过，Linux `/dev/full` 写入错误返回非零；本机无 Rosetta，macOS x86_64 运行留给 Intel GitHub runner |
-| 五平台 GitHub 候选产物 | 待运行 | 手动触发仅构建的 release workflow，合并 SHA256SUMS 并验证安装；不发布 Release |
+| 本地 Unix 候选包 | 历史补充通过 | `70c8573` 的 4 个 tar.gz 和 man 页齐全；macOS arm64、Linux arm64/amd64 容器基本运行通过，Linux `/dev/full` 写入错误返回非零；本机无 Rosetta，macOS x86_64 运行留给 Intel GitHub runner。最终候选以如下 GitHub 产物为准 |
+| 五平台 GitHub 候选产物 | 通过 | [手动候选构建](https://github.com/lengyuqu/ifg/actions/runs/42681756618)，源码 `1f31c8b`；Unix、Windows、checksums 均成功，`publish` 明确跳过。4 个 tar.gz、1 个 zip、统一 SHA256SUMS 已下载复核，与实际执行的安装包字节一致 |
+| 候选安装与运行 | 通过 | macOS x86_64 在 Intel runner、Windows x86_64 在 Windows runner 解压后运行 `--version` 并检查 man 页；macOS arm64 在本机、Linux arm64/amd64 在干净 Alpine 3.21 容器执行 `--version` 与 Bash completions；两个 Linux 包的 `/dev/full` 写入均返回错误及退出码 1。容器执行不代表物理 Linux 桌面验收 |
+
+五个包的文件名、SHA-256 与执行方式见 [产物验收明细](release-evidence-2026-11-10.json)。GitHub 合并制品名为 `candidate-1f31c8b08efe765d0fe8af00667bb547987e0933`；本机副本位于被 Git 忽略的 `dist/github-1f31c8b/`，包含官方 `SHA256SUMS` 和 `VALIDATION.json`。GitHub 构建缓存保存成功后，工作流完整结束为成功。
 
 候选构建不能代表正式发布。负责人选择本轮仅完成自动验证：Windows GUI、SmartScreen、浏览器与编辑器交互明确列为后续实机待办，不标记为通过。
+
+已有平台限制继续适用：Windows 安全协作会话文件存储尚不支持，见 [Windows 验证清单 V9](windows-verification.md)；本轮没有将其记作已实现或已验收功能。
