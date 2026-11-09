@@ -634,7 +634,7 @@ async fn pr_create_requires_pushed_branch() {
         .env("IRONFORGE_URL", "http://127.0.0.1:9")
         .env("XDG_CONFIG_HOME", home.path())
         .args(["-R", "alice/demo", "pr", "create", "-t", "t"])
-        .current_dir("/tmp")
+        .current_dir(home.path())
         .assert()
         .failure();
     let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
