@@ -449,3 +449,35 @@ async fn release_download_returns_the_streaming_response() {
     let body = response.bytes().await.unwrap();
     assert_eq!(body.as_ref(), b"binary-ish payload");
 }
+
+/// A tag with a slash must stay one path segment: unencoded it would become
+/// `/releases/tags/release/1`, a different route.
+#[tokio::test]
+async fn release_tag_is_one_encoded_segment() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex(
+            r"^/api/v1/repos/alice/demo/releases/tags/release%2F1$",
+        ))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/releases"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [],
+            "pagination": {"page": 1, "per_page": 100, "total": 0,
+                           "total_pages": 0, "has_next": false, "has_prev": false}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let release = client_for(&server)
+        .releases("alice", "demo")
+        .find_by_tag("release/1")
+        .await
+        .unwrap();
+    assert!(release.is_none());
+}

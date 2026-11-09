@@ -21,6 +21,7 @@ pub async fn run(args: &ApiArgs, cli: &Cli) -> Result<(), AppError> {
             "--jq and --template are mutually exclusive".into(),
         ));
     }
+    reject_parent_segments(&args.path)?;
     let ctx = bootstrap(cli)?;
     let client = &ctx.client;
 
@@ -73,6 +74,22 @@ pub async fn run(args: &ApiArgs, cli: &Cli) -> Result<(), AppError> {
         } else {
             output::print_bytes(&bytes);
         }
+    }
+    Ok(())
+}
+
+/// Reject `..` segments: the URL parser normalizes them, so `../health`
+/// would leave `/api/v1/` and `../../../` would reach the site root — paths
+/// the pass-through is not supposed to reach. Percent-encoded dots
+/// (`%2e%2e`) are normalized the same way and are rejected too.
+fn reject_parent_segments(path: &str) -> Result<(), AppError> {
+    let path_part = path.split('?').next().unwrap_or(path);
+    let is_parent =
+        |segment: &str| segment == ".." || segment.replace("%2e", ".").replace("%2E", ".") == "..";
+    if path_part.split(['/', '\\']).any(is_parent) {
+        return Err(AppError::Usage(format!(
+            "path must stay under /api/v1/; parent segments are not allowed: {path}"
+        )));
     }
     Ok(())
 }
@@ -177,6 +194,16 @@ fn read_json_body(file: &str) -> Result<Value, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parent_segments_are_rejected() {
+        assert!(reject_parent_segments("repos/alice/demo").is_ok());
+        assert!(reject_parent_segments("search?q=..").is_ok());
+        assert!(reject_parent_segments("../health").is_err());
+        assert!(reject_parent_segments("repos/../../users").is_err());
+        assert!(reject_parent_segments("%2e%2e/health").is_err());
+        assert!(reject_parent_segments("repos\\..\\users").is_err());
+    }
 
     #[test]
     fn fields_parse_into_pairs() {

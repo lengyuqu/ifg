@@ -46,9 +46,9 @@
 | 测试 | 120 个（wiremock 单测 + wiremock CLI 测试 + `ifg-client` 契约/模板/配置） |
 | TLS | `reqwest` 用 **rustls-tls-native-roots**；`tokio-tungstenite` 用 **rustls-tls-webpki-roots**。**没有 OpenSSL 依赖** → 不需要 vcpkg |
 | 颜色/TTY | `std::io::stdout().is_terminal()`，纯 std，可移植 |
-| 浏览器打开 | `crates/ifg/src/web.rs` 已有 `#[cfg(target_os = "windows")]` 分支（`cmd /c start`） |
+| 浏览器打开 | `crates/ifg/src/web.rs` 的 Windows 分支用 `rundll32 url.dll,FileProtocolHandler`：不经 `cmd.exe`，URL 里的 `&`/`\|` 不会被当成第二个命令 |
 | 分页器 | `crates/ifg/src/output.rs:93` 默认 `less -R`；spawn 失败会**自动退回直出**（不阻塞功能） |
-| 凭据后端 | `crates/ifg/src/keyring.rs`：macOS 走 `security`、Linux 走 `secret-tool`，**Windows 返回 None → 退化为配置文件明文** |
+| 凭据后端 | `crates/ifg/src/keyring.rs`：Windows 与 macOS 走 `keyring` crate（直接调用系统凭据 API，token 不进 argv）、Linux 走 `secret-tool`（token 走 stdin） |
 | CI | `.github/workflows/ci.yml`：`check`（ubuntu，跑 `scripts/check.sh`）+ `e2e`（自托管 macOS runner）。**无 windows job** |
 | 发布 | `scripts/release.sh` 只构建 apple×2 + musl×2，**无 Windows 目标** |
 

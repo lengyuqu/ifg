@@ -226,7 +226,19 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
     } else {
         None
     };
+    // `need_session` and `optional_session` decide whether a session file is
+    // loaded; the routing below reads `session_id`. A drift between the two
+    // lists used to panic here, so fail with a usage error instead.
+    if need_session && session.is_none() {
+        return Err(AppError::Usage(
+            "this operation requires --session-file".into(),
+        ));
+    }
     let encoded = |s: &str| collab_segment(s);
+    let session_id = session
+        .as_ref()
+        .map(|credentials| encoded(&credentials.id))
+        .unwrap_or_default();
     let (method, path, body) = match command {
         CollabCommand::Session { command } => match command {
             CollabSessionCommand::Start { .. } => unreachable!(),
@@ -243,17 +255,10 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
             ),
             CollabSessionCommand::Heartbeat => (
                 Method::POST,
-                format!(
-                    "sessions/{}/heartbeat",
-                    encoded(&session.as_ref().unwrap().id)
-                ),
+                format!("sessions/{session_id}/heartbeat"),
                 None,
             ),
-            CollabSessionCommand::End => (
-                Method::POST,
-                format!("sessions/{}/end", encoded(&session.as_ref().unwrap().id)),
-                None,
-            ),
+            CollabSessionCommand::End => (Method::POST, format!("sessions/{session_id}/end"), None),
         },
         CollabCommand::Task { command } => match command {
             CollabTaskCommand::List {

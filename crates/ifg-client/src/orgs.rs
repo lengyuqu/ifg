@@ -93,14 +93,22 @@ impl Orgs<'_> {
     /// `GET /orgs/{name}`.
     pub async fn get(&self, name: &str) -> Result<Organization, Error> {
         self.client
-            .send(crate::Method::GET, &format!("orgs/{name}"), None)
+            .send(
+                crate::Method::GET,
+                &format!("orgs/{}", crate::path_segment(name)),
+                None,
+            )
             .await
     }
 
     /// Raw JSON twin of [`Orgs::get`].
     pub async fn get_raw(&self, name: &str) -> Result<Value, Error> {
         self.client
-            .send(crate::Method::GET, &format!("orgs/{name}"), None)
+            .send(
+                crate::Method::GET,
+                &format!("orgs/{}", crate::path_segment(name)),
+                None,
+            )
             .await
     }
 
@@ -129,14 +137,22 @@ impl Orgs<'_> {
     /// `GET /orgs/{name}/members`.
     pub async fn members(&self, name: &str) -> Result<Vec<OrgMember>, Error> {
         self.client
-            .send(crate::Method::GET, &format!("orgs/{name}/members"), None)
+            .send(
+                crate::Method::GET,
+                &format!("orgs/{}/members", crate::path_segment(name)),
+                None,
+            )
             .await
     }
 
     /// Raw JSON twin of [`Orgs::members`].
     pub async fn members_raw(&self, name: &str) -> Result<Value, Error> {
         self.client
-            .send(crate::Method::GET, &format!("orgs/{name}/members"), None)
+            .send(
+                crate::Method::GET,
+                &format!("orgs/{}/members", crate::path_segment(name)),
+                None,
+            )
             .await
     }
 
@@ -154,7 +170,7 @@ impl Orgs<'_> {
         self.client
             .send(
                 crate::Method::POST,
-                &format!("orgs/{name}/members"),
+                &format!("orgs/{}/members", crate::path_segment(name)),
                 Some(&body),
             )
             .await
@@ -166,7 +182,7 @@ impl Orgs<'_> {
             .client
             .raw(
                 crate::Method::DELETE,
-                &format!("orgs/{name}/members/{user_id}"),
+                &format!("orgs/{}/members/{user_id}", crate::path_segment(name)),
                 None,
             )
             .await?;

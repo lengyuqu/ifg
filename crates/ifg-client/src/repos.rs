@@ -157,12 +157,14 @@ impl Repos<'_> {
     }
     /// List a user's or organization's repositories (paginated).
     pub fn list(&self, owner: &str) -> Paginator<Repo> {
-        self.client.paginate(format!("repos/{owner}"))
+        self.client
+            .paginate(format!("repos/{}", crate::path_segment(owner)))
     }
 
     /// Raw JSON twin of [`Repos::list`] for `--json` (D5).
     pub fn list_raw(&self, owner: &str) -> Paginator<Value> {
-        self.client.paginate(format!("repos/{owner}"))
+        self.client
+            .paginate(format!("repos/{}", crate::path_segment(owner)))
     }
 
     /// `GET /repos/{owner}/{name}`.
@@ -214,6 +216,29 @@ impl Repos<'_> {
     }
 }
 
+/// `repos/{owner}/{name}` with both segments encoded. Without this, an owner
+/// or name containing `..` or `?` rewrites the request route: `-R '../users'`
+/// used to reach `/api/v1/users`, and `-R 'x/y?per_page=1'` turned the rest
+/// of the path into a query string.
 pub(crate) fn repo_path(owner: &str, name: &str) -> String {
-    format!("repos/{owner}/{name}")
+    format!(
+        "repos/{}/{}",
+        crate::path_segment(owner),
+        crate::path_segment(name)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A segment must never be able to add a path separator or a query.
+    #[test]
+    fn repo_path_encodes_route_changing_segments() {
+        assert_eq!(repo_path("alice", "demo"), "repos/alice/demo");
+        assert_eq!(repo_path("..", "demo"), "repos/%252E%252E/demo");
+        assert_eq!(repo_path("../users", "demo"), "repos/..%2Fusers/demo");
+        assert_eq!(repo_path("a", "b?x=1"), "repos/a/b%3Fx%3D1");
+        assert_eq!(repo_path("a/b", "c"), "repos/a%2Fb/c");
+    }
 }

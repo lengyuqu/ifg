@@ -208,6 +208,8 @@ pub fn resolve_repo(
                      (expected https://host/git/OWNER/NAME)"
                 ))
             })?;
+            validate_repo_component(&remote.owner, "owner")?;
+            validate_repo_component(&remote.name, "repository name")?;
             return Ok(RepoContext {
                 owner: remote.owner,
                 name: remote.name,
@@ -223,6 +225,8 @@ pub fn resolve_repo(
                 "expected OWNER/NAME, got '{repo_arg}'"
             )));
         }
+        validate_repo_component(owner, "owner")?;
+        validate_repo_component(name, "repository name")?;
         return Ok(RepoContext {
             owner: owner.to_string(),
             name: name.to_string(),
@@ -240,6 +244,22 @@ pub fn resolve_repo(
     Err(crate::error::AppError::Usage(
         "no repository context: pass -R OWNER/NAME or run inside a git clone".into(),
     ))
+}
+
+/// A repository name that would change the request route is not a name: `/`,
+/// `\`, `?` and `#` end or split the path, and `.`/`..` are normalized away by
+/// the URL parser. Rejecting them here turns a silent route escape into a
+/// usage error; `repo_path` still encodes the segments as a second layer.
+fn validate_repo_component(value: &str, label: &str) -> Result<(), crate::error::AppError> {
+    let invalid = value.is_empty()
+        || matches!(value, "." | "..")
+        || value.contains(['/', '\\', '?', '#', '\0']);
+    if invalid {
+        return Err(crate::error::AppError::Usage(format!(
+            "invalid {label} '{value}': / \\ ? # and dot segments are not allowed"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -298,6 +318,36 @@ mod tests {
             let repo = resolve_repo(Some(input), &host).unwrap();
             assert_eq!(repo.owner, "alice");
             assert_eq!(repo.name, "demo");
+        }
+    }
+
+    #[test]
+    fn route_changing_repository_names_are_rejected() {
+        let host = ResolvedHost {
+            name: None,
+            url: "https://forge.example.com".into(),
+            token: None,
+        };
+        for input in [
+            "../users",
+            "a/../../users",
+            "a/b?per_page=1",
+            "a/b#frag",
+            "a/..",
+            "a/.",
+            "a/b\\c",
+        ] {
+            let error =
+                resolve_repo(Some(input), &host).expect_err(&format!("{input:?} must be rejected"));
+            assert_eq!(error.exit_code(), crate::error::EXIT_USAGE, "{input:?}");
+        }
+        // Ordinary names, including dots and dashes, still resolve.
+        for (input, owner, name) in [
+            ("alice/demo", "alice", "demo"),
+            ("a.b/c-d_e", "a.b", "c-d_e"),
+        ] {
+            let repo = resolve_repo(Some(input), &host).unwrap();
+            assert_eq!((repo.owner.as_str(), repo.name.as_str()), (owner, name));
         }
     }
 }

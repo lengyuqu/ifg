@@ -639,6 +639,13 @@ async fn checkout(
 /// `git fetch <url> <refspec>` with the PAT passed through GIT_CONFIG_* so it
 /// never lands in argv or a stored remote URL.
 fn fetch_ref(ctx: &super::CommandContext, url: &str, refspec: &str) -> Result<(), AppError> {
+    // The refspec comes from the server's PR row; git would read a leading
+    // `-` as an option instead of a ref.
+    if refspec.starts_with('-') {
+        return Err(AppError::Other(format!(
+            "refusing to fetch a refspec that parses as an option: {refspec}"
+        )));
+    }
     let mut fetch = std::process::Command::new("git");
     fetch.args(["fetch", url, refspec]);
     if let Some(token) = &ctx.host.token {

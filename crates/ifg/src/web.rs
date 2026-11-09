@@ -29,7 +29,16 @@ pub fn releases_url(base: &str, repo: &RepoContext) -> String {
 }
 
 /// Print and open `url`; returns Ok even when no opener exists.
+///
+/// Only http(s) reaches the opener: the URL is built from user-supplied
+/// owner/name segments, and a Windows `cmd /c start` cannot be made safe for
+/// arbitrary text.
 pub fn open(url: &str) -> Result<(), AppError> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(AppError::Usage(format!(
+            "refusing to open a non-HTTP URL: {url}"
+        )));
+    }
     println!("{url}");
     let result = open_command(url);
     match result {
@@ -46,10 +55,13 @@ fn open_command(url: &str) -> std::io::Result<std::process::Child> {
     std::process::Command::new("open").arg(url).spawn()
 }
 
+// No `cmd /c start`: cmd.exe re-parses its arguments, so a URL containing
+// `&` or `|` would run a second command. rundll32 takes the URL as a plain
+// argument and hands it to the shell handler without a command interpreter.
 #[cfg(target_os = "windows")]
 fn open_command(url: &str) -> std::io::Result<std::process::Child> {
-    std::process::Command::new("cmd")
-        .args(["/c", "start", ""])
+    std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler"])
         .arg(url)
         .spawn()
 }
@@ -68,6 +80,13 @@ mod tests {
             owner: "alice".into(),
             name: "demo".into(),
         }
+    }
+
+    #[test]
+    fn non_http_urls_are_refused_before_the_opener() {
+        assert!(open("javascript:alert(1)").is_err());
+        assert!(open("file:///etc/passwd").is_err());
+        assert!(open("not a url").is_err());
     }
 
     #[test]

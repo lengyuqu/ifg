@@ -26,11 +26,16 @@ tracing-subscriber = { workspace = true }
 url = { workspace = true }
 tempfile = { workspace = true }
 
-# Windows Credential Manager backend. `windows-native` is a safe wrapper over
-# CredRead/CredWrite; `unsafe_code = "forbid"` applies to this workspace, not
-# to dependencies.
-[target.'cfg(windows)'.dependencies]
-keyring = { version = "3", default-features = false, features = ["windows-native"] }
+# Native credential stores. Windows Credential Manager and the macOS keychain
+# are reached through the `keyring` crate, which calls the platform API
+# directly: the PAT never becomes a process argument. The macOS `security`
+# CLI would need `-w <token>`, which any local process can read with `ps`.
+# `unsafe_code = "forbid"` applies to this workspace, not to dependencies.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+keyring = { version = "3", default-features = false, features = [
+    "windows-native",
+    "apple-native",
+] }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

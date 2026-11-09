@@ -1,114 +1,84 @@
 //! Optional keychain backend for tokens (design doc D6): with
 //! `token_store = "keyring"` in `hosts.toml` the PAT never lands in the file.
 //!
-//! Implemented through the platform CLI (`security` on macOS, `secret-tool`
-//! on Linux) and the Windows Credential Manager (via the `keyring` crate) so
-//! the client keeps its tiny dependency budget; when no backend answers,
-//! callers degrade to the config file with a warning.
+//! Windows and macOS go through the `keyring` crate, which calls the native
+//! credential API in-process. That matters for secrecy: the macOS `security`
+//! CLI only accepts the password as `-w <token>`, so the PAT would show up in
+//! `ps` for every local user — the same leak `git.rs` avoids by passing the
+//! token through `GIT_CONFIG_*` instead of argv.
+//!
+//! Linux uses `secret-tool` with the token on stdin, which is equally safe.
+//! When no backend answers, callers degrade to the config file with a warning.
 
 const SERVICE: &str = "ifg";
 
-#[cfg(windows)]
-fn windows_entry(host_key: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(SERVICE, host_key).map_err(|e| format!("Windows Credential Manager: {e}"))
+#[cfg(any(windows, target_os = "macos"))]
+fn native_entry(host_key: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(SERVICE, host_key).map_err(|e| format!("system keychain: {e}"))
 }
 
 /// Store (or replace) the token for `host_key`.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn store(host_key: &str, token: &str) -> Result<(), String> {
-    windows_entry(host_key)?
+    native_entry(host_key)?
         .set_password(token)
-        .map_err(|e| format!("Windows Credential Manager: {e}"))
+        .map_err(|e| format!("system keychain: {e}"))
 }
 
 /// Fetch the token for `host_key`.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn load(host_key: &str) -> Option<String> {
-    let entry = windows_entry(host_key).ok()?;
-    entry.get_password().ok().filter(|token| !token.is_empty())
+    native_entry(host_key)
+        .ok()?
+        .get_password()
+        .ok()
+        .filter(|token| !token.is_empty())
 }
 
 /// Remove the token for `host_key` (missing entries are fine).
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn delete(host_key: &str) -> Result<(), String> {
-    match windows_entry(host_key)?.delete_credential() {
+    match native_entry(host_key)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Windows Credential Manager: {e}")),
+        Err(e) => Err(format!("system keychain: {e}")),
     }
 }
 
-#[cfg(not(windows))]
-enum Backend {
-    MacOsSecurity,
-    SecretTool,
-}
-
-#[cfg(not(windows))]
-fn backend() -> Option<Backend> {
-    fn exists(program: &str) -> bool {
-        std::process::Command::new("sh")
-            .args(["-c", &format!("command -v {program} >/dev/null 2>&1")])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-    if cfg!(target_os = "macos") && exists("security") {
-        return Some(Backend::MacOsSecurity);
-    }
-    if cfg!(target_os = "linux") && exists("secret-tool") {
-        return Some(Backend::SecretTool);
-    }
-    None
+#[cfg(all(unix, not(target_os = "macos")))]
+fn secret_tool_available() -> bool {
+    std::process::Command::new("sh")
+        .args(["-c", "command -v secret-tool >/dev/null 2>&1"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Store (or replace) the token for `host_key`.
-#[cfg(not(windows))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn store(host_key: &str, token: &str) -> Result<(), String> {
-    match backend() {
-        Some(Backend::MacOsSecurity) => run(
-            "security",
-            &[
-                "add-generic-password",
-                "-a",
-                host_key,
-                "-s",
-                SERVICE,
-                "-w",
-                token,
-                "-U",
-            ],
-            None,
-        ),
-        Some(Backend::SecretTool) => run(
-            "secret-tool",
-            &[
-                "store",
-                "--label",
-                &format!("{SERVICE}: {host_key}"),
-                "service",
-                SERVICE,
-                "host",
-                host_key,
-            ],
-            Some(token),
-        ),
-        None => Err("no keychain backend (security / secret-tool) found".into()),
+    if !secret_tool_available() {
+        return Err("no keychain backend (secret-tool) found".into());
     }
+    let label = format!("{SERVICE}: {host_key}");
+    run(
+        "secret-tool",
+        &[
+            "store", "--label", &label, "service", SERVICE, "host", host_key,
+        ],
+        Some(token),
+    )
 }
 
 /// Fetch the token for `host_key`.
-#[cfg(not(windows))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn load(host_key: &str) -> Option<String> {
-    let output = match backend() {
-        Some(Backend::MacOsSecurity) => std::process::Command::new("security")
-            .args(["find-generic-password", "-a", host_key, "-s", SERVICE, "-w"])
-            .output(),
-        Some(Backend::SecretTool) => std::process::Command::new("secret-tool")
-            .args(["lookup", "service", SERVICE, "host", host_key])
-            .output(),
-        None => return None,
+    if !secret_tool_available() {
+        return None;
     }
-    .ok()?;
+    let output = std::process::Command::new("secret-tool")
+        .args(["lookup", "service", SERVICE, "host", host_key])
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -117,26 +87,18 @@ pub fn load(host_key: &str) -> Option<String> {
 }
 
 /// Remove the token for `host_key` (missing entries are fine).
-#[cfg(not(windows))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn delete(host_key: &str) -> Result<(), String> {
-    match backend() {
-        Some(Backend::MacOsSecurity) => {
-            let _ = std::process::Command::new("security")
-                .args(["delete-generic-password", "-a", host_key, "-s", SERVICE])
-                .status();
-            Ok(())
-        }
-        Some(Backend::SecretTool) => {
-            let _ = std::process::Command::new("secret-tool")
-                .args(["clear", "service", SERVICE, "host", host_key])
-                .status();
-            Ok(())
-        }
-        None => Ok(()),
+    if !secret_tool_available() {
+        return Ok(());
     }
+    let _ = std::process::Command::new("secret-tool")
+        .args(["clear", "service", SERVICE, "host", host_key])
+        .status();
+    Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn run(program: &str, args: &[&str], stdin: Option<&str>) -> Result<(), String> {
     use std::io::Write;
     let mut command = std::process::Command::new(program);
@@ -161,10 +123,17 @@ fn run(program: &str, args: &[&str], stdin: Option<&str>) -> Result<(), String> 
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod tests {
     #[test]
-    fn windows_credential_roundtrip() {
+    fn native_credential_roundtrip() {
+        // The macOS keychain needs an unlocked login session; headless CI
+        // runners have none, so require an explicit opt-in there. Windows
+        // Credential Manager works without one.
+        #[cfg(target_os = "macos")]
+        if std::env::var_os("IFG_KEYRING_TEST").is_none() {
+            return;
+        }
         let host = format!("ifg-test-{}", std::process::id());
         super::store(&host, "secret-token").expect("store");
         assert_eq!(super::load(&host).as_deref(), Some("secret-token"));

@@ -26,6 +26,10 @@ mod users;
 mod wiki;
 
 pub use ci::{Ci, Job, Pipeline, PipelineDetail, Stage, StageWithJobs};
+/// Path-segment encoder for resource routes (`repos/{owner}/{name}`, `orgs/{name}`).
+/// Untrusted segments must never be able to change the route, so every
+/// user-supplied segment goes through the same encoder as collaboration IDs.
+pub(crate) use collab::segment as path_segment;
 pub use collab::{segment as collab_segment, Collaboration, SessionCredentials, StartedSession};
 pub use contract::USED_PATHS;
 pub use error::Error;

@@ -140,7 +140,9 @@ impl Releases<'_> {
     /// `GET …/releases/tags/{tag}`. Servers without the route answer 404,
     /// so a miss falls back to paging through the listing (older behavior).
     pub async fn get_by_tag(&self, tag: &str) -> Result<Option<Release>, Error> {
-        let path = format!("{}/tags/{tag}", self.releases_path());
+        // Tags come from the command line and may contain `/` or `?`
+        // (`release-1/rc`); unencoded they would change the route.
+        let path = format!("{}/tags/{}", self.releases_path(), crate::path_segment(tag));
         match self
             .client
             .send::<Release>(crate::Method::GET, &path, None)

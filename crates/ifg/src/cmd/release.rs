@@ -356,15 +356,31 @@ async fn download_asset(
     let mut hasher = Sha256::new();
     let mut stream = response.bytes_stream();
     let mut size: u64 = 0;
+    // Every failure below must remove the partial file: leaving it behind
+    // means a retry sees a stale `.part` and a `--clobber` run silently
+    // clobbers something the user never saw completed.
+    let mut write_error: Option<AppError> = None;
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AppError::Other(format!("download interrupted: {e}")))?;
-        hasher.update(&chunk);
-        size += chunk.len() as u64;
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| AppError::Io(format!("write failed: {e}")))?;
+        match chunk {
+            Ok(chunk) => {
+                hasher.update(&chunk);
+                size += chunk.len() as u64;
+                if let Err(e) = file.write_all(&chunk).await {
+                    write_error = Some(AppError::Io(format!("write failed: {e}")));
+                    break;
+                }
+            }
+            Err(e) => {
+                write_error = Some(AppError::Other(format!("download interrupted: {e}")));
+                break;
+            }
+        }
     }
     drop(file);
+    if let Some(error) = write_error {
+        let _ = tokio::fs::remove_file(&part_path).await;
+        return Err(error);
+    }
 
     let actual = format!("{:x}", hasher.finalize());
     match expected {
@@ -385,9 +401,13 @@ async fn download_asset(
     }
 
     let final_path = std::path::PathBuf::from(target);
-    tokio::fs::rename(&part_path, &final_path)
-        .await
-        .map_err(|e| AppError::Io(format!("could not finalize {}: {e}", final_path.display())))?;
+    if let Err(e) = tokio::fs::rename(&part_path, &final_path).await {
+        let _ = tokio::fs::remove_file(&part_path).await;
+        return Err(AppError::Io(format!(
+            "could not finalize {}: {e}",
+            final_path.display()
+        )));
+    }
     println!("Downloaded {target} ({size} bytes)");
     Ok(())
 }

@@ -72,10 +72,11 @@ impl Search<'_> {
         per_page: u64,
     ) -> Result<SearchPage, Error> {
         let encoded = urlencode(query);
+        let type_encoded = urlencode(search_type);
         self.client
             .send(
                 crate::Method::GET,
-                &format!("search?q={encoded}&type={search_type}&page={page}&per_page={per_page}"),
+                &format!("search?q={encoded}&type={type_encoded}&page={page}&per_page={per_page}"),
                 None,
             )
             .await
@@ -90,10 +91,11 @@ impl Search<'_> {
         per_page: u64,
     ) -> Result<Value, Error> {
         let encoded = urlencode(query);
+        let type_encoded = urlencode(search_type);
         self.client
             .send(
                 crate::Method::GET,
-                &format!("search?q={encoded}&type={search_type}&page={page}&per_page={per_page}"),
+                &format!("search?q={encoded}&type={type_encoded}&page={page}&per_page={per_page}"),
                 None,
             )
             .await
