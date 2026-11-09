@@ -41,6 +41,8 @@ IFG_E2E_IMAGE=<已核对来源的兼容镜像> bash scripts/e2e-docker.sh --fork
 
 CI 不执行 `docker compose up`，不替换已有部署，不复用个人 PAT。所有新建账号、仓库和测试 Release 都位于隔离容器的临时数据目录内。
 
+自托管 job 的 `CARGO_HOME` 指向 runner 临时目录，使用独立缓存前缀。缓存清理不得作用于用户的 `~/.cargo`，否则会清除已有 Cargo 工具和注册表凭据。
+
 仍可手动连接专用测试实例：`IFG_E2E_URL` / `IFG_E2E_PAT` 配合 `scripts/e2e.sh`。这是与自动 CI 不同的操作，须自行确认实例和测试账号；禁止指向生产数据。
 
 ## 5. 关闭

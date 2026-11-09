@@ -1,9 +1,6 @@
 # Continuous integration: the same checks the pre-commit script runs.
 #
-# e2e (`scripts/e2e.sh`) needs a live IronForge instance and is not wired
-# here yet: the reference instance lives on an intranet host, so the job
-# belongs on a self-hosted runner (add `runs-on: [self-hosted]` + a step
-# that exports IFG_E2E_URL/IFG_E2E_PAT).
+# e2e runs against a disposable pinned Docker instance on an opt-in runner.
 name: ci
 
 on:
@@ -52,7 +49,7 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
-          cargo test -p ifg -p ifg-client
+          cargo test -p ifg -p ifg-client --locked --no-fail-fast
 
   # e2e uses a disposable instance of the pinned local Docker image. Enable
   # IFG_E2E_ENABLED on a Docker-capable runner carrying the `ifg-e2e` label.
@@ -70,9 +67,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Cache cleanup must never touch the runner user's installed Cargo tools
+      # or registry credentials. A separate prefix also excludes old home caches.
+      - name: isolate Cargo state from the runner user
+        run: echo "CARGO_HOME=$RUNNER_TEMP/ifg-cargo" >> "$GITHUB_ENV"
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ifg-isolated-v1
 
       - name: build the CLI the tests drive
         run: cargo build -p ifg --locked

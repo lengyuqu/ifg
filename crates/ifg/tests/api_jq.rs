@@ -52,7 +52,7 @@ async fn filters_json_and_reports_invalid_expression() {
         .assert()
         .success();
     assert_eq!(
-        String::from_utf8_lossy(&result.get_output().stdout),
+        String::from_utf8_lossy(&result.get_output().stdout).replace("\r\n", "\n"),
         "beta\n"
     );
     let result = command(&server, &home)
