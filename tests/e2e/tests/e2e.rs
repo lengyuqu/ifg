@@ -1457,6 +1457,97 @@ async fn wiki_page_lifecycle() {
     cleanup(&h, &[name]).await;
 }
 
+/// `release create → view → download → edit → delete` against the real
+/// server: the download path is the only place that exercises the streaming
+/// SHA-256 check and the `.part` → final rename.
+#[tokio::test]
+#[ignore = "needs a live IronForge (scripts/e2e.sh)"]
+async fn release_lifecycle_uploads_verifies_and_deletes() {
+    let h = harness().await;
+    let name = format!("{}-release", run_id());
+    let repo = format!("{}/{}", h.user, name);
+    h.run_ok(&["repo", "create", &name, "--private", "--init"]);
+
+    let work = h.home_path.join("release-work");
+    std::fs::create_dir_all(&work).unwrap();
+    let asset = work.join("ifg-e2e-asset.bin");
+    let payload: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&asset, &payload).unwrap();
+
+    let tag = "v0.0.1-rc.1";
+    let created = h.run_ok(&[
+        "-R",
+        &repo,
+        "release",
+        "create",
+        tag,
+        "-n",
+        "e2e notes",
+        asset.to_str().unwrap(),
+    ]);
+    assert!(created.contains(tag), "create output: {created}");
+    assert!(
+        created.contains("ifg-e2e-asset.bin"),
+        "upload output: {created}"
+    );
+
+    let viewed: Value =
+        serde_json::from_str(&h.run_ok(&["--json", "-R", &repo, "release", "view", tag])).unwrap();
+    assert_eq!(viewed["tag_name"], tag);
+    assert_eq!(viewed["body"], "e2e notes");
+    let assets = viewed["assets"].as_array().expect("assets array");
+    assert_eq!(assets.len(), 1, "assets: {assets:?}");
+    assert_eq!(assets[0]["filename"], "ifg-e2e-asset.bin");
+    assert_eq!(assets[0]["size"].as_u64(), Some(payload.len() as u64));
+
+    // Download into an empty directory: the client hashes while streaming,
+    // compares with the recorded digest, and only then renames `.part`.
+    let download_dir = h.home_path.join("release-download");
+    std::fs::create_dir_all(&download_dir).unwrap();
+    let out = h
+        .ifg()
+        .args(["-R", &repo, "release", "download", tag, "-p", "ifg-e2e-*"])
+        .current_dir(&download_dir)
+        .assert()
+        .success();
+    assert!(
+        String::from_utf8_lossy(&out.get_output().stdout).contains("Downloaded ifg-e2e-asset.bin"),
+        "download output"
+    );
+    assert_eq!(
+        std::fs::read(download_dir.join("ifg-e2e-asset.bin")).unwrap(),
+        payload
+    );
+    assert!(
+        !download_dir.join("ifg-e2e-asset.bin.part").exists(),
+        "the .part file must be gone after a successful download"
+    );
+
+    let edited = h.run_ok(&[
+        "-R",
+        &repo,
+        "release",
+        "edit",
+        tag,
+        "-n",
+        "updated notes",
+        "--prerelease",
+    ]);
+    assert!(edited.contains("Updated release"), "edit output: {edited}");
+    let after: Value =
+        serde_json::from_str(&h.run_ok(&["--json", "-R", &repo, "release", "view", tag])).unwrap();
+    assert_eq!(after["is_prerelease"], true);
+    assert_eq!(after["body"], "updated notes");
+
+    h.run_ok(&["-R", &repo, "release", "delete", tag, "--yes"]);
+    h.ifg()
+        .args(["-R", &repo, "release", "view", tag])
+        .assert()
+        .code(8);
+
+    cleanup(&h, &[name]).await;
+}
+
 async fn org_chain(harness: &Harness, org: &str, member: &str) -> Result<(), String> {
     let out = harness.run_ok(&["org", "create", org, "-d", "e2e org"]);
     assert!(out.contains("Created organization"), "create: {out}");

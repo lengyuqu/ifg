@@ -144,11 +144,17 @@ pub fn save(config: &Config) -> Result<(), ConfigError> {
         )));
     };
     fs::create_dir_all(dir)?;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&path)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    // Mode applies at creation time: without it a fresh file is 0644 under the
+    // usual umask until `tighten_permissions` runs, which is a window in which
+    // another local user could read the token.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
     tighten_permissions(&path)?;
     let text = toml::to_string_pretty(config).map_err(|e| ConfigError::Parse {
         path: path.clone(),
@@ -246,6 +252,23 @@ mod tests {
             "https://other.example.com",
             "forge.example.com"
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tighten_permissions_removes_group_and_other_bits() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hosts.toml");
+        std::fs::write(&path, "token = 'x'").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(has_group_or_other_permissions(&path));
+
+        tighten_permissions(&path).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "token files must not be group/other readable");
+        assert!(!has_group_or_other_permissions(&path));
     }
 
     #[test]

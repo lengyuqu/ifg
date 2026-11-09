@@ -205,7 +205,16 @@ pub fn print_template(items: &[serde_json::Value], template: &str) {
 
 /// Print a JSON value with two-space indent (EPIPE-tolerant).
 pub fn print_json(value: &serde_json::Value) {
-    let text = serde_json::to_string_pretty(value).unwrap_or_default();
+    let text = match serde_json::to_string_pretty(value) {
+        Ok(text) => text,
+        // A `Value` cannot hold NaN/Infinity, so this is unreachable today;
+        // print `null` and a diagnostic rather than an empty document that a
+        // script would read as "the server returned nothing".
+        Err(error) => {
+            eprintln!("ifg: could not encode JSON: {error}");
+            "null".to_string()
+        }
+    };
     let _ = std::io::stdout().write_all(text.as_bytes());
     let _ = std::io::stdout().write_all(b"\n");
 }
