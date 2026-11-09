@@ -141,7 +141,7 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 ## 配置与凭据
 
-- 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`；Windows 默认 `%APPDATA%\ironforge\hosts.toml`（POSIX 的 0600 告警不适用，权限由用户目录 ACL 控制）
+- 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`；Windows 默认 `%APPDATA%\ironforge\hosts.toml`（POSIX 的 0600 告警不适用，权限由用户目录 ACL 控制）。写入是「临时文件 + 原子替换」，并对同目录的 `.hosts.toml.lock` 加排他锁，多个 `ifg auth` 并发执行不会互相覆盖
 - 钥匙串（可选）：`token_store = "keyring"` 时 PAT 存系统钥匙串（macOS 钥匙串 / Linux `secret-tool` / Windows 凭据管理器），不落文件；macOS 与 Windows 直接调用系统凭据 API，token 不会出现在进程参数里
 - `--json` 输出服务端原始字段；`-q/--template` 走轻量子集（`{{.field}}`、`{{.a.b}}`、`{{range .list}}…{{end}}`，列表自动逐项渲染）
 - 管道输出自动关闭颜色与相对时间；`pr diff` 在终端里上色并走分页器

@@ -4,14 +4,14 @@
 //! file with wider permissions is loaded but its tokens are refused
 //! (`*.ai/guardrails.md` credential policy).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_host: Option<String>,
@@ -21,12 +21,36 @@ pub struct Config {
     pub token_store: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub hosts: BTreeMap<String, HostEntry>,
+    /// Host keys whose token was read from the keychain in this process.
+    /// They must never be written back: the file would then hold a plaintext
+    /// copy of a secret the user asked to keep in the keychain.
+    #[serde(skip)]
+    keyring_tokens: BTreeSet<String>,
 }
 
 impl Config {
     /// Whether tokens belong in the system keychain instead of the file.
     pub fn uses_keyring(&self) -> bool {
         self.token_store.as_deref() == Some("keyring")
+    }
+
+    /// Keep `token` in the file for this host. Used when the keychain is
+    /// selected but unavailable, so the fallback is not cleared by
+    /// [`for_disk`] on save.
+    pub fn set_file_token(&mut self, key: &str, token: String) {
+        if let Some(entry) = self.hosts.get_mut(key) {
+            entry.token = Some(token);
+        }
+        self.keyring_tokens.remove(key);
+    }
+
+    /// Drop this host's token from the in-memory config as well as from the
+    /// set that must never be written back.
+    pub fn clear_token(&mut self, key: &str) {
+        if let Some(entry) = self.hosts.get_mut(key) {
+            entry.token = None;
+        }
+        self.keyring_tokens.remove(key);
     }
 }
 
@@ -95,16 +119,20 @@ pub fn config_path() -> Option<PathBuf> {
 /// Load the config. A missing file yields an empty config. When the file is
 /// more permissive than 0600, a warning is printed and tokens are dropped.
 pub fn load() -> Result<Config, ConfigError> {
-    let Some(path) = config_path() else {
-        return Ok(Config::default());
-    };
+    match config_path() {
+        Some(path) => load_from(&path),
+        None => Ok(Config::default()),
+    }
+}
+
+fn load_from(path: &Path) -> Result<Config, ConfigError> {
     if !path.exists() {
         return Ok(Config::default());
     }
-    let insecure = has_group_or_other_permissions(&path);
-    let text = fs::read_to_string(&path)?;
+    let insecure = has_group_or_other_permissions(path);
+    let text = fs::read_to_string(path)?;
     let mut config: Config = toml::from_str(&text).map_err(|e| ConfigError::Parse {
-        path: path.clone(),
+        path: path.to_path_buf(),
         message: e.to_string(),
     })?;
     if insecure {
@@ -118,51 +146,118 @@ pub fn load() -> Result<Config, ConfigError> {
             entry.token = None;
         }
     }
-    // Keychain-backed tokens: the file only carries a marker-free entry.
+    // Keychain-backed tokens: the file only carries a marker-free entry. The
+    // keys are remembered so a later save never writes them back to disk.
     if config.uses_keyring() {
-        for (key, entry) in config.hosts.iter_mut() {
-            if let Some(token) = crate::keyring::load(key) {
-                entry.token = Some(token);
+        let keys: Vec<String> = config.hosts.keys().cloned().collect();
+        for key in keys {
+            if let Some(token) = crate::keyring::load(&key) {
+                if let Some(entry) = config.hosts.get_mut(&key) {
+                    entry.token = Some(token);
+                }
+                config.keyring_tokens.insert(key);
             }
         }
     }
     Ok(config)
 }
 
-/// Write the config, creating parent directories (0600 on POSIX).
-pub fn save(config: &Config) -> Result<(), ConfigError> {
-    let Some(path) = config_path() else {
-        return Err(ConfigError::Io(std::io::Error::other(if cfg!(windows) {
+/// Read-modify-write under an exclusive lock. Two `ifg auth` runs that touch
+/// different hosts must not drop each other's entries: the load and the write
+/// happen inside one lock, and the write is atomic.
+///
+/// The lock is a separate `.hosts.toml.lock` file because the rename in
+/// [`write_atomic`] replaces the inode the config lock would be held on.
+pub fn update<T>(
+    change: impl FnOnce(&mut Config) -> Result<T, ConfigError>,
+) -> Result<T, ConfigError> {
+    let (dir, path) = config_locations()?;
+    fs::create_dir_all(&dir)?;
+    update_at(&dir, &path, change)
+}
+
+fn update_at<T>(
+    dir: &Path,
+    path: &Path,
+    change: impl FnOnce(&mut Config) -> Result<T, ConfigError>,
+) -> Result<T, ConfigError> {
+    let _lock = lock(dir)?;
+    let mut config = load_from(path)?;
+    let value = change(&mut config)?;
+    write_atomic(dir, path, &config)?;
+    Ok(value)
+}
+
+fn config_locations() -> Result<(PathBuf, PathBuf), ConfigError> {
+    let path = config_path().ok_or_else(|| {
+        ConfigError::Io(std::io::Error::other(if cfg!(windows) {
             "neither XDG_CONFIG_HOME nor APPDATA is set"
         } else {
             "neither XDG_CONFIG_HOME nor HOME is set"
-        })));
-    };
-    let Some(dir) = path.parent() else {
-        return Err(ConfigError::Io(std::io::Error::other(
-            "invalid config path",
-        )));
-    };
-    fs::create_dir_all(dir)?;
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    // Mode applies at creation time: without it a fresh file is 0644 under the
-    // usual umask until `tighten_permissions` runs, which is a window in which
-    // another local user could read the token.
+        }))
+    })?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| ConfigError::Io(std::io::Error::other("invalid config path")))?
+        .to_path_buf();
+    Ok((dir, path))
+}
+
+fn lock(dir: &Path) -> Result<fs::File, ConfigError> {
+    let path = dir.join(".hosts.toml.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        use std::os::unix::fs::PermissionsExt;
+        let _ = file.set_permissions(fs::Permissions::from_mode(0o600));
     }
-    let mut file = options.open(&path)?;
-    tighten_permissions(&path)?;
-    let text = toml::to_string_pretty(config).map_err(|e| ConfigError::Parse {
-        path: path.clone(),
+    // Blocking: a second `ifg auth` waits for the first to finish rather than
+    // clobbering it. The lock is released when `file` is dropped.
+    file.lock()?;
+    Ok(file)
+}
+
+fn write_atomic(dir: &Path, path: &Path, config: &Config) -> Result<(), ConfigError> {
+    let disk = for_disk(config);
+    let text = toml::to_string_pretty(&disk).map_err(|e| ConfigError::Parse {
+        path: path.to_path_buf(),
         message: e.to_string(),
     })?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".hosts-")
+        .suffix(".toml")
+        .tempfile_in(dir)?;
+    // `tempfile` creates 0600 already; set it explicitly so the guarantee does
+    // not depend on that detail.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temp.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    temp.write_all(text.as_bytes())?;
+    temp.as_file().sync_all()?;
+    temp.persist(path)
+        .map_err(|error| ConfigError::Io(error.error))?;
     Ok(())
+}
+
+/// The copy that may be written to disk: tokens loaded from the keychain are
+/// cleared, because the file must never hold a secret the user put in the
+/// keychain (a `logout` of one host used to persist every other host's PAT).
+fn for_disk(config: &Config) -> Config {
+    let mut disk = config.clone();
+    for key in &disk.keyring_tokens {
+        if let Some(entry) = disk.hosts.get_mut(key) {
+            entry.token = None;
+        }
+    }
+    disk.keyring_tokens.clear();
+    disk
 }
 
 /// Config key for a URL: `host` or `host:port` (non-default ports only).
@@ -193,15 +288,6 @@ fn has_group_or_other_permissions(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(unix)]
-fn tighten_permissions(path: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    if fs::metadata(path)?.permissions().mode() & 0o077 != 0 {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
-}
-
 // Windows ACLs are not POSIX mode bits. Access is governed by the ACL inherited
 // from the user profile directory, which is private to the user by default, so
 // the group/other warning does not apply and no tightening is needed. Returning
@@ -210,11 +296,6 @@ fn tighten_permissions(path: &std::path::Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn has_group_or_other_permissions(_path: &std::path::Path) -> bool {
     false
-}
-
-#[cfg(not(unix))]
-fn tighten_permissions(_path: &std::path::Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]
@@ -256,19 +337,85 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn tighten_permissions_removes_group_and_other_bits() {
+    fn write_atomic_creates_a_private_file_and_no_litter() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("hosts.toml");
-        std::fs::write(&path, "token = 'x'").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(has_group_or_other_permissions(&path));
+        let mut config = Config::default();
+        config
+            .hosts
+            .insert("h".into(), HostEntry::new("https://h.example.com"));
 
-        tighten_permissions(&path).unwrap();
+        write_atomic(dir.path(), &path, &config).unwrap();
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "token files must not be group/other readable");
         assert!(!has_group_or_other_permissions(&path));
+        assert!(load_from(&path).unwrap().hosts.contains_key("h"));
+
+        let leftovers: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "hosts.toml")
+            .collect();
+        assert!(leftovers.is_empty(), "leftover files: {leftovers:?}");
+    }
+
+    /// A token read from the keychain must never be written back: `logout` of
+    /// one host used to persist every other host's PAT in plaintext.
+    #[test]
+    fn keyring_tokens_never_reach_the_file() {
+        let mut config = Config {
+            token_store: Some("keyring".into()),
+            ..Default::default()
+        };
+        let mut entry = HostEntry::new("https://a.example.com");
+        entry.token = Some("ifp_from_keyring".into());
+        config.hosts.insert("a".into(), entry);
+        config.keyring_tokens.insert("a".into());
+
+        let disk = for_disk(&config);
+        assert!(disk.hosts["a"].token.is_none());
+        // The in-memory copy keeps the token for the rest of this run.
+        assert_eq!(config.hosts["a"].token.as_deref(), Some("ifp_from_keyring"));
+    }
+
+    /// Two writers that touch different hosts must both survive: the read and
+    /// the write happen under one lock, so the second one cannot overwrite the
+    /// first with a stale snapshot.
+    #[test]
+    fn concurrent_updates_keep_every_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hosts.toml");
+        let spawn = |prefix: &'static str, start: usize| {
+            let dir = dir.path().to_path_buf();
+            let path = path.clone();
+            std::thread::spawn(move || {
+                for index in start..start + 10 {
+                    update_at(&dir, &path, |config| {
+                        config.hosts.insert(
+                            format!("{prefix}{index}"),
+                            HostEntry::new("https://example.com"),
+                        );
+                        Ok(())
+                    })
+                    .unwrap();
+                }
+            })
+        };
+        let first = spawn("a", 0);
+        let second = spawn("b", 10);
+        first.join().unwrap();
+        second.join().unwrap();
+
+        let config = load_from(&path).unwrap();
+        assert_eq!(
+            config.hosts.len(),
+            20,
+            "lost updates: {:?}",
+            config.hosts.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -287,6 +434,7 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            keyring_tokens: Default::default(),
         };
         let text = toml::to_string_pretty(&config).unwrap();
         let back: Config = toml::from_str(&text).unwrap();

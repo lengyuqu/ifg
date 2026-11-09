@@ -52,7 +52,7 @@ fn read_token(with_token: bool) -> Result<String, AppError> {
 }
 
 async fn login(cli: &Cli, with_token: bool) -> Result<(), AppError> {
-    let mut config = config::load()?;
+    let config = config::load()?;
     let (key, url) = login_host(&cli.host, &config)?;
 
     let token = read_token(with_token)?;
@@ -67,34 +67,48 @@ async fn login(cli: &Cli, with_token: bool) -> Result<(), AppError> {
         .build()?;
     let me = client.users().me().await?;
 
+    // The keychain write happens outside the config lock: it can block on a
+    // system prompt and must not hold up other `ifg auth` runs.
     let uses_keyring = config.uses_keyring();
-    let entry = config
-        .hosts
-        .entry(key.clone())
-        .or_insert_with(|| HostEntry::new(url.clone()));
-    entry.url = url.clone();
-    entry.user = Some(me.username.clone());
-    if uses_keyring {
-        match crate::keyring::store(&key, &token) {
-            Ok(()) => entry.token = None,
-            Err(error) => {
-                eprintln!(
-                    "ifg: warning: keychain unavailable ({error}); storing the token in the \
-                     config file instead"
-                );
-                entry.token = Some(token);
-            }
-        }
+    let keyring_error = if uses_keyring {
+        crate::keyring::store(&key, &token).err()
     } else {
-        entry.token = Some(token);
+        None
+    };
+    let stored_in_keyring = uses_keyring && keyring_error.is_none();
+
+    let write_key = key.clone();
+    let write_url = url.clone();
+    let write_user = me.username.clone();
+    config::update(move |config| {
+        {
+            let entry = config
+                .hosts
+                .entry(write_key.clone())
+                .or_insert_with(|| HostEntry::new(write_url.clone()));
+            entry.url = write_url;
+            entry.user = Some(write_user);
+        }
+        if stored_in_keyring {
+            config.clear_token(&write_key);
+        } else {
+            config.set_file_token(&write_key, token.clone());
+        }
+        if config.default_host.is_none() {
+            config.default_host = Some(write_key.clone());
+        }
+        Ok(())
+    })?;
+
+    if let Some(error) = keyring_error {
+        eprintln!(
+            "ifg: warning: keychain unavailable ({error}); storing the token in the \
+             config file instead"
+        );
     }
-    if config.default_host.is_none() {
-        config.default_host = Some(key.clone());
-    }
-    config::save(&config)?;
 
     println!("Logged in to {url} as {}", me.username);
-    if uses_keyring {
+    if stored_in_keyring {
         println!("Token stored in the system keychain (token_store = \"keyring\").");
     }
     Ok(())
@@ -254,14 +268,17 @@ fn probe(result: Result<Vec<u8>, ifg_client::Error>) -> Scope {
 }
 
 fn logout(cli: &Cli) -> Result<(), AppError> {
-    let mut config = config::load()?;
+    let config = config::load()?;
     let target = logout_host(&cli.host, &config)?;
 
-    config.hosts.remove(&target);
-    if config.default_host.as_deref() == Some(target.as_str()) {
-        config.default_host = config.hosts.keys().next().cloned();
-    }
-    config::save(&config)?;
+    let remove = target.clone();
+    config::update(move |config| {
+        config.hosts.remove(&remove);
+        if config.default_host.as_deref() == Some(remove.as_str()) {
+            config.default_host = config.hosts.keys().next().cloned();
+        }
+        Ok(())
+    })?;
     if let Err(error) = crate::keyring::delete(&target) {
         eprintln!("ifg: warning: could not remove the keychain entry: {error}");
     }
