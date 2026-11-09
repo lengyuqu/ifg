@@ -179,6 +179,7 @@ ifg -R owner/repo collab task reassign '<任务 ID>' --key move-1 --expected-ver
 - [ifg 项目设计](docs/architecture/ifg-project-design-2026-11.md)：结构、关键决策、内部设计、测试、发布与里程碑
 - [客户端 CLI 设计草案](docs/architecture/client-cli-design-2026-11.md)：命令设计、配置格式、输出约定、服务端缺口
 - [发布验收清单](docs/release-checklist.md)：CNB 开发验证、git233 同步、GitHub 发布及产物验收
+- [Windows 验证清单](docs/windows-verification.md)：逐项可执行的实机验证（凭据后端、`--web`、路径编码、并发写、发布产物）
 
 ## 许可证
 
