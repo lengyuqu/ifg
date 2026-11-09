@@ -322,18 +322,24 @@ async fn download(
         targets.push((asset, target));
     }
     for (asset, target) in targets {
-        download_asset(ctx, repo, asset, &target).await?;
+        download_asset(ctx, repo, asset, &target, clobber).await?;
     }
     Ok(())
 }
 
-/// Stream the asset to `<filename>.part`, hash while writing, verify against
-/// `x-checksum-sha256` (or the recorded asset digest), then rename (§4.5).
+/// Stream the asset to an exclusive temporary file, hash while writing, verify
+/// against `x-checksum-sha256` (or the recorded asset digest), then rename
+/// (§4.5).
+///
+/// The temporary name is random and created with `O_CREAT|O_EXCL`, so a
+/// planted `<name>.part` symlink cannot redirect the write, and two concurrent
+/// downloads of the same asset cannot collide.
 async fn download_asset(
     ctx: &super::CommandContext,
     repo: &RepoContext,
     asset: &ifg_client::Asset,
     target: &str,
+    clobber: bool,
 ) -> Result<(), AppError> {
     use tokio::io::AsyncWriteExt;
 
@@ -349,16 +355,31 @@ async fn download_asset(
         .map(str::to_string)
         .or_else(|| asset.sha256.clone());
 
-    let part_path = std::path::PathBuf::from(format!("{target}.part"));
-    let mut file = tokio::fs::File::create(&part_path)
-        .await
-        .map_err(|e| AppError::Io(format!("could not create {}: {e}", part_path.display())))?;
+    let final_path = std::path::PathBuf::from(target);
+    let dir = final_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let temp = tempfile::Builder::new()
+        .prefix(".ifg-download-")
+        .suffix(".part")
+        .tempfile_in(&dir)
+        .map_err(|e| {
+            AppError::Io(format!(
+                "could not create a temporary file in {}: {e}",
+                dir.display()
+            ))
+        })?;
+    let mut file = tokio::fs::File::from_std(
+        temp.reopen()
+            .map_err(|e| AppError::Io(format!("could not reopen the temporary file: {e}")))?,
+    );
     let mut hasher = Sha256::new();
     let mut stream = response.bytes_stream();
     let mut size: u64 = 0;
-    // Every failure below must remove the partial file: leaving it behind
-    // means a retry sees a stale `.part` and a `--clobber` run silently
-    // clobbers something the user never saw completed.
+    // Every failure below returns early; dropping `temp` removes the partial
+    // file, so a retry never sees a stale `.part`.
     let mut write_error: Option<AppError> = None;
     while let Some(chunk) = stream.next().await {
         match chunk {
@@ -376,17 +397,19 @@ async fn download_asset(
             }
         }
     }
+    let flush_error = file.flush().await.err();
     drop(file);
     if let Some(error) = write_error {
-        let _ = tokio::fs::remove_file(&part_path).await;
         return Err(error);
+    }
+    if let Some(error) = flush_error {
+        return Err(AppError::Io(format!("write failed: {error}")));
     }
 
     let actual = format!("{:x}", hasher.finalize());
     match expected {
         Some(expected) if expected.eq_ignore_ascii_case(&actual) => {}
         Some(expected) => {
-            let _ = tokio::fs::remove_file(&part_path).await;
             return Err(AppError::Other(format!(
                 "SHA-256 mismatch for {}: expected {expected}, got {actual}; the partial file was deleted",
                 asset.filename
@@ -400,14 +423,27 @@ async fn download_asset(
         }
     }
 
-    let final_path = std::path::PathBuf::from(target);
-    if let Err(e) = tokio::fs::rename(&part_path, &final_path).await {
-        let _ = tokio::fs::remove_file(&part_path).await;
-        return Err(AppError::Io(format!(
-            "could not finalize {}: {e}",
-            final_path.display()
-        )));
-    }
+    // `--clobber` was checked before the download started; `persist_noclobber`
+    // also closes the window where the file appears in between.
+    let persisted = if clobber {
+        temp.persist(&final_path)
+    } else {
+        temp.persist_noclobber(&final_path)
+    };
+    persisted.map_err(|error| {
+        if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::Other(format!(
+                "{} already exists; pass --clobber to overwrite",
+                final_path.display()
+            ))
+        } else {
+            AppError::Io(format!(
+                "could not finalize {}: {}",
+                final_path.display(),
+                error.error
+            ))
+        }
+    })?;
     println!("Downloaded {target} ({size} bytes)");
     Ok(())
 }

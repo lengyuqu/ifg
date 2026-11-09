@@ -224,6 +224,14 @@ fn resolve_target(
     resolve_repo(arg.as_deref().or(cli.repo.as_deref()), &ctx.host)
 }
 
+/// The login name cached for the current host, when `auth login` stored one.
+fn cached_user(ctx: &CommandContext) -> Option<String> {
+    let key = crate::config::host_key_for_url(&ctx.host.url).or_else(|| ctx.host.name.clone());
+    key.as_deref()
+        .and_then(|key| ctx.config.hosts.get(key))
+        .and_then(|entry| entry.user.clone())
+}
+
 async fn list(
     ctx: &CommandContext,
     cli: &Cli,
@@ -232,22 +240,14 @@ async fn list(
 ) -> Result<(), AppError> {
     let owner = match owner {
         Some(owner) => owner,
-        None => {
-            let key =
-                crate::config::host_key_for_url(&ctx.host.url).or_else(|| ctx.host.name.clone());
-            let user = key
-                .as_deref()
-                .and_then(|key| ctx.config.hosts.get(key))
-                .and_then(|entry| entry.user.clone());
-            match user {
-                Some(user) => user,
-                None => {
-                    return Err(AppError::Usage(
-                        "no owner known for this host; pass one: `ifg repo list <owner>`".into(),
-                    ))
-                }
+        None => match cached_user(ctx) {
+            Some(user) => user,
+            None => {
+                return Err(AppError::Usage(
+                    "no owner known for this host; pass one: `ifg repo list <owner>`".into(),
+                ))
             }
-        }
+        },
     };
 
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
@@ -342,14 +342,14 @@ async fn create(ctx: &CommandContext, cli: &Cli, args: &CreateArgs) -> Result<()
         init,
         default_branch,
     } = args.clone();
-    let owner = org
-        .clone()
-        .unwrap_or_else(|| crate::config::host_key_for_url(&ctx.host.url).unwrap_or_default());
+    // A personal repository belongs to the account, not to the host: the old
+    // fallback printed `Created forge.example.com/demo` and a remote URL under
+    // `/git/forge.example.com/`, which does not exist.
     let options = ifg_client::CreateRepoOptions {
         name: name.to_string(),
         description,
         is_private: Some(private),
-        org,
+        org: org.clone(),
         auto_init: Some(init),
         default_branch,
         ..Default::default()
@@ -363,16 +363,67 @@ async fn create(ctx: &CommandContext, cli: &Cli, args: &CreateArgs) -> Result<()
         return Ok(());
     }
     let repo = ctx.client.repos().create(&options).await?;
-    println!("Created {}/{} ({})", owner, repo.name, ctx.host.url);
-    if !init {
-        println!(
-            "Empty repository. Push an existing project with:
-  git remote add origin {}/git/{}/{name}.git
+    // The owner name is display-only. Resolving it must never gate the create:
+    // a token with `repo` but not `user` scope is enough to create a
+    // repository, and `/users/me` would answer 403.
+    match display_owner(ctx, org.as_deref()).await {
+        Owner::Known(owner) => {
+            println!("Created {owner}/{} ({})", repo.name, ctx.host.url);
+            if !init {
+                println!(
+                    "Empty repository. Push an existing project with:
+  git remote add origin {}/git/{owner}/{name}.git
   git push -u origin {}",
-            ctx.host.url, owner, repo.default_branch
-        );
+                    ctx.host.url, repo.default_branch
+                );
+            }
+        }
+        Owner::Unknown => {
+            // Never invent a name or print a remote URL under the host name.
+            println!("Created {} ({})", repo.name, ctx.host.url);
+            eprintln!(
+                "ifg: note: could not read the account name (GET /users/me failed); \
+                 the repository belongs to the token's user"
+            );
+            if !init {
+                println!(
+                    "Empty repository. Push an existing project with (replace OWNER with your account):
+  git remote add origin {}/git/OWNER/{name}.git
+  git push -u origin {}",
+                    ctx.host.url, repo.default_branch
+                );
+            }
+        }
     }
     Ok(())
+}
+
+/// Where the display owner for `repo create` came from.
+enum Owner {
+    Known(String),
+    /// The account could not be read; the create already succeeded.
+    Unknown,
+}
+
+/// The account a personal repository will belong to, for display purposes.
+///
+/// A PAT from `IRONFORGE_PAT` may belong to a different account than the one
+/// cached in `hosts.toml`, so the cache is only trusted when the stored token
+/// is what is actually authenticating. Failure to read `/users/me` degrades to
+/// [`Owner::Unknown`] instead of failing the command.
+async fn display_owner(ctx: &CommandContext, org: Option<&str>) -> Owner {
+    if let Some(org) = org {
+        return Owner::Known(org.to_string());
+    }
+    if crate::context::env_pat().is_none() {
+        if let Some(user) = cached_user(ctx) {
+            return Owner::Known(user);
+        }
+    }
+    match ctx.client.users().me().await {
+        Ok(profile) => Owner::Known(profile.username),
+        Err(_) => Owner::Unknown,
+    }
 }
 
 fn clone(

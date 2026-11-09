@@ -19,7 +19,7 @@ mod version;
 mod web;
 
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Command};
+use cli::{Cli, Command, RepoCommand};
 
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
@@ -34,7 +34,27 @@ fn main() -> std::process::ExitCode {
     std::process::ExitCode::from(code)
 }
 
-async fn run(cli: Cli) -> i32 {
+/// The repository target a `repo` subcommand received as a positional
+/// argument. Only full URLs matter here: `OWNER/NAME` does not name an
+/// instance, so it must keep using the ambient host.
+fn positional_target(command: &Command) -> Option<String> {
+    let Command::Repo { command } = command else {
+        return None;
+    };
+    match command {
+        RepoCommand::View { target, .. }
+        | RepoCommand::Edit { target, .. }
+        | RepoCommand::Delete { target, .. } => target.clone(),
+        RepoCommand::Clone { target, .. } => Some(target.clone()),
+        _ => None,
+    }
+}
+
+async fn run(mut cli: Cli) -> i32 {
+    // A full URL in a positional target (`repo view <URL>`) must decide the
+    // instance before `bootstrap` picks a host, so hand it to the resolver.
+    let target = positional_target(&cli.command);
+    cli.target_hint = target;
     if let Command::Completions { shell } = &cli.command {
         // Render into a buffer first: piping the script into `head` closes
         // stdout early, and clap_complete panics on write errors.

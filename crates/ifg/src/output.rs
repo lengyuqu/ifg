@@ -201,10 +201,12 @@ pub fn print_diff(text: &str) {
 }
 
 /// Render `items` through the `--template` subset, one line-group per item.
+/// Server strings are sanitized first: a PR title carrying `ESC[2J` must not
+/// reach the terminal through `-q` either.
 pub fn print_template(items: &[serde_json::Value], template: &str) {
     let mut out = String::new();
     for item in items {
-        out.push_str(&crate::template::render(template, item));
+        out.push_str(&sanitize(&crate::template::render(template, item)));
         out.push('\n');
     }
     let _ = std::io::stdout().write_all(out.as_bytes());

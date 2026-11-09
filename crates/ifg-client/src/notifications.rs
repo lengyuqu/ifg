@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::error::Error;
 use crate::http::Client;
+use crate::pagination::Paginator;
 
 /// One notification.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -36,28 +37,18 @@ impl Client {
 }
 
 impl Notifications<'_> {
-    /// `GET /notifications?unread_only=&page=&per_page=`.
-    pub async fn list(
-        &self,
-        unread_only: bool,
-        page: u64,
-        per_page: u64,
-    ) -> Result<Vec<Notification>, Error> {
-        let path =
-            format!("notifications?unread_only={unread_only}&page={page}&per_page={per_page}");
-        self.client.send(crate::Method::GET, &path, None).await
+    /// `GET /notifications?unread_only=` — the server answers with
+    /// `{data, pagination}`, so callers page through it with
+    /// [`Paginator::limit`]; a plain array is still accepted.
+    pub fn list(&self, unread_only: bool) -> Paginator<Notification> {
+        self.client
+            .paginate(format!("notifications?unread_only={unread_only}"))
     }
 
     /// Raw JSON twin of [`Notifications::list`].
-    pub async fn list_raw(
-        &self,
-        unread_only: bool,
-        page: u64,
-        per_page: u64,
-    ) -> Result<Value, Error> {
-        let path =
-            format!("notifications?unread_only={unread_only}&page={page}&per_page={per_page}");
-        self.client.send(crate::Method::GET, &path, None).await
+    pub fn list_raw(&self, unread_only: bool) -> Paginator<Value> {
+        self.client
+            .paginate(format!("notifications?unread_only={unread_only}"))
     }
 
     /// `GET /notifications/unread-count` → the count.

@@ -42,17 +42,30 @@ fn normalize_url(url: &str) -> String {
 
 /// Resolve the host for a command that needs one (everything but
 /// `auth login`/`auth logout`, which manage the config directly).
+///
+/// A full remote URL given as the command's positional target (or via `-R`)
+/// names the instance outright: when nothing configured matches it the call
+/// fails instead of quietly talking to another host, and a conflicting
+/// `--host`/`IRONFORGE_URL` is an error rather than a silent switch.
 pub fn resolve_host(
     host_arg: Option<&str>,
     repo_arg: Option<&str>,
+    target_arg: Option<&str>,
     config: &Config,
 ) -> Result<ResolvedHost, crate::error::AppError> {
     let env_pat = env_pat().map(Secret::new);
+
+    // The positional target wins over `-R`: `ifg repo view <URL> -R other`
+    // is a contradiction the caller should not have to reason about.
+    let explicit = target_arg
+        .and_then(git::parse_remote_url)
+        .or_else(|| repo_arg.and_then(git::parse_remote_url));
 
     // 1. --host: a name from the config or a raw URL.
     if let Some(host_arg) = host_arg {
         if is_url(host_arg) {
             let url = normalize_url(host_arg);
+            reject_host_mismatch(explicit.as_ref(), &url)?;
             let token = env_pat.or_else(|| token_from_url(config, &url));
             return Ok(ResolvedHost {
                 name: config::host_key_for_url(&url),
@@ -66,6 +79,7 @@ pub fn resolve_host(
                 configured_names(config)
             ))
         })?;
+        reject_host_mismatch(explicit.as_ref(), &entry.url)?;
         let resolved = ResolvedHost {
             name: Some(host_arg.to_string()),
             url: entry.url.clone(),
@@ -74,7 +88,37 @@ pub fn resolve_host(
         return Ok(resolved);
     }
 
-    // 2. IRONFORGE_URL (+ optional IRONFORGE_PAT).
+    // 2. An explicit repository URL decides the instance. Nothing else may
+    //    stand in for it: a URL on B must never be served by A's host or A's
+    //    token.
+    if let Some(remote) = &explicit {
+        if let Some(env_url) = env_url() {
+            let url = normalize_url(&env_url);
+            reject_host_mismatch(Some(remote), &url).map_err(|_| {
+                crate::error::AppError::Usage(format!(
+                    "IRONFORGE_URL points at {url} but the target repository is on {}; \
+                     unset it or pass a matching --host",
+                    remote.host
+                ))
+            })?;
+            let token = env_pat.or_else(|| token_from_url(config, &url));
+            return Ok(ResolvedHost {
+                name: config::host_key_for_url(&url),
+                url,
+                token,
+            });
+        }
+        if let Some(resolved) = from_configured_host(config, remote, env_pat.clone())? {
+            return Ok(resolved);
+        }
+        return Err(crate::error::AppError::Other(format!(
+            "no configured host matches {}; run `ifg auth login --host https://{}` \
+             (refusing to use another instance)",
+            remote.host, remote.host
+        )));
+    }
+
+    // 3. IRONFORGE_URL (+ optional IRONFORGE_PAT).
     if let Some(env_url) = env_url() {
         let url = normalize_url(&env_url);
         let token = env_pat.or_else(|| token_from_url(config, &url));
@@ -85,23 +129,14 @@ pub fn resolve_host(
         });
     }
 
-    // 2.5. `-R https://host/git/owner/name` also decides the host.
-    if let Some(repo_arg) = repo_arg {
-        if let Some(remote) = git::parse_remote_url(repo_arg) {
-            if let Some(resolved) = from_configured_host(config, &remote, env_pat.clone())? {
-                return Ok(resolved);
-            }
-        }
-    }
-
-    // 3. Git remote inference: the remote's host must be a configured one.
+    // 4. Git remote inference: the remote's host must be a configured one.
     for (_, remote) in git::git_remotes() {
         if let Some(resolved) = from_configured_host(config, &remote, env_pat.clone())? {
             return Ok(resolved);
         }
     }
 
-    // 4. default_host.
+    // 5. default_host.
     if let Some(default) = &config.default_host {
         if let Some(entry) = config.hosts.get(default) {
             return Ok(ResolvedHost {
@@ -117,6 +152,24 @@ pub fn resolve_host(
          `ifg auth login --host <url>`."
             .into(),
     ))
+}
+
+/// Reject a host selection that contradicts an explicit repository URL.
+fn reject_host_mismatch(
+    remote: Option<&git::Remote>,
+    url: &str,
+) -> Result<(), crate::error::AppError> {
+    let Some(remote) = remote else {
+        return Ok(());
+    };
+    if remote_matches_url(remote, url) {
+        return Ok(());
+    }
+    Err(crate::error::AppError::Usage(format!(
+        "the target repository is on {} but this host is {url}; pass a matching --host \
+         or drop the explicit URL",
+        remote.host
+    )))
 }
 
 fn from_configured_host(
@@ -144,7 +197,7 @@ fn from_configured_host(
     }))
 }
 
-fn remote_matches_url(remote: &git::Remote, entry_url: &str) -> bool {
+pub(crate) fn remote_matches_url(remote: &git::Remote, entry_url: &str) -> bool {
     if !remote.is_ssh {
         return config::entry_matches_url(entry_url, &remote.host);
     }
@@ -319,6 +372,107 @@ mod tests {
             assert_eq!(repo.owner, "alice");
             assert_eq!(repo.name, "demo");
         }
+    }
+
+    fn config_with(entries: &[(&str, &str)]) -> Config {
+        let mut config = Config::default();
+        for (name, url) in entries {
+            config.hosts.insert(
+                (*name).into(),
+                crate::config::HostEntry {
+                    url: (*url).into(),
+                    user: Some("alice".into()),
+                    token: Some(format!("ifp_{name}")),
+                    git_protocol: None,
+                },
+            );
+        }
+        config
+    }
+
+    #[test]
+    fn explicit_repository_url_decides_the_host() {
+        let config = config_with(&[
+            ("a", "https://a.example.com"),
+            ("b", "https://b.example.com"),
+        ]);
+        let resolved = resolve_host(
+            None,
+            None,
+            Some("https://b.example.com/git/alice/demo.git"),
+            &config,
+        )
+        .unwrap();
+        assert_eq!(resolved.url, "https://b.example.com");
+        assert_eq!(resolved.name.as_deref(), Some("b"));
+        // Never hand out another instance's credential.
+        assert_eq!(
+            resolved.token.as_ref().map(|token| token.expose()),
+            Some("ifp_b")
+        );
+    }
+
+    #[test]
+    fn repo_flag_url_also_decides_the_host() {
+        let config = config_with(&[
+            ("a", "https://a.example.com"),
+            ("b", "https://b.example.com"),
+        ]);
+        let resolved = resolve_host(
+            None,
+            Some("https://b.example.com/git/alice/demo.git"),
+            None,
+            &config,
+        )
+        .unwrap();
+        assert_eq!(resolved.name.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn unconfigured_target_host_fails_instead_of_falling_back() {
+        let mut config = config_with(&[("a", "https://a.example.com")]);
+        config.default_host = Some("a".into());
+        // Old behaviour: silently resolved to `a` and operated on the wrong
+        // instance.
+        let error = resolve_host(
+            None,
+            None,
+            Some("https://b.example.com/git/alice/demo.git"),
+            &config,
+        )
+        .expect_err("must not fall back to another instance");
+        assert!(error.to_string().contains("b.example.com"));
+    }
+
+    #[test]
+    fn conflicting_host_selection_is_rejected() {
+        let config = config_with(&[
+            ("a", "https://a.example.com"),
+            ("b", "https://b.example.com"),
+        ]);
+        // `--host a` while the target URL is on b: refuse rather than send b's
+        // request to a.
+        let error = resolve_host(
+            Some("a"),
+            None,
+            Some("https://b.example.com/git/alice/demo.git"),
+            &config,
+        )
+        .expect_err("a conflicting --host must not be used");
+        assert!(error.to_string().contains("b.example.com"), "{error}");
+    }
+
+    #[test]
+    fn ssh_target_matches_the_api_host_across_ports() {
+        let config = config_with(&[("b", "https://b.example.com:8443")]);
+        let resolved = resolve_host(
+            None,
+            None,
+            Some("ssh://git@b.example.com:2222/alice/demo.git"),
+            &config,
+        )
+        .unwrap();
+        assert_eq!(resolved.name.as_deref(), Some("b"));
     }
 
     #[test]

@@ -143,9 +143,38 @@ impl<T: DeserializeOwned> Paginator<T> {
 }
 
 /// Append `page`/`per_page` to a path that may already carry a query string.
+///
+/// Existing `page`/`per_page` parameters are replaced, not appended again:
+/// `repos?per_page=1 --paginate` used to produce
+/// `?per_page=1&page=1&per_page=100`, which some servers reject as a duplicate
+/// field. Other parameters keep their original order and encoding.
 pub(crate) fn with_page_params(path: &str, page: u64, per_page: u64) -> String {
-    let separator = if path.contains('?') { '&' } else { '?' };
-    format!("{path}{separator}page={page}&per_page={per_page}")
+    let (base, query) = match path.split_once('?') {
+        Some((base, query)) => (base, query),
+        None => (path, ""),
+    };
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| !pair.is_empty() && !is_pagination_key(pair))
+        .collect();
+    let mut query = kept.join("&");
+    if !query.is_empty() {
+        query.push('&');
+    }
+    format!("{base}?{query}page={page}&per_page={per_page}")
+}
+
+/// Whether the pair's **decoded** key is `page` or `per_page`. The server
+/// decodes before matching, so `%70er_page=1` is a duplicate `per_page` and
+/// must be replaced, while `page_size` is a different parameter and stays.
+fn is_pagination_key(pair: &str) -> bool {
+    let raw = pair.split('=').next().unwrap_or_default();
+    // Parse a synthetic pair so `%70er_page` decodes exactly as the server does.
+    let decoded = url::form_urlencoded::parse(format!("{raw}=").as_bytes())
+        .next()
+        .map(|(key, _)| key.into_owned())
+        .unwrap_or_default();
+    decoded == "page" || decoded == "per_page"
 }
 
 /// Decode a list response: a `Page<T>` when the endpoint paginates, a plain
@@ -195,6 +224,64 @@ mod tests {
             "issues?state=open&page=1&per_page=100"
         );
         assert_eq!(with_page_params("repos", 1, 5), "repos?page=1&per_page=5");
+    }
+
+    /// A caller-supplied `page`/`per_page` is replaced, never duplicated, and
+    /// the other parameters keep their original encoding.
+    #[test]
+    fn existing_page_params_are_replaced_not_repeated() {
+        assert_eq!(
+            with_page_params("repos?per_page=1", 1, 100),
+            "repos?page=1&per_page=100"
+        );
+        assert_eq!(
+            with_page_params("repos?a=1&per_page=1&page=9", 2, 100),
+            "repos?a=1&page=2&per_page=100"
+        );
+        assert_eq!(
+            with_page_params("search?q=a%20b&per_page=5", 1, 30),
+            "search?q=a%20b&page=1&per_page=30"
+        );
+        // Only whole parameter names count: `page_size` is a different key.
+        assert_eq!(
+            with_page_params("repos?page_size=7", 1, 30),
+            "repos?page_size=7&page=1&per_page=30"
+        );
+    }
+
+    /// Percent-encoded keys are the same parameter to the server, so they are
+    /// replaced too; values that merely contain `page` are left alone.
+    #[test]
+    fn encoded_pagination_keys_are_recognized() {
+        assert_eq!(
+            with_page_params("repos?%70er_page=1", 1, 100),
+            "repos?page=1&per_page=100"
+        );
+        assert_eq!(
+            with_page_params("repos?%70age=3&x=1", 2, 30),
+            "repos?x=1&page=2&per_page=30"
+        );
+        // A different parameter name stays.
+        assert_eq!(
+            with_page_params("repos?page_size=7", 1, 30),
+            "repos?page_size=7&page=1&per_page=30"
+        );
+        // `page` inside a value is not a key.
+        assert_eq!(
+            with_page_params("search?q=page%3D1", 1, 30),
+            "search?q=page%3D1&page=1&per_page=30"
+        );
+        // Other parameters keep their order and encoding, including CJK,
+        // spaces (`+`), and encoded `&`/`=`.
+        assert_eq!(
+            with_page_params("search?q=%E4%B8%AD+%E6%96%87&x=a%26b%3Dc", 1, 30),
+            "search?q=%E4%B8%AD+%E6%96%87&x=a%26b%3Dc&page=1&per_page=30"
+        );
+        // Mixed forms: every encoded and plain pagination key is removed.
+        assert_eq!(
+            with_page_params("repos?page=9&%70er_page=8&page_size=5", 1, 30),
+            "repos?page_size=5&page=1&per_page=30"
+        );
     }
 
     #[test]

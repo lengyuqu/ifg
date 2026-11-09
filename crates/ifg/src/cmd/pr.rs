@@ -368,9 +368,12 @@ async fn create(
     } else {
         (title, body)
     };
-    let head = match head {
-        Some(head) => head,
-        None => current_branch()?,
+    // Only a head taken from the current checkout must be pushed; an explicit
+    // `--head` names a branch the server may already know. The check used to
+    // depend on whether a title was given, so `-t` bypassed it entirely.
+    let (head, head_is_local) = match head {
+        Some(head) => (head, false),
+        None => (current_branch()?, true),
     };
 
     let base = match base {
@@ -384,10 +387,8 @@ async fn create(
         }
     };
 
-    // Head must exist on the server: warn about unpushed local commits
-    // (review finding: `@{upstream}` alone is not sufficient).
-    if title.is_none() {
-        ensure_current_branch_pushed(&head)?;
+    if head_is_local {
+        ensure_branch_pushed(ctx, repo, &head)?;
     }
 
     let title = match title {
@@ -452,42 +453,126 @@ fn head_commit_subject() -> Option<String> {
     }
 }
 
-/// Fail with a helpful message when local commits are not pushed. Checks the
-/// branch's upstream exists and is not behind the local HEAD.
-fn ensure_current_branch_pushed(branch: &str) -> Result<(), AppError> {
-    let upstream = std::process::Command::new("git")
-        .args([
-            "rev-parse",
-            "--abbrev-ref",
-            "--symbolic-full-name",
-            "@{upstream}",
-        ])
-        .output();
-    let has_upstream = matches!(&upstream, Ok(out) if out.status.success());
-    if !has_upstream {
+/// Fail unless `branch` is on the remote that corresponds to the target
+/// repository.
+///
+/// Checking any `refs/remotes/*/<branch>` was not enough: a `backup` remote (or
+/// a stale `origin`) could satisfy it while the target repository stayed
+/// behind. Only remotes whose URL parses to `repo` on the resolved host count,
+/// and an upstream pointing somewhere else is refused too.
+fn ensure_branch_pushed(
+    ctx: &super::CommandContext,
+    repo: &RepoContext,
+    branch: &str,
+) -> Result<(), AppError> {
+    let remotes = matching_remotes(ctx, repo);
+    if remotes.is_empty() {
         return Err(AppError::Other(format!(
-            "branch '{branch}' has no upstream; push it first: git push -u origin {branch}"
+            "no git remote points at {repo} on {}; add one or pass --head",
+            ctx.host.url
         )));
     }
-    let ahead = std::process::Command::new("git")
-        .args(["rev-list", "--count", "@{upstream}..HEAD"])
-        .output();
-    if let Ok(out) = ahead {
-        if out.status.success() {
-            let count = String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .parse::<u64>()
-                .unwrap_or(0);
-            if count > 0 {
-                return Err(AppError::Other(format!(
-                    "{count} local commit(s) on '{branch}' are not pushed; \
-                     push first: git push"
-                )));
-            }
-            return Ok(());
+
+    if let Some((upstream_remote, upstream)) = upstream_ref(branch) {
+        if !remotes.iter().any(|name| name == &upstream_remote) {
+            return Err(AppError::Other(format!(
+                "branch '{branch}' tracks {upstream}, which is not {repo} on {}; \
+                 push it to {repo} first",
+                ctx.host.url
+            )));
         }
+        // The API receives the local branch's name as `head`. An upstream
+        // such as origin/published does not prove origin/feature has HEAD.
+        let target = format!("{upstream_remote}/{branch}");
+        let target_ref = format!("refs/remotes/{target}");
+        match rev_count(&format!("{target_ref}..HEAD")) {
+            Some(0) => Ok(()),
+            Some(count) => Err(AppError::Other(format!(
+                "{count} local commit(s) on '{branch}' are not pushed to {target}; \
+                 push first: git push {upstream_remote} {branch}"
+            ))),
+            // Cannot tell: refuse rather than create a PR that may lack commits.
+            None => Err(AppError::Other(format!(
+                "could not compare '{branch}' with {target}; \
+                 push first: git push {upstream_remote} {branch}"
+            ))),
+        }
+    } else if remotes
+        .iter()
+        .any(|name| remote_tracking_matches_head(name, branch))
+    {
+        // Pushed without `-u`: no upstream, but the right remote has HEAD.
+        Ok(())
+    } else {
+        Err(AppError::Other(format!(
+            "branch '{branch}' is not pushed to {repo} on {}; run: git push {} {branch}",
+            ctx.host.url,
+            remotes.first().map(String::as_str).unwrap_or("origin")
+        )))
     }
-    Ok(())
+}
+
+/// Remotes whose URL resolves to `repo` on the resolved host.
+fn matching_remotes(ctx: &super::CommandContext, repo: &RepoContext) -> Vec<String> {
+    crate::git::git_remotes()
+        .into_iter()
+        .filter(|(_, remote)| {
+            remote.owner == repo.owner
+                && remote.name == repo.name
+                && crate::context::remote_matches_url(remote, &ctx.host.url)
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// The configured upstream's remote and display name. Git supplies the remote
+/// explicitly because remote names may themselves contain `/`.
+fn upstream_ref(branch: &str) -> Option<(String, String)> {
+    let output = std::process::Command::new("git")
+        .args([
+            "for-each-ref",
+            "--format=%(upstream:remotename)%00%(upstream:short)",
+            &format!("refs/heads/{branch}"),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let (remote, name) = text.trim_end().split_once('\0')?;
+    (!remote.is_empty() && !name.is_empty()).then(|| (remote.to_string(), name.to_string()))
+}
+
+fn rev_count(range: &str) -> Option<u64> {
+    let output = std::process::Command::new("git")
+        .args(["rev-list", "--count", range])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+fn git_rev_parse(reference: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", reference])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!sha.is_empty()).then_some(sha)
+}
+
+/// Whether `<remote>/<branch>` already points at HEAD.
+fn remote_tracking_matches_head(remote: &str, branch: &str) -> bool {
+    let Some(head) = git_rev_parse("HEAD") else {
+        return false;
+    };
+    git_rev_parse(&format!("refs/remotes/{remote}/{branch}")).as_deref() == Some(head.as_str())
 }
 
 async fn merge(
@@ -510,11 +595,24 @@ async fn merge(
     let pulls = ctx.client.pulls(&repo.owner, &repo.name);
     if auto {
         let value = pulls.enable_auto_merge(number, strategy).await?;
-        output::print_json(&value);
+        // Machine-readable modes keep stdout pure: the confirmation goes to
+        // stderr, because `--json` output must parse as one JSON document.
+        if cli.json || cli.template.is_some() {
+            match &cli.template {
+                Some(template) => output::print_template(std::slice::from_ref(&value), template),
+                None => output::print_json(&value),
+            }
+            eprintln!(
+                "Auto-merge enabled for {repo}#{number} ({}).",
+                strategy.as_str()
+            );
+            return Ok(());
+        }
         println!(
             "Auto-merge enabled for {repo}#{number} ({}).",
             strategy.as_str()
         );
+        output::print_json(&value);
         return Ok(());
     }
     if cli.json || cli.template.is_some() {

@@ -166,7 +166,12 @@ async fn view(
 ) -> Result<(), AppError> {
     let issues = ctx.client.issues(&repo.owner, &repo.name);
     if cli.json || cli.template.is_some() {
-        let value = issues.get_raw(number).await?;
+        let mut value = issues.get_raw(number).await?;
+        // `--comments` used to be honoured only by the table renderer: the
+        // machine modes returned before fetching them.
+        if comments {
+            value["comments"] = issues.comments_raw(number).await?;
+        }
         match &cli.template {
             Some(template) => output::print_template(std::slice::from_ref(&value), template),
             None => output::print_json(&value),

@@ -505,6 +505,20 @@ async fn repo_create_table_and_json() {
         .mount(&server)
         .await;
 
+    // With only `IRONFORGE_PAT` there is no cached login name, so `repo create`
+    // resolves the owner from `/users/me` (the table form only; `--json` skips
+    // the confirmation text).
+    Mock::given(method("GET"))
+        .and(path("/api/v1/users/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": 1, "username": "alice", "email": null, "display_name": null,
+            "avatar_url": null, "is_admin": false,
+            "created_at": "2026-01-01T00:00:00Z"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
     let home = TempDir::new().unwrap();
     let env = |home: &TempDir| {
         let mut cmd = ifg();
@@ -519,7 +533,10 @@ async fn repo_create_table_and_json() {
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("Created"), "table: {stdout}");
+    assert!(
+        stdout.contains("Created alice/demo"),
+        "table should use the account name, not the host: {stdout}"
+    );
 
     let out = env(&home)
         .args(["repo", "create", "demo", "--json"])

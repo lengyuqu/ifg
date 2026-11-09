@@ -41,7 +41,12 @@ pub(crate) fn user_agent() -> String {
 /// Load the config, resolve the host (§5.2) and build the client.
 pub(crate) fn bootstrap(cli: &Cli) -> Result<CommandContext, AppError> {
     let config = crate::config::load()?;
-    let host = context::resolve_host(cli.host.as_deref(), cli.repo.as_deref(), &config)?;
+    let host = context::resolve_host(
+        cli.host.as_deref(),
+        cli.repo.as_deref(),
+        cli.target_hint.as_deref(),
+        &config,
+    )?;
     let mut builder = Client::builder(&host.url).user_agent(user_agent());
     if let Some(token) = &host.token {
         builder = builder.token(token.clone());

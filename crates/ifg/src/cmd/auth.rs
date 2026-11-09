@@ -333,7 +333,12 @@ fn logout_host(host_arg: &Option<String>, config: &Config) -> Result<String, App
 
 fn token(cli: &Cli) -> Result<(), AppError> {
     let config = config::load()?;
-    let resolved = crate::context::resolve_host(cli.host.as_deref(), cli.repo.as_deref(), &config)?;
+    let resolved = crate::context::resolve_host(
+        cli.host.as_deref(),
+        cli.repo.as_deref(),
+        cli.target_hint.as_deref(),
+        &config,
+    )?;
     let host_label = resolved.name.as_deref().unwrap_or(resolved.url.as_str());
     match resolved.token {
         Some(secret) => {

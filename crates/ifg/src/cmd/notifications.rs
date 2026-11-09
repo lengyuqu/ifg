@@ -1,5 +1,7 @@
 //! `ifg notifications …` — the current user's inbox.
 
+use serde_json::Value;
+
 use crate::cli::{Cli, NotificationsCommand};
 use crate::cmd::bootstrap;
 use crate::error::AppError;
@@ -16,19 +18,23 @@ pub async fn run(command: &Option<NotificationsCommand>, cli: &Cli) -> Result<()
                 Some(NotificationsCommand::List { unread, limit }) => (*unread, *limit),
                 _ => (false, None),
             };
-            let per_page = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, 100);
+            let limit = limit.unwrap_or(DEFAULT_LIMIT).max(1);
+            // The endpoint is paginated; asking for 150 used to return the
+            // first page of 100 only. `print_template` also used to treat the
+            // envelope as an array and print nothing.
             if cli.json || cli.template.is_some() {
-                let value = notifications.list_raw(unread, 1, per_page).await?;
+                let items: Vec<Value> = notifications
+                    .list_raw(unread)
+                    .limit(limit)
+                    .collect()
+                    .await?;
                 match &cli.template {
-                    Some(template) => output::print_template(
-                        value.as_array().cloned().unwrap_or_default().as_slice(),
-                        template,
-                    ),
-                    None => output::print_json(&value),
+                    Some(template) => output::print_template(&items, template),
+                    None => output::print_json(&Value::Array(items)),
                 }
                 return Ok(());
             }
-            let items = notifications.list(unread, 1, per_page).await?;
+            let items = notifications.list(unread).limit(limit).collect().await?;
             if items.is_empty() {
                 println!("No notifications.");
                 return Ok(());
@@ -50,9 +56,10 @@ pub async fn run(command: &Option<NotificationsCommand>, cli: &Cli) -> Result<()
                 })
                 .collect();
             output::print_table(&["ID", "STATE", "TYPE", "TITLE", "CREATED"], &rows);
-            let unread_count = notifications.unread_count().await.unwrap_or(0);
-            if unread_count > 0 {
-                eprintln!("({unread_count} unread)");
+            match notifications.unread_count().await {
+                Ok(count) if count > 0 => eprintln!("({count} unread)"),
+                Ok(_) => {}
+                Err(error) => eprintln!("ifg: warning: could not read the unread count: {error}"),
             }
             Ok(())
         }

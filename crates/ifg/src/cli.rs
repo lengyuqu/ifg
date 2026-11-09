@@ -44,6 +44,15 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "NAME|URL")]
     pub host: Option<String>,
 
+    /// Full remote URL from a positional argument (`repo view <URL>`), filled
+    /// in after parsing so host resolution can see it before `bootstrap`.
+    /// Never accepted from the command line.
+    #[arg(skip)]
+    // Only `main` writes it and only `bootstrap` reads it; the `gen_man`
+    // example merely walks clap metadata, hence the allowance.
+    #[allow(dead_code)]
+    pub target_hint: Option<String>,
+
     /// Target repository as OWNER/NAME, or a full remote URL
     ///
     /// Inside a git checkout `ifg` infers OWNER/NAME from `origin`, so the

@@ -297,9 +297,19 @@ async fn logs(
     let printed_lines = selected
         .log
         .as_deref()
+        .filter(|log| !log.is_empty())
         .map(|log| log.split('\n').count())
         .unwrap_or(0);
-    match follow_websocket(ctx, repo, id, selected.id, printed_lines).await {
+    match follow_websocket(
+        ctx,
+        repo,
+        id,
+        selected.id,
+        printed_lines,
+        selected.log.as_deref().unwrap_or_default(),
+    )
+    .await?
+    {
         FollowOutcome::Finished => {
             eprintln!("==> stream closed (job finished)");
             return Ok(());
@@ -307,11 +317,14 @@ async fn logs(
         FollowOutcome::Unavailable => {
             eprintln!("ifg: note: WebSocket streaming unavailable; falling back to polling");
         }
-        FollowOutcome::Interrupted(lines_seen) => {
+        FollowOutcome::Interrupted(chars_seen) => {
             // Never report a lost stream as "finished": resume from the last
-            // printed line so the tail of the log is not silently missing.
-            eprintln!("ifg: note: log stream lost; resuming by polling from line {lines_seen}");
-            printed = lines_seen;
+            // printed character so the tail is not silently missing (the
+            // poller counts characters, not lines).
+            eprintln!(
+                "ifg: note: log stream lost; resuming by polling from character {chars_seen}"
+            );
+            printed = chars_seen;
         }
     }
 
@@ -399,8 +412,44 @@ enum FollowOutcome {
     /// The first handshake failed: streaming is unsupported here, poll instead.
     Unavailable,
     /// Streaming started but could not be kept alive; the caller resumes by
-    /// polling from this line count.
+    /// polling from this **character** count — the unit `print_log` and
+    /// `print_increment` use. Returning a line count here made the poller skip
+    /// or repeat text.
     Interrupted(usize),
+}
+
+/// How long the socket may stay quiet after the job turns terminal before the
+/// follow stops waiting for the tail.
+const DRAIN_QUIET: std::time::Duration = std::time::Duration::from_millis(750);
+
+/// Read log frames until the socket closes or nothing arrives for `quiet`.
+///
+/// The job status can turn terminal one poll before the final log frame is
+/// delivered. Waiting a fixed 300 ms and closing dropped that frame, so
+/// `alpha, omega` came out as `alpha`.
+async fn drain_frames(socket: &mut JobLogSocket, quiet: std::time::Duration) -> Vec<String> {
+    use futures_util::StreamExt;
+
+    let mut chunks = Vec::new();
+    let idle = tokio::time::sleep(quiet);
+    tokio::pin!(idle);
+    loop {
+        tokio::select! {
+            message = socket.next() => match message {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                    if let Some(chunk) = job_log_chunk(&text) {
+                        chunks.push(chunk);
+                        idle.as_mut().reset(tokio::time::Instant::now() + quiet);
+                    }
+                }
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => break,
+                Some(Err(_)) => break,
+                Some(Ok(_)) => {}
+            },
+            _ = &mut idle => break,
+        }
+    }
+    chunks
 }
 
 /// Stream a job log over `/api/v1/ws/job/{id}` until the job is terminal.
@@ -418,16 +467,20 @@ async fn follow_websocket(
     pipeline_id: i64,
     job_id: i64,
     printed_lines: usize,
-) -> FollowOutcome {
+    printed_prefix: &str,
+) -> Result<FollowOutcome, AppError> {
     use futures_util::StreamExt;
-    use std::io::Write as _;
 
     let Some(mut socket) = connect_job_log(&ctx.host, job_id, printed_lines).await else {
-        return FollowOutcome::Unavailable;
+        return Ok(FollowOutcome::Unavailable);
     };
 
     let ci = ctx.client.ci(&repo.owner, &repo.name);
+    // Two cursors: the server resumes by line, the poller continues by
+    // character. Keeping both avoids mixing the units on a hand-over.
     let mut lines_seen = printed_lines;
+    let mut printed_prefix = printed_prefix.to_string();
+    let mut chars_seen = printed_prefix.chars().count();
     let mut failures: u32 = 0;
     loop {
         let mut finished = false;
@@ -437,8 +490,7 @@ async fn follow_websocket(
                 message = socket.next() => match message {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
                         if let Some(chunk) = job_log_chunk(&text) {
-                            print!("{chunk}");
-                            let _ = std::io::stdout().flush();
+                            chars_seen += print_chunk(&chunk, &mut printed_prefix);
                             lines_seen = advance_lines(lines_seen, &chunk);
                             failures = 0;
                         }
@@ -450,8 +502,6 @@ async fn follow_websocket(
                 _ = ticker.tick() => {
                     match ci.job(pipeline_id, job_id).await {
                         Ok(job) if job.is_terminal() => {
-                            // Give in-flight chunks a moment to arrive.
-                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                             finished = true;
                             break;
                         }
@@ -461,10 +511,18 @@ async fn follow_websocket(
                 }
             }
         }
-        let _ = socket.close(None).await;
         if finished {
-            return FollowOutcome::Finished;
+            // The terminal status usually arrives before the last frame: drain
+            // what is in flight, then reconcile against the server's final log.
+            // A quiet socket alone is not proof that the log is complete.
+            for chunk in drain_frames(&mut socket, DRAIN_QUIET).await {
+                print_chunk(&chunk, &mut printed_prefix);
+            }
+            let _ = socket.close(None).await;
+            reconcile_tail(&ci, pipeline_id, job_id, &printed_prefix).await?;
+            return Ok(FollowOutcome::Finished);
         }
+        let _ = socket.close(None).await;
 
         // Interrupted while the job is still running: resume where we left off.
         failures += 1;
@@ -472,7 +530,7 @@ async fn follow_websocket(
             eprintln!(
                 "ifg: note: log stream lost after 10 reconnect attempts; finishing the tail by polling"
             );
-            return FollowOutcome::Interrupted(lines_seen);
+            return Ok(FollowOutcome::Interrupted(chars_seen));
         }
         let delay = reconnect_delay(failures);
         eprintln!(
@@ -517,10 +575,73 @@ fn print_log(log: &Option<String>) -> usize {
     }
 }
 
+/// Print one appended chunk exactly as the server accumulates the log:
+/// `existing_log + "\n" + chunk`. Returns the number of characters written.
+///
+/// The separator matters: the server inserts a newline before every chunk once
+/// the log is non-empty, so the cursor has to count it. Skipping it shifted the
+/// cursor one character left and the next poll repeated text.
+fn print_chunk(chunk: &str, printed_prefix: &mut String) -> usize {
+    use std::io::Write as _;
+    let mut written = 0;
+    if !printed_prefix.is_empty() {
+        println!();
+        printed_prefix.push('\n');
+        written += 1;
+    }
+    print!("{chunk}");
+    printed_prefix.push_str(chunk);
+    let _ = std::io::stdout().flush();
+    written + chunk.chars().count()
+}
+
+/// Compare the printed prefix with the server's final log and print whatever
+/// is missing.
+///
+/// A quiet WebSocket is not proof that the log is complete: the last frame can
+/// arrive later than any fixed grace period. The cumulative `job.log` is the
+/// authority, so one final read reconciles the tail. A network failure is an
+/// error, never "the log is complete".
+async fn reconcile_tail(
+    ci: &ifg_client::Ci<'_>,
+    pipeline_id: i64,
+    job_id: i64,
+    printed_prefix: &str,
+) -> Result<(), AppError> {
+    use std::io::Write as _;
+
+    let job = ci.job(pipeline_id, job_id).await?;
+    let final_log = job.log.unwrap_or_default();
+    let chars_seen = printed_prefix.chars().count();
+    let final_chars = final_log.chars().count();
+    if final_chars < chars_seen {
+        return Err(AppError::Other(format!(
+            "server log shrank while following ({final_chars} < {chars_seen} characters); \
+             the tail cannot be verified"
+        )));
+    }
+    let rest = final_log.strip_prefix(printed_prefix).ok_or_else(|| {
+        AppError::Other(
+            "server log does not match the printed prefix; the tail cannot be verified".into(),
+        )
+    })?;
+    if !rest.is_empty() {
+        print!("{rest}");
+        let _ = std::io::stdout().flush();
+    }
+    Ok(())
+}
+
+/// The part of `log` beyond `printed` **characters**. Character-based on
+/// purpose: the polling cursor and the stream cursor must share one unit.
+fn increment(log: &str, printed_chars: usize) -> String {
+    log.chars().skip(printed_chars).collect()
+}
+
 /// Print the part of `log` beyond `printed` chars; returns that length.
 fn print_increment(log: &Option<String>, printed: usize) -> usize {
     let Some(log) = log else { return 0 };
-    let rest: String = log.chars().skip(printed).collect();
+    let rest = increment(log, printed);
     if rest.is_empty() {
         return 0;
     }
@@ -577,7 +698,82 @@ fn short_date(iso: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{advance_lines, job_log_chunk, job_log_ws_url, reconnect_delay};
+    use super::{
+        advance_lines, drain_frames, increment, job_log_chunk, job_log_ws_url, reconnect_delay,
+    };
+
+    /// The stream cursor and the polling cursor are characters, so a chunk of
+    /// CJK text must not be treated as one "line" of progress.
+    #[test]
+    fn increment_continues_by_characters_across_multiline_cjk_logs() {
+        let log = "第一行\n第二行\n第三行";
+        let printed = "第一行\n".chars().count();
+        assert_eq!(increment(log, printed), "第二行\n第三行");
+        assert_eq!(increment(log, 0), log);
+        assert_eq!(increment(log, log.chars().count()), "");
+        // Using the line count (3) instead would resume in the wrong place.
+        assert_ne!(increment(log, 3), "第二行\n第三行");
+    }
+
+    /// A terminal status can arrive one poll before the last frame: draining
+    /// must wait for it instead of closing the socket after a fixed sleep.
+    #[tokio::test]
+    async fn drain_reads_a_frame_that_arrives_after_the_terminal_status() {
+        use futures_util::SinkExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            ws.send(log_frame("alpha")).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            ws.send(log_frame("omega")).await.unwrap();
+            ws.close(None).await.unwrap();
+        });
+
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        let chunks = drain_frames(&mut socket, std::time::Duration::from_millis(600)).await;
+        server.await.unwrap();
+        assert_eq!(chunks, ["alpha", "omega"]);
+    }
+
+    /// Without a close frame the drain stops after the quiet period, so the
+    /// follow never hangs on a silent socket.
+    #[tokio::test]
+    async fn drain_stops_after_the_quiet_period() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            futures_util::SinkExt::send(&mut ws, log_frame("alpha"))
+                .await
+                .unwrap();
+            // Stay open and silent: the drain must give up on its own.
+            tokio::time::sleep(std::time::Duration::from_millis(2_000)).await;
+        });
+
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+            .await
+            .unwrap();
+        let chunks = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            drain_frames(&mut socket, std::time::Duration::from_millis(100)),
+        )
+        .await
+        .expect("drain must not wait for a close frame");
+        assert_eq!(chunks, ["alpha"]);
+        server.abort();
+    }
+
+    fn log_frame(log: &str) -> tokio_tungstenite::tungstenite::Message {
+        tokio_tungstenite::tungstenite::Message::Text(
+            format!(r#"{{"event_type":"job_log","data":{{"log":"{log}"}}}}"#).into(),
+        )
+    }
 
     #[test]
     fn line_cursor_advances_with_chunks() {

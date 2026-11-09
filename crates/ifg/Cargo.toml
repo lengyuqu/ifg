@@ -41,6 +41,10 @@ keyring = { version = "3", default-features = false, features = [
 assert_cmd = { workspace = true }
 clap_mangen = { workspace = true }
 wiremock = { workspace = true }
+# `sink` and a multi-thread runtime are only used by the WebSocket tests that
+# drive an in-process server while the CLI blocks.
+futures-util = { workspace = true, features = ["sink"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [lints]
 workspace = true
