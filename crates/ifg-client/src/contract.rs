@@ -16,6 +16,8 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("PATCH", "/repos/{owner}/{name}/wiki/{title}"),
     ("DELETE", "/repos/{owner}/{name}/wiki/{title}"),
     ("GET", "/repos/{owner}/{name}/wiki/{title}/history"),
+    ("GET", "/collaboration/capabilities"),
+    ("GET", "/repos/{owner}/{name}/collaboration/capabilities"),
     // Collaboration P0
     ("GET", "/repos/{owner}/{name}/collaboration/sessions"),
     ("POST", "/repos/{owner}/{name}/collaboration/sessions"),
@@ -99,6 +101,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("GET", "/repos/explore"),
     ("GET", "/repos/{owner}"),
     ("GET", "/repos/{owner}/{name}"),
+    ("PATCH", "/repos/{owner}/{name}"),
     ("DELETE", "/repos/{owner}/{name}"),
     ("GET", "/repos/{owner}/{name}/collaborators"),
     ("POST", "/repos/{owner}/{name}/collaborators"),
@@ -140,11 +143,11 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ),
     (
         "POST",
-        "/repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/rerun",
+        "/repos/{owner}/{name}/pipelines/{pipeline_id}/jobs/{job_id}/rerun",
     ),
     (
         "POST",
-        "/repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/approve",
+        "/repos/{owner}/{name}/pipelines/{pipeline_id}/jobs/{job_id}/approve",
     ),
     // releases (M3)
     ("GET", "/repos/{owner}/{name}/releases"),

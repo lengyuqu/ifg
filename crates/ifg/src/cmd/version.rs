@@ -25,6 +25,46 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
             }
             println!("{line}");
             println!("host:   {}", ctx.host.url);
+            // The instance endpoint can require a broader PAT scope. When a
+            // repository is known, its scoped discovery also works with a
+            // repository-limited token.
+            let mut discovery = ctx.client.capabilities().await;
+            if discovery.is_err() {
+                if let Ok(repo) = crate::context::resolve_repo(cli.repo.as_deref(), &ctx.host) {
+                    discovery = ctx
+                        .client
+                        .send(
+                            ifg_client::Method::GET,
+                            &format!(
+                                "repos/{}/{}/collaboration/capabilities",
+                                repo.owner, repo.name
+                            ),
+                            None,
+                        )
+                        .await;
+                }
+            }
+            if let Ok(capabilities) = discovery {
+                if let Some(commit) = capabilities["build_commit"].as_str() {
+                    let dirty = match capabilities["build_dirty"].as_bool() {
+                        Some(true) => " (modified source)",
+                        Some(false) => "",
+                        None => " (source state unknown)",
+                    };
+                    println!("build:  {commit}{dirty}");
+                } else {
+                    println!("build:  unknown");
+                }
+                if let Some(features) = capabilities["api_capabilities"].as_array() {
+                    let features: Vec<_> = features.iter().filter_map(|v| v.as_str()).collect();
+                    println!("api capabilities: {}", features.join(", "));
+                } else {
+                    println!("api capabilities: unknown");
+                }
+            } else {
+                println!("build:  unknown (capability discovery unavailable)");
+                println!("api capabilities: unknown");
+            }
             if let Some(message) = crate::version::outdated(version) {
                 eprintln!("ifg: warning: {message}");
             }

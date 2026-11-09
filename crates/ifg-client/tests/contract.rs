@@ -134,6 +134,36 @@ fn critical_typed_operation_fields_match_client_contract() {
     .expect("valid JSON snapshot");
     let contracts: &[OperationContract<'_>] = &[
         (
+            "/paths/~1repos~1{owner}~1{name}/patch/requestBody/content/application~1json/schema",
+            &[("expected_version", "string"), ("description", "string"), ("is_private", "boolean"), ("default_branch", "string")],
+            &["expected_version"],
+        ),
+        (
+            "/paths/~1repos~1{owner}~1{name}~1wiki~1{title}/patch/requestBody/content/application~1json/schema",
+            &[("content", "string"), ("expected_version", "string"), ("message", "string")],
+            &["content", "expected_version"],
+        ),
+        (
+            "/paths/~1repos~1{owner}~1{name}~1wiki~1{title}/get/responses/200/content/application~1json/schema",
+            &[("id", "integer"), ("title", "string"), ("content", "string"), ("version", "string")],
+            &["id", "title", "content", "version"],
+        ),
+        (
+            "/paths/~1repos~1{owner}~1{name}~1pulls~1{number}/patch/requestBody/content/application~1json/schema",
+            &[("title", "string"), ("body", "string"), ("state", "string"), ("draft", "boolean"), ("milestone_id", "integer")],
+            &[],
+        ),
+        (
+            "/paths/~1repos~1{owner}~1{name}~1pipelines/post/requestBody/content/application~1json/schema",
+            &[("ref_name", "string")],
+            &[],
+        ),
+        (
+            "/paths/~1repos~1{owner}~1{name}~1pipelines/post/responses/201/content/application~1json/schema",
+            &[("id", "integer"), ("status", "string"), ("commit_sha", "string"), ("ref_name", "string")],
+            &["id", "status", "commit_sha", "ref_name"],
+        ),
+        (
             "/paths/~1users~1me/get/responses/200/content/application~1json/schema",
             &[("id", "integer"), ("username", "string")],
             &["id", "username"],
@@ -202,4 +232,32 @@ fn field_check_detects_removed_changed_and_optional_fields() {
     let schema = serde_json::json!({"properties": {"id": {"type": "string"}}, "required": []});
     let errors = check_fields(&schema, &[("id", "integer"), ("name", "string")], &["id"]);
     assert_eq!(errors.len(), 3, "{errors:?}");
+}
+
+#[test]
+fn critical_mutations_document_request_and_conflict_statuses() {
+    let spec: Value =
+        serde_json::from_str(&fs::read_to_string(newest_snapshot(&fixtures_dir())).unwrap())
+            .unwrap();
+    for (path, method) in [
+        ("/repos/{owner}/{name}", "patch"),
+        ("/repos/{owner}/{name}/wiki", "post"),
+        ("/repos/{owner}/{name}/wiki/{title}", "patch"),
+        ("/repos/{owner}/{name}/pulls/{number}", "patch"),
+        ("/repos/{owner}/{name}/pipelines", "post"),
+    ] {
+        for status in ["415", "422"] {
+            assert!(
+                spec["paths"][path][method]["responses"]
+                    .get(status)
+                    .is_some(),
+                "{method} {path} missing {status}"
+            );
+        }
+    }
+    assert!(
+        spec["paths"]["/repos/{owner}/{name}/wiki/{title}"]["patch"]["responses"]
+            .get("409")
+            .is_some()
+    );
 }

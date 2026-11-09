@@ -19,6 +19,8 @@ pub struct Repo {
     pub description: Option<String>,
     pub is_private: bool,
     pub default_branch: String,
+    #[serde(default)]
+    pub settings_version: Option<String>,
     pub stars_count: i64,
     pub forks_count: i64,
     #[serde(default)]
@@ -174,6 +176,18 @@ impl Repos<'_> {
     pub async fn get_raw(&self, owner: &str, name: &str) -> Result<Value, Error> {
         self.client
             .send(crate::Method::GET, &repo_path(owner, name), None)
+            .await
+    }
+
+    /// Update repository settings with the version read from GET.
+    pub async fn update_settings(
+        &self,
+        owner: &str,
+        name: &str,
+        body: &Value,
+    ) -> Result<Value, Error> {
+        self.client
+            .send(crate::Method::PATCH, &repo_path(owner, name), Some(body))
             .await
     }
 

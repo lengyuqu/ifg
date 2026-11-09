@@ -1,6 +1,3 @@
 # Endpoints used by ifg-client but absent from the OpenAPI snapshot
 # (missing utoipa annotations server-side). The contract test tolerates
 # exactly these entries; remove a line once the snapshot covers it.
-
-POST /repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/rerun
-POST /repos/{owner}/{name}/pipelines/{id}/jobs/{job_id}/approve

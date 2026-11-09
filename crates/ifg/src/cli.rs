@@ -243,6 +243,9 @@ pub enum WikiCommand {
         file: Option<String>,
         #[arg(long)]
         message: Option<String>,
+        /// Page version captured when the edit began (from `wiki view --json`).
+        #[arg(long)]
+        expected_version: Option<String>,
     },
     /// List previous revisions
     History { title: String },
@@ -629,6 +632,23 @@ pub enum RepoCommand {
         /// Open the repository page in the browser
         #[arg(long)]
         web: bool,
+    },
+    /// Update repository settings (requires repository administrator).
+    Edit {
+        /// OWNER/NAME; defaults to the current repository context.
+        #[arg(value_name = "OWNER/NAME")]
+        target: Option<String>,
+        #[arg(long, conflicts_with = "clear_description")]
+        description: Option<String>,
+        #[arg(long)]
+        clear_description: bool,
+        #[arg(long, value_parser = ["public", "private"])]
+        visibility: Option<String>,
+        #[arg(long)]
+        default_branch: Option<String>,
+        /// Settings version captured earlier from `repo view --json`.
+        #[arg(long)]
+        expected_version: Option<String>,
     },
     /// Create a repository under your account (or an organization)
     Create {

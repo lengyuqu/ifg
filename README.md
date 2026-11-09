@@ -90,6 +90,8 @@ ifg api users/me --jq '.username' --jq-raw             # 使用系统 jq 处理 
 ifg wiki create '使用说明' --file README.md -R yourname/demo
 ifg wiki view '使用说明' -R yourname/demo
 ifg wiki edit '使用说明' --file - -R yourname/demo      # 从 stdin 读取并替换页面内容
+ifg wiki edit '使用说明' --file page.md --expected-version '12:34' -R yourname/demo  # 使用之前读取的版本
+ifg repo edit -R yourname/demo --description "新描述" --visibility private --default-branch main
 ifg wiki history '使用说明' -R yourname/demo
 ifg wiki delete '使用说明' -R yourname/demo             # 交互确认；脚本可加 --yes
 ifg release create v1.0.0 -n "说明" dist/pkg.tar.gz     # 建 Release 并流式上传
@@ -97,6 +99,8 @@ ifg release edit v1.0.0 -n "修订说明" --prerelease       # 改发布说明/�
 ifg release download v1.0.0 -p 'pkg*'                   # SHA-256 校验后落盘
 git config --global credential.https://your-forge.example.com.helper "!ifg auth git-credential"   # git clone/push 免密
 ```
+
+Wiki 编辑要求服务端支持版本保护。未指定 `--expected-version` 时，ifg 在提交前读取最新版本，仅保护这次读取之后的并发修改；若正文基于更早的读取，请从 `ifg wiki view --json` 保存版本并显式传入。`repo edit` 同样支持 `--expected-version`。旧版服务端不提供版本时，ifg 会拒绝无保护的更新。
 
 `pr comment` 提交的是带正文的普通评审（`action=comment`），不是文件行内评论；可通过 `pr reviews` 查看。行内评论仍由 `pr view --comments` 查看。
 

@@ -51,13 +51,36 @@ impl Wiki<'_> {
         &self,
         title: &str,
         content: &str,
+        expected_version: &str,
         message: Option<&str>,
     ) -> Result<Value, Error> {
+        let repo_path = self.path.strip_suffix("/wiki").expect("Wiki path suffix");
+        let capabilities: Value = self
+            .client
+            .send(
+                Method::GET,
+                &format!("{repo_path}/collaboration/capabilities"),
+                None,
+            )
+            .await?;
+        let supported = capabilities["api_capabilities"]
+            .as_array()
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item.as_str() == Some("wiki.concurrent_update.v1"))
+            });
+        if !supported {
+            return Err(Error::Config(
+                "server does not advertise protected Wiki updates; refusing an unprotected edit"
+                    .into(),
+            ));
+        }
         self.client
             .send(
                 Method::PATCH,
                 &self.page(title),
-                Some(&json!({"content":content,"message":message})),
+                Some(&json!({"content":content,"message":message,"expected_version":expected_version})),
             )
             .await
     }
