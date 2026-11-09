@@ -108,15 +108,21 @@ Wiki 编辑要求服务端支持版本保护。未指定 `--expected-version` �
 
 `ifg api <path> --jq '<表达式>'` 使用 PATH 中的 `jq` 处理 GET 的 JSON 响应，`--jq-raw` 输出未加引号的字符串；缺少 jq、响应不是 JSON 或表达式出错时返回非零。`--paginate --jq` 将各页合并为数组后再执行表达式。该选项当前仅属于 `api` 子命令且仅支持 GET；其他子命令可继续使用 `--json | jq ...`。
 
-`ifg api` 输出服务端原始字节，不追加换行，**不做**终端控制字符清洗（它的用途是管道给 jq 或重定向到文件）。其余子命令会剥离 `ESC` 等控制序列，避免仓库里的正文劫持终端；直接查看不受信任的原始响应时请走 `--jq` 或 `| cat -v`。
+`ifg api` 默认输出服务端原始字节，不追加换行，**不做**终端控制字符清洗（它的用途是管道给 jq 或重定向到文件）。显式使用 `--json` 或 `--template` 时会解析 JSON，非 JSON 响应返回非零，合法空响应按 `null` 处理；模板对数组逐项渲染。其余子命令会剥离 `ESC` 等控制序列，避免仓库里的正文劫持终端；直接查看不受信任的原始响应时请走 `--jq` 或 `| cat -v`。
 
 `ifg status --json` 返回聚合对象：`repository` 为 `OWNER/NAME`，`branch` 为当前分支，`pull` 为匹配的 PR 原始对象（没有时为 `null`），`runs` 为最近最多 5 条分支流水线的原始对象数组，`scanned_runs` 为本次检查的流水线条数（最多扫描最近 500 条）。`--template` 可读取同一对象，例如 `ifg status -q '{{.branch}}: {{range .runs}}{{.id}} {{end}}'`。短分支名和 `refs/heads/` 格式都会匹配，同名 `refs/tags/` 不会计入。
 
 `ifg release create --json` 和 `--template` 都支持携带附件；指定附件时，结果对象的 `assets` 数组包含本次上传的附件原始字段。进度写入 stderr，stdout 只在全部成功后输出一次结果。若上传失败，命令返回非零，stderr 会保留已创建的 Release 编号，Release 和已上传的附件不会自动删除。
 
+CI 的取消、重试和审批、PR 评审、组织成员操作、通知操作、仓库设置修改和认证状态列表均支持 `--json` / `--template`。`notifications count --json` 返回 `{"unread_count": N}`。机器输出的 stdout 只含结果，其他提示不会混入其中。输出写入失败返回非零；管道消费者提前退出产生的 BrokenPipe 仍按正常结束处理。
+
+以下命令不支持结构化输出，携带 `--json` / `--template` 会在执行前返回用法错误：`auth login/logout/token/git-credential`、`repo clone/delete`、`pr checkout/diff`、`ci logs`、`release upload/download/delete`、`label delete`、`milestone delete`、`version` 和 `completions`，以及使用 `--web` 的命令。
+
+`pr checkout` 优先获取当前源分支；分支或 fork 已删除时，会从 PR **目标仓库**获取 `refs/pull/<编号>/head`。旧服务端若未发布 fork PR 镜像，命令会明确报错，需要保留源分支或升级服务端；固定基线仅为同仓 PR 提供镜像。
+
 Wiki 的 `edit` 替换整个页面，并使用服务端版本进行并发保护；正文基于较早读取时应显式传入当时的 `--expected-version`。固定基线已修复单条历史版本接口的跨仓库授权问题；`history` 列出当前授权仓库中该页面的历史。旧服务端可能仍受影响，应先更新部署。
 
-`ci run` 的 ref 由 IronForge 服务端解析，省略时使用服务端默认的 `refs/heads/main`。`ci wait` 或 `ci run --wait` 只有流水线成功才返回 0；失败、取消、人工门禁、未知状态和超时都返回非零。人工门禁可先用 `ci view` 查看作业并按服务端流程处理。触发成功后即使等待超时也不会取消流水线，流水线编号会输出到 stderr。
+`ci run` 的 ref 由 IronForge 服务端解析，省略时使用服务端默认的 `refs/heads/main`。`ci runs --branch feature` 同时匹配短名和 `refs/heads/feature`，不会计入同名 tag；指定 `--branch refs/tags/feature` 则仅匹配该 tag。`ci wait` 或 `ci run --wait` 只有流水线成功才返回 0；失败、取消、人工门禁、未知状态和超时都返回非零。人工门禁可先用 `ci view` 查看作业并按服务端流程处理。触发成功后即使等待超时也不会取消流水线，流水线编号会输出到 stderr。
 
 仓库协作者权限为 `read`、`write` 或 `admin`；列表仅包含直接协作者，用户 ID 和协作者记录 ID 是不同的值。权限调整后会重新读取确认是否生效；旧版服务端可能存在更新未持久化的问题，CLI 会报错而不声称成功。
 
@@ -146,7 +152,8 @@ ifg completions bash > /etc/bash_completion.d/ifg
 ## 配置与凭据
 
 - 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`；Windows 默认 `%APPDATA%\ironforge\hosts.toml`（POSIX 的 0600 告警不适用，权限由用户目录 ACL 控制）。写入是「临时文件 + 原子替换」，并对同目录的 `.hosts.toml.lock` 加排他锁，多个 `ifg auth` 并发执行不会互相覆盖
-- 钥匙串（可选）：`token_store = "keyring"` 时 PAT 存系统钥匙串（macOS 钥匙串 / Linux `secret-tool` / Windows 凭据管理器），不落文件；macOS 与 Windows 直接调用系统凭据 API，token 不会出现在进程参数里
+- 钥匙串（可选）：`token_store = "keyring"` 时优先将 PAT 保存到系统钥匙串（macOS 钥匙串 / Linux `secret-tool` / Windows 凭据管理器）；写入不可用时会告警并回退到配置文件。主机条目中显式保存的文件 PAT 优先于旧钥匙串条目，直到一次成功登录将 PAT 写入钥匙串并清除文件副本；从钥匙串读出的 PAT 不会随配置更新写回文件。macOS 与 Windows 直接调用系统凭据 API，token 不会出现在进程参数里
+- 配置凭据只会自动复用于相同协议、主机、有效端口和部署基础路径；覆盖为 HTTP 或另一部署路径时，不会自动携带原配置的 PAT。显式的 `IRONFORGE_PAT` 仍绑定到选定的目标。它覆盖配置时，`repo list` 会读取该令牌对应的用户名；缺少 `user` scope 时请显式指定 `repo list OWNER`
 - `--json` 输出服务端原始字段；`-q/--template` 走轻量子集（`{{.field}}`、`{{.a.b}}`、`{{range .list}}…{{end}}`，列表自动逐项渲染）
 - 管道输出自动关闭颜色与相对时间；`pr diff` 在终端里上色并走分页器
 - Windows 终端：仅在 Windows Terminal / VS Code / mintty（`WT_SESSION`、`TERM_PROGRAM`、`TERM`）下启用颜色，传统 `cmd.exe` 等价 `--no-color`；分页器默认直出，可设 `PAGER` 覆盖

@@ -70,7 +70,7 @@ impl Notifications<'_> {
                 None,
             )
             .await?;
-        Ok(crate::error::json_or_null(&bytes))
+        crate::error::json_or_null(&bytes)
     }
 
     /// `POST /notifications/mark-all-read`.
@@ -79,7 +79,7 @@ impl Notifications<'_> {
             .client
             .raw(crate::Method::POST, "notifications/mark-all-read", None)
             .await?;
-        Ok(crate::error::json_or_null(&bytes))
+        crate::error::json_or_null(&bytes)
     }
 
     /// `DELETE /notifications/{id}`.
@@ -88,6 +88,6 @@ impl Notifications<'_> {
             .client
             .raw(crate::Method::DELETE, &format!("notifications/{id}"), None)
             .await?;
-        Ok(crate::error::json_or_null(&bytes))
+        crate::error::json_or_null(&bytes)
     }
 }

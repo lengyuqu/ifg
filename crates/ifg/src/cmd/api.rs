@@ -65,12 +65,21 @@ pub async fn run(args: &ApiArgs, cli: &Cli) -> Result<(), AppError> {
                 .map_err(|e| AppError::Other(format!("could not encode JSON: {e}")))?;
             filter_jq(expression, args.jq_raw, &bytes)?;
         } else {
-            output::print_json(&Value::Array(items));
+            super::show(cli, &Value::Array(items));
         }
     } else {
         let bytes = client.raw(method, &path, body.as_ref()).await?;
         if let Some(expression) = &args.jq {
             filter_jq(expression, args.jq_raw, &bytes)?;
+        } else if cli.json || cli.template.is_some() {
+            let value = if bytes.is_empty() {
+                Value::Null
+            } else {
+                serde_json::from_slice(&bytes).map_err(|_| {
+                    AppError::Other("--json/--template requires a JSON response".into())
+                })?
+            };
+            super::show(cli, &value);
         } else {
             output::print_bytes(&bytes);
         }

@@ -22,7 +22,8 @@ pub async fn run(
     // used to make `--limit 200` silently return 100 hits.
     let per_page = limit.min(SERVER_PER_PAGE);
 
-    let mut hits: Vec<ifg_client::SearchHit> = Vec::new();
+    let mut hits: Vec<serde_json::Value> = Vec::new();
+    let mut envelope = None;
     // Assigned on the first iteration, which always runs before the loop can
     // break, so the later read is definite.
     let mut total: u64;
@@ -31,11 +32,17 @@ pub async fn run(
         let page = ctx
             .client
             .search()
-            .query(query, search_type, page_no, per_page)
+            .query_raw(query, search_type, page_no, per_page)
             .await?;
-        total = page.total;
-        let received = page.results.len();
-        hits.extend(page.results);
+        total = page["total"].as_u64().unwrap_or(0);
+        let results = page["results"].as_array().ok_or_else(|| {
+            AppError::Other("invalid search response: results must be an array".into())
+        })?;
+        let received = results.len();
+        hits.extend(results.iter().cloned());
+        if envelope.is_none() {
+            envelope = Some(page.clone());
+        }
         let short_page = received < per_page as usize;
         if received == 0 || short_page || hits.len() as u64 >= limit {
             break;
@@ -45,26 +52,29 @@ pub async fn run(
     hits.truncate(limit as usize);
 
     if cli.json || cli.template.is_some() {
-        let results: Vec<serde_json::Value> = hits
-            .iter()
-            .map(|hit| serde_json::to_value(hit).unwrap_or(serde_json::Value::Null))
-            .collect();
         match &cli.template {
-            Some(template) => output::print_template(&results, template),
-            None => output::print_json(&serde_json::json!({
-                "results": results,
-                "total": total,
-                "page": 1,
-                "per_page": per_page,
-            })),
+            Some(template) => output::print_template(&hits, template),
+            None => {
+                let mut value = envelope.expect("the first search page was fetched");
+                value["results"] = serde_json::Value::Array(hits);
+                if value.get("total").is_some() {
+                    value["total"] = serde_json::json!(total);
+                }
+                output::print_json(&value);
+            }
         }
         return Ok(());
     }
 
     if hits.is_empty() {
-        println!("No matches for '{query}'.");
+        output::line!("No matches for '{query}'.");
         return Ok(());
     }
+    let hits: Vec<ifg_client::SearchHit> = hits
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<_, _>>()
+        .map_err(|error| AppError::Other(format!("could not decode search result: {error}")))?;
     let rows: Vec<Vec<String>> = hits
         .iter()
         .map(|hit| {

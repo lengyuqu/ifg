@@ -62,7 +62,7 @@ async fn list(ctx: &super::CommandContext, cli: &Cli, repo: &RepoContext) -> Res
         })
         .collect();
     if rows.is_empty() {
-        println!("No labels in {repo}.");
+        output::line!("No labels in {repo}.");
         return Ok(());
     }
     output::print_table(&["NAME", "COLOR", "DESCRIPTION"], &rows);
@@ -92,7 +92,7 @@ async fn create(
         return Ok(());
     }
     let label = labels.create(&options).await?;
-    println!(
+    output::line!(
         "Created label {} ({})",
         label.name,
         label.color.unwrap_or_default()
@@ -125,7 +125,7 @@ async fn edit(
         return Ok(());
     }
     let updated = labels.update(existing.id, &options).await?;
-    println!(
+    output::line!(
         "Updated label {} ({})",
         updated.name,
         updated.color.unwrap_or_default()
@@ -142,11 +142,11 @@ async fn delete(
     let labels = ctx.client.labels(&repo.owner, &repo.name);
     let existing = find(&labels, name).await?;
     if !yes && !super::confirm(&format!("Delete label '{}' from {repo}?", existing.name))? {
-        println!("Aborted.");
+        output::line!("Aborted.");
         return Ok(());
     }
     labels.delete(existing.id).await?;
-    println!("Deleted label {}.", existing.name);
+    output::line!("Deleted label {}.", existing.name);
     Ok(())
 }
 

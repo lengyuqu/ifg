@@ -4,6 +4,7 @@
 
 use crate::context::RepoContext;
 use crate::error::AppError;
+use crate::output;
 
 /// `{base}/{owner}/{repo}` — the SPA route tree mirrors the API layout.
 pub fn repo_url(base: &str, repo: &RepoContext) -> String {
@@ -39,7 +40,7 @@ pub fn open(url: &str) -> Result<(), AppError> {
             "refusing to open a non-HTTP URL: {url}"
         )));
     }
-    println!("{url}");
+    output::line!("{url}");
     let result = open_command(url);
     match result {
         Ok(_) => Ok(()),

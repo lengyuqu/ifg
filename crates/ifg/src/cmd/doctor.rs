@@ -124,7 +124,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
             checks.push(streaming_check(ctx).await);
         }
         checks.push(repo_check(cli, ctx).await);
-        checks.push(git_helper_check());
+        checks.push(git_helper_check(&ctx.host));
     }
 
     let failed = checks
@@ -139,7 +139,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
             None => output::print_json(&Value::Array(items)),
         }
     } else {
-        println!(
+        output::line!(
             "ifg {} (min server {})",
             env!("CARGO_PKG_VERSION"),
             crate::version::MIN_SERVER_VERSION
@@ -150,7 +150,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
             .max()
             .unwrap_or(0);
         for check in &checks {
-            println!(
+            output::line!(
                 "  {:<width$}  {}  {}",
                 check.name,
                 check.status.mark(),
@@ -158,7 +158,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
                 width = width
             );
             if let Some(hint) = &check.hint {
-                println!(
+                output::line!(
                     "  {:<width$}  {:<4}  → {}",
                     "",
                     "",
@@ -167,11 +167,11 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
                 );
             }
         }
-        println!();
+        output::line!();
         if failed == 0 {
-            println!("all good.");
+            output::line!("all good.");
         } else {
-            println!("{failed} check(s) failed.");
+            output::line!("{failed} check(s) failed.");
         }
     }
 
@@ -330,9 +330,9 @@ async fn repo_check(cli: &Cli, ctx: &crate::cmd::CommandContext) -> Check {
 
 /// The credential helper keeps `git clone`/`push` on the same token; a missing
 /// helper is a warning, not an error (git may use its own store).
-fn git_helper_check() -> Check {
+fn git_helper_check(host: &ResolvedHost) -> Check {
     let output = std::process::Command::new("git")
-        .args(["config", "--get-all", "credential.helper"])
+        .args(["config", "--get-urlmatch", "credential.helper", &host.url])
         .output();
     let Ok(output) = output else {
         return Check::warn("git", "git not found in PATH", "install git");
@@ -344,12 +344,28 @@ fn git_helper_check() -> Check {
         let helper = if cfg!(windows) {
             "!ifg.exe auth git-credential"
         } else {
-            "ifg auth git-credential"
+            "!ifg auth git-credential"
         };
         Check::warn(
             "git",
-            "ifg is not the git credential helper",
-            format!("git config --global --add credential.helper '{helper}' (optional)"),
+            "ifg is not the git credential helper for this host (optional)",
+            format!(
+                "git config --global {} {}",
+                quote_arg(&format!(
+                    "credential.{}.helper",
+                    host.url.trim_end_matches('/')
+                )),
+                quote_arg(helper)
+            ),
         )
     }
+}
+
+/// Hints are copyable shell commands; quote the URL as well as the helper.
+fn quote_arg(value: &str) -> String {
+    #[cfg(windows)]
+    let escaped = value.replace('\'', "''");
+    #[cfg(not(windows))]
+    let escaped = value.replace('\'', "'\\''");
+    format!("'{escaped}'")
 }

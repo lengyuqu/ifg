@@ -68,7 +68,7 @@ async fn list(ctx: &super::CommandContext, cli: &Cli, repo: &RepoContext) -> Res
         })
         .collect();
     if rows.is_empty() {
-        println!("No milestones in {repo}.");
+        output::line!("No milestones in {repo}.");
         return Ok(());
     }
     output::print_table(&["TITLE", "STATE", "DUE", "DESCRIPTION"], &rows);
@@ -99,7 +99,7 @@ async fn create(
         return Ok(());
     }
     let milestone = milestones.create(&options).await?;
-    println!("Created milestone '{}'.", milestone.title);
+    output::line!("Created milestone '{}'.", milestone.title);
     Ok(())
 }
 
@@ -131,7 +131,7 @@ async fn edit(
         return Ok(());
     }
     let updated = milestones.update(existing.id, &options).await?;
-    println!("Updated milestone '{}'.", updated.title);
+    output::line!("Updated milestone '{}'.", updated.title);
     Ok(())
 }
 
@@ -149,11 +149,11 @@ async fn delete(
             existing.title
         ))?
     {
-        println!("Aborted.");
+        output::line!("Aborted.");
         return Ok(());
     }
     milestones.delete(existing.id).await?;
-    println!("Deleted milestone '{}'.", existing.title);
+    output::line!("Deleted milestone '{}'.", existing.title);
     Ok(())
 }
 

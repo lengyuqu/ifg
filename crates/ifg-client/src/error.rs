@@ -115,16 +115,32 @@ pub(crate) fn snippet(body: &[u8]) -> String {
 }
 
 /// Decode a body that may be empty (204) or JSON; empty becomes `null`.
-pub(crate) fn json_or_null(bytes: &[u8]) -> Value {
+pub(crate) fn json_or_null(bytes: &[u8]) -> Result<Value, Error> {
     if bytes.is_empty() {
-        return Value::Null;
+        return Ok(Value::Null);
     }
-    serde_json::from_slice(bytes).unwrap_or(Value::Null)
+    serde_json::from_slice(bytes).map_err(|source| Error::Decode {
+        body_snippet: snippet(bytes),
+        source,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_json_rejects_nonempty_invalid_responses() {
+        assert_eq!(json_or_null(b"").unwrap(), Value::Null);
+        assert_eq!(json_or_null(b"null").unwrap(), Value::Null);
+        assert!(json_or_null(br#"{"deleted":true}"#).unwrap()["deleted"]
+            .as_bool()
+            .unwrap());
+        assert!(matches!(
+            json_or_null(b"<html>fallback</html>"),
+            Err(Error::Decode { .. })
+        ));
+    }
 
     #[test]
     fn parses_nested_error_body() {

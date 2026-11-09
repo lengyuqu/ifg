@@ -36,7 +36,7 @@ pub async fn run(command: &Option<NotificationsCommand>, cli: &Cli) -> Result<()
             }
             let items = notifications.list(unread).limit(limit).collect().await?;
             if items.is_empty() {
-                println!("No notifications.");
+                output::line!("No notifications.");
                 return Ok(());
             }
             let rows: Vec<Vec<String>> = items
@@ -65,24 +65,41 @@ pub async fn run(command: &Option<NotificationsCommand>, cli: &Cli) -> Result<()
         }
         Some(NotificationsCommand::Read { id, all }) => {
             if *all {
-                notifications.mark_all_read().await?;
-                println!("Marked every notification as read.");
+                let value = notifications.mark_all_read().await?;
+                if cli.json || cli.template.is_some() {
+                    super::show(cli, &value);
+                } else {
+                    output::line!("Marked every notification as read.");
+                }
                 return Ok(());
             }
             let Some(id) = id else {
                 return Err(AppError::Usage("pass a notification id or --all".into()));
             };
-            notifications.mark_read(*id).await?;
-            println!("Marked notification {id} as read.");
+            let value = notifications.mark_read(*id).await?;
+            if cli.json || cli.template.is_some() {
+                super::show(cli, &value);
+            } else {
+                output::line!("Marked notification {id} as read.");
+            }
             Ok(())
         }
         Some(NotificationsCommand::Delete { id }) => {
-            notifications.delete(*id).await?;
-            println!("Deleted notification {id}.");
+            let value = notifications.delete(*id).await?;
+            if cli.json || cli.template.is_some() {
+                super::show(cli, &value);
+            } else {
+                output::line!("Deleted notification {id}.");
+            }
             Ok(())
         }
         Some(NotificationsCommand::Count) => {
-            println!("{}", notifications.unread_count().await?);
+            let count = notifications.unread_count().await?;
+            if cli.json || cli.template.is_some() {
+                super::show(cli, &serde_json::json!({"unread_count":count}));
+            } else {
+                output::line!("{count}");
+            }
             Ok(())
         }
     }

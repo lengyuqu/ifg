@@ -2,8 +2,8 @@
 //! for `--json`/pipes. Colors, the pager and relative timestamps only switch
 //! on when stdout is a terminal, so piped output stays plain and scriptable.
 
-use std::io::{IsTerminal, Write};
-use std::sync::OnceLock;
+use std::io::{self, IsTerminal, Write};
+use std::sync::{Mutex, OnceLock};
 
 use comfy_table::{presets::ASCII_FULL_CONDENSED, Cell, Color, Table as ComfyTable};
 
@@ -19,6 +19,71 @@ pub struct Capabilities {
 }
 
 static CAPS: OnceLock<Capabilities> = OnceLock::new();
+static OUTPUT_ERROR: Mutex<Option<io::Error>> = Mutex::new(None);
+
+// Renderers share one process-wide output result. This also covers scalar
+// command messages, without letting an ignored write make the process succeed.
+// BrokenPipe alone is normal when a consumer (or the pager) exits early.
+fn record(result: io::Result<()>) {
+    if let Err(error) = result {
+        if error.kind() != io::ErrorKind::BrokenPipe {
+            let mut first = OUTPUT_ERROR.lock().unwrap_or_else(|e| e.into_inner());
+            if first.is_none() {
+                *first = Some(error);
+            }
+        }
+    }
+}
+
+fn emit(bytes: &[u8]) {
+    record(with_stdout(|writer| writer.write_all(bytes)));
+}
+
+pub(crate) fn write_format(args: std::fmt::Arguments<'_>) {
+    record(with_stdout(|writer| writer.write_fmt(args)));
+}
+
+fn with_stdout(write: impl FnOnce(&mut dyn Write) -> io::Result<()>) -> io::Result<()> {
+    let stdout = std::io::stdout();
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        let _guard = stdout.lock();
+        // A read-only inherited stdout is still a valid descriptor. Use a
+        // safely duplicated File so its write failure reaches the exit code.
+        let mut file = std::fs::File::from(stdout.as_fd().try_clone_to_owned()?);
+        write(&mut file)
+    }
+    #[cfg(not(unix))]
+    {
+        write(&mut stdout.lock())
+    }
+}
+
+macro_rules! text {
+    ($($arg:tt)*) => { $crate::output::write_format(format_args!($($arg)*)) };
+}
+pub(crate) use text;
+
+macro_rules! line {
+    () => { $crate::output::write_format(format_args!("\n")) };
+    ($($arg:tt)*) => { $crate::output::write_format(format_args!("{}\n", format_args!($($arg)*))) };
+}
+pub(crate) use line;
+
+pub(crate) fn flush() {
+    record(with_stdout(|writer| writer.flush()));
+}
+
+/// Called once by main, including after commands that only print scalars.
+pub(crate) fn finish() -> io::Result<()> {
+    flush();
+    OUTPUT_ERROR
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .map_or(Ok(()), Err)
+}
 
 /// Decide and cache the output capabilities from the global flags.
 pub fn init(no_color: bool) {
@@ -107,9 +172,8 @@ pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
     if caps.terminal && rows.len() as u64 >= caps.pager_at_rows {
         page(&rendered);
     } else {
-        // Ignore EPIPE: `ifg … | head` closing the pipe is normal, not a crash.
-        let _ = std::io::stdout().write_all(rendered.as_bytes());
-        let _ = std::io::stdout().write_all(b"\n");
+        emit(rendered.as_bytes());
+        emit(b"\n");
     }
 }
 
@@ -119,15 +183,15 @@ pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
 fn page(content: &str) {
     let pager = std::env::var("PAGER").ok().or_else(default_pager);
     let Some(pager) = pager else {
-        print!("{content}");
-        let _ = std::io::stdout().flush();
+        write_format(format_args!("{content}"));
+        flush();
         return;
     };
     let mut parts = pager.split_whitespace();
     let (program, args) = match (parts.next(), parts.collect::<Vec<_>>()) {
         (Some(program), args) => (program, args),
         (None, _) => {
-            print!("{content}");
+            write_format(format_args!("{content}"));
             return;
         }
     };
@@ -138,14 +202,14 @@ fn page(content: &str) {
     match child {
         Ok(mut child) => {
             if let Some(stdin) = child.stdin.as_mut() {
-                let _ = stdin.write_all(content.as_bytes());
-                let _ = stdin.write_all(b"\n");
+                record(stdin.write_all(content.as_bytes()));
+                record(stdin.write_all(b"\n"));
             }
-            let _ = child.wait();
+            record(child.wait().map(|_| ()));
         }
         Err(_) => {
-            print!("{content}");
-            let _ = std::io::stdout().flush();
+            write_format(format_args!("{content}"));
+            flush();
         }
     }
 }
@@ -196,7 +260,7 @@ pub fn print_diff(text: &str) {
     if caps.terminal && lines >= caps.pager_at_rows {
         page(&out);
     } else {
-        let _ = std::io::stdout().write_all(out.as_bytes());
+        emit(out.as_bytes());
     }
 }
 
@@ -209,7 +273,7 @@ pub fn print_template(items: &[serde_json::Value], template: &str) {
         out.push_str(&sanitize(&crate::template::render(template, item)));
         out.push('\n');
     }
-    let _ = std::io::stdout().write_all(out.as_bytes());
+    emit(out.as_bytes());
 }
 
 /// Print a JSON value with two-space indent (EPIPE-tolerant).
@@ -224,16 +288,14 @@ pub fn print_json(value: &serde_json::Value) {
             "null".to_string()
         }
     };
-    let _ = std::io::stdout().write_all(text.as_bytes());
-    let _ = std::io::stdout().write_all(b"\n");
+    emit(text.as_bytes());
+    emit(b"\n");
 }
 
 /// `ifg api` pass-through: the bytes matter, not the structure.
 pub fn print_bytes(bytes: &[u8]) {
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-    let _ = handle.write_all(bytes);
-    let _ = handle.flush();
+    emit(bytes);
+    flush();
 }
 
 /// Print a server-provided document (wiki page, notes) with control
@@ -241,13 +303,11 @@ pub fn print_bytes(bytes: &[u8]) {
 /// render text into a terminal sanitize first.
 pub fn print_document(text: &str) {
     let clean = sanitize(text);
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-    let _ = handle.write_all(clean.as_bytes());
+    emit(clean.as_bytes());
     if !clean.ends_with('\n') {
-        let _ = handle.write_all(b"\n");
+        emit(b"\n");
     }
-    let _ = handle.flush();
+    flush();
 }
 
 /// Timestamps for humans: relative on a terminal ("3m ago"), absolute

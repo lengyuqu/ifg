@@ -218,6 +218,7 @@ fn token_from_url(config: &Config, url: &str) -> Option<Secret> {
     config
         .hosts
         .get(&key)
+        .filter(|entry| config::same_base_url(&entry.url, url))
         .and_then(|entry| entry.token.clone())
         .map(Secret::new)
 }

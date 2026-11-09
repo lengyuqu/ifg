@@ -126,6 +126,13 @@ pub fn load() -> Result<Config, ConfigError> {
 }
 
 fn load_from(path: &Path) -> Result<Config, ConfigError> {
+    load_with_keyring(path, crate::keyring::load)
+}
+
+fn load_with_keyring(
+    path: &Path,
+    mut keyring_token: impl FnMut(&str) -> Option<String>,
+) -> Result<Config, ConfigError> {
     if !path.exists() {
         return Ok(Config::default());
     }
@@ -151,7 +158,13 @@ fn load_from(path: &Path) -> Result<Config, ConfigError> {
     if config.uses_keyring() {
         let keys: Vec<String> = config.hosts.keys().cloned().collect();
         for key in keys {
-            if let Some(token) = crate::keyring::load(&key) {
+            // An explicit file token is the durable fallback after a failed
+            // keychain write. A recovered keychain may still contain the old
+            // token, which must not override or erase that fallback.
+            if config.hosts[&key].token.is_some() {
+                continue;
+            }
+            if let Some(token) = keyring_token(&key) {
                 if let Some(entry) = config.hosts.get_mut(&key) {
                     entry.token = Some(token);
                 }
@@ -280,6 +293,17 @@ pub fn entry_matches_url(entry_url: &str, host_name: &str) -> bool {
     host_key_for_url(entry_url).as_deref() == Some(host_name)
 }
 
+/// Stored credentials belong to one HTTP origin and deployment base path.
+/// A host/port key alone cannot authorize a downgrade from HTTPS to HTTP.
+pub fn same_base_url(left: &str, right: &str) -> bool {
+    let (Ok(left), Ok(right)) = (url::Url::parse(left), url::Url::parse(right)) else {
+        return false;
+    };
+    matches!(left.scheme(), "http" | "https")
+        && left.origin() == right.origin()
+        && left.path().trim_end_matches('/') == right.path().trim_end_matches('/')
+}
+
 #[cfg(unix)]
 fn has_group_or_other_permissions(path: &std::path::Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -301,6 +325,58 @@ fn has_group_or_other_permissions(_path: &std::path::Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_fallback_survives_keychain_recovery_and_config_updates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hosts.toml");
+        let mut config = Config {
+            token_store: Some("keyring".into()),
+            ..Default::default()
+        };
+        config
+            .hosts
+            .insert("forge".into(), HostEntry::new("https://forge.example.com"));
+        config.set_file_token("forge", "new-token".into());
+        write_atomic(dir.path(), &path, &config).unwrap();
+
+        let loaded =
+            load_with_keyring(&path, |_| panic!("old keychain token must not be loaded")).unwrap();
+        assert_eq!(loaded.hosts["forge"].token.as_deref(), Some("new-token"));
+        write_atomic(dir.path(), &path, &loaded).unwrap();
+        let loaded = load_with_keyring(&path, |_| Some("old-token".into())).unwrap();
+        assert_eq!(loaded.hosts["forge"].token.as_deref(), Some("new-token"));
+
+        let mut keychain_only = loaded;
+        keychain_only.clear_token("forge");
+        write_atomic(dir.path(), &path, &keychain_only).unwrap();
+        let loaded = load_with_keyring(&path, |_| Some("keychain-token".into())).unwrap();
+        assert_eq!(
+            loaded.hosts["forge"].token.as_deref(),
+            Some("keychain-token")
+        );
+        assert!(for_disk(&loaded).hosts["forge"].token.is_none());
+    }
+
+    #[test]
+    fn credential_scope_includes_protocol_port_and_base_path() {
+        assert!(same_base_url(
+            "https://forge.example.com/forge/",
+            "https://forge.example.com:443/forge"
+        ));
+        assert!(!same_base_url(
+            "https://forge.example.com",
+            "http://forge.example.com"
+        ));
+        assert!(!same_base_url(
+            "https://forge.example.com:8443",
+            "https://forge.example.com:9443"
+        ));
+        assert!(!same_base_url(
+            "https://forge.example.com/one",
+            "https://forge.example.com/two"
+        ));
+    }
 
     #[test]
     fn host_key_uses_port_only_when_non_default() {

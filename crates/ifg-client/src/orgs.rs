@@ -186,6 +186,6 @@ impl Orgs<'_> {
                 None,
             )
             .await?;
-        Ok(crate::error::json_or_null(&bytes))
+        crate::error::json_or_null(&bytes)
     }
 }

@@ -211,7 +211,8 @@ impl Pulls<'_> {
     }
 
     pub async fn remove_reviewer(&self, number: i64, username: &str) -> Result<(), Error> {
-        self.client
+        let bytes = self
+            .client
             .raw(
                 crate::Method::DELETE,
                 &format!(
@@ -222,6 +223,7 @@ impl Pulls<'_> {
                 None,
             )
             .await?;
+        crate::error::json_or_null(&bytes)?;
         Ok(())
     }
 

@@ -73,10 +73,10 @@ pub async fn run(command: &RepoCommand, cli: &Cli) -> Result<(), AppError> {
             let updated = repos
                 .update_settings(&repo.owner, &repo.name, &body)
                 .await?;
-            if cli.json {
-                output::print_json(&updated);
+            if cli.json || cli.template.is_some() {
+                super::show(cli, &updated);
             } else {
-                println!("Updated repository settings for {repo}.");
+                output::line!("Updated repository settings for {repo}.");
             }
             Ok(())
         }
@@ -138,7 +138,7 @@ async fn collaborators(
                     })
                     .collect();
                 if rows.is_empty() {
-                    println!("No direct collaborators in {repo}.");
+                    output::line!("No direct collaborators in {repo}.");
                 } else {
                     output::print_table(&["USER ID", "RECORD ID", "PERMISSION"], &rows);
                 }
@@ -190,7 +190,7 @@ async fn collaborators(
                     &serde_json::json!({"username":username,"user_id":user.id,"removed":true}),
                 );
             } else {
-                println!("Removed {username} from {repo}.");
+                output::line!("Removed {username} from {repo}.");
             }
         }
     }
@@ -229,7 +229,18 @@ fn cached_user(ctx: &CommandContext) -> Option<String> {
     let key = crate::config::host_key_for_url(&ctx.host.url).or_else(|| ctx.host.name.clone());
     key.as_deref()
         .and_then(|key| ctx.config.hosts.get(key))
+        .filter(|entry| crate::config::same_base_url(&entry.url, &ctx.host.url))
         .and_then(|entry| entry.user.clone())
+}
+
+/// A cached username is tied to the stored credential, not an overriding PAT.
+async fn account_name(ctx: &CommandContext) -> Result<String, AppError> {
+    if crate::context::env_pat().is_none() {
+        if let Some(user) = cached_user(ctx) {
+            return Ok(user);
+        }
+    }
+    Ok(ctx.client.users().me().await?.username)
 }
 
 async fn list(
@@ -240,14 +251,9 @@ async fn list(
 ) -> Result<(), AppError> {
     let owner = match owner {
         Some(owner) => owner,
-        None => match cached_user(ctx) {
-            Some(user) => user,
-            None => {
-                return Err(AppError::Usage(
-                    "no owner known for this host; pass one: `ifg repo list <owner>`".into(),
-                ))
-            }
-        },
+        None => account_name(ctx).await.inspect_err(|_| {
+            eprintln!("ifg: pass an explicit owner with `ifg repo list OWNER` if the token cannot read /users/me");
+        })?,
     };
 
     let limit = limit.unwrap_or(DEFAULT_LIMIT);
@@ -287,7 +293,7 @@ async fn list(
         })
         .collect();
     if rows.is_empty() {
-        println!("No repositories for {owner}.");
+        output::line!("No repositories for {owner}.");
         return Ok(());
     }
     output::print_table(
@@ -368,25 +374,26 @@ async fn create(ctx: &CommandContext, cli: &Cli, args: &CreateArgs) -> Result<()
     // repository, and `/users/me` would answer 403.
     match display_owner(ctx, org.as_deref()).await {
         Owner::Known(owner) => {
-            println!("Created {owner}/{} ({})", repo.name, ctx.host.url);
+            output::line!("Created {owner}/{} ({})", repo.name, ctx.host.url);
             if !init {
-                println!(
+                output::line!(
                     "Empty repository. Push an existing project with:
   git remote add origin {}/git/{owner}/{name}.git
   git push -u origin {}",
-                    ctx.host.url, repo.default_branch
+                    ctx.host.url,
+                    repo.default_branch
                 );
             }
         }
         Owner::Unknown => {
             // Never invent a name or print a remote URL under the host name.
-            println!("Created {} ({})", repo.name, ctx.host.url);
+            output::line!("Created {} ({})", repo.name, ctx.host.url);
             eprintln!(
                 "ifg: note: could not read the account name (GET /users/me failed); \
                  the repository belongs to the token's user"
             );
             if !init {
-                println!(
+                output::line!(
                     "Empty repository. Push an existing project with (replace OWNER with your account):
   git remote add origin {}/git/OWNER/{name}.git
   git push -u origin {}",
@@ -415,13 +422,8 @@ async fn display_owner(ctx: &CommandContext, org: Option<&str>) -> Owner {
     if let Some(org) = org {
         return Owner::Known(org.to_string());
     }
-    if crate::context::env_pat().is_none() {
-        if let Some(user) = cached_user(ctx) {
-            return Owner::Known(user);
-        }
-    }
-    match ctx.client.users().me().await {
-        Ok(profile) => Owner::Known(profile.username),
+    match account_name(ctx).await {
+        Ok(username) => Owner::Known(username),
         Err(_) => Owner::Unknown,
     }
 }
@@ -438,7 +440,7 @@ fn clone(
     } else {
         format!("{}/git/{}.git", ctx.host.url, repo)
     };
-    println!("Cloning {url}");
+    output::line!("Cloning {url}");
     let status = std::process::Command::new("git")
         .arg("clone")
         .arg(&url)
@@ -484,11 +486,11 @@ async fn delete(ctx: &CommandContext, repo: &RepoContext, yes: bool) -> Result<(
             "Delete {repo}? This removes the repository for everyone."
         ))?
     {
-        println!("Aborted.");
+        output::line!("Aborted.");
         return Ok(());
     }
     ctx.client.repos().delete(&repo.owner, &repo.name).await?;
-    println!("Deleted {repo}.");
+    output::line!("Deleted {repo}.");
     Ok(())
 }
 

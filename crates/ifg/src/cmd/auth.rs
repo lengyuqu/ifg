@@ -107,9 +107,9 @@ async fn login(cli: &Cli, with_token: bool) -> Result<(), AppError> {
         );
     }
 
-    println!("Logged in to {url} as {}", me.username);
+    output::line!("Logged in to {url} as {}", me.username);
     if stored_in_keyring {
-        println!("Token stored in the system keychain (token_store = \"keyring\").");
+        output::line!("Token stored in the system keychain (token_store = \"keyring\").");
     }
     Ok(())
 }
@@ -176,6 +176,10 @@ impl Scope {
 async fn status(cli: &Cli) -> Result<(), AppError> {
     let config = config::load()?;
     if config.hosts.is_empty() {
+        if cli.json || cli.template.is_some() {
+            super::show(cli, &json!([]));
+            return Ok(());
+        }
         eprintln!("No hosts configured. Run `ifg auth login --host <url>`.");
         return Ok(());
     }
@@ -239,8 +243,8 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
         }));
     }
 
-    if cli.json {
-        output::print_json(&serde_json::Value::Array(json_rows));
+    if cli.json || cli.template.is_some() {
+        super::show(cli, &serde_json::Value::Array(json_rows));
     } else {
         output::print_table(
             &[
@@ -282,7 +286,7 @@ fn logout(cli: &Cli) -> Result<(), AppError> {
     if let Err(error) = crate::keyring::delete(&target) {
         eprintln!("ifg: warning: could not remove the keychain entry: {error}");
     }
-    println!(
+    output::line!(
         "Removed credentials for {target}. The token remains valid server-side — revoke it in \
          the web UI (Settings → Tokens)."
     );
@@ -342,7 +346,7 @@ fn token(cli: &Cli) -> Result<(), AppError> {
     let host_label = resolved.name.as_deref().unwrap_or(resolved.url.as_str());
     match resolved.token {
         Some(secret) => {
-            println!("{}", secret.expose());
+            output::line!("{}", secret.expose());
             Ok(())
         }
         None => Err(AppError::Auth(format!(
@@ -368,9 +372,9 @@ fn git_credential(action: &str) -> Result<(), AppError> {
     }
     let config = config::load()?;
     if let Some(answer) = credential_answer(&config, &input) {
-        print!("{answer}");
-        use std::io::Write;
-        let _ = std::io::stdout().flush();
+        output::text!("{answer}");
+
+        output::flush();
     }
     Ok(())
 }

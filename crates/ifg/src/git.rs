@@ -4,6 +4,26 @@
 
 use std::process::Command;
 
+/// Match short and fully qualified branch refs without treating a same-named
+/// tag as a branch. An explicitly qualified tag/ref remains an exact match.
+pub fn matches_ref(reference: &str, selector: &str) -> bool {
+    if let Some(branch) = selector.strip_prefix("refs/heads/") {
+        matches_branch_ref(reference, branch)
+    } else if selector.starts_with("refs/") {
+        reference == selector
+    } else {
+        matches_branch_ref(reference, selector)
+    }
+}
+
+/// Here `branch` is a branch name from Git, not an explicit ref selector.
+pub fn matches_branch_ref(reference: &str, branch: &str) -> bool {
+    match reference.strip_prefix("refs/heads/") {
+        Some(name) => name == branch,
+        None => !reference.starts_with("refs/") && reference == branch,
+    }
+}
+
 /// A repository location parsed from a git remote URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
@@ -135,6 +155,22 @@ pub fn bearer_header_env(token: &str, existing_count: Option<&str>) -> Vec<(Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn branch_names_and_explicit_tag_selectors_remain_distinct() {
+        assert!(matches_ref("refs/heads/feature", "feature"));
+        assert!(matches_ref("feature", "refs/heads/feature"));
+        assert!(!matches_ref("refs/tags/feature", "feature"));
+        assert!(matches_ref("refs/tags/feature", "refs/tags/feature"));
+        assert!(!matches_branch_ref(
+            "refs/tags/feature",
+            "refs/tags/feature"
+        ));
+        assert!(matches_branch_ref(
+            "refs/heads/refs/tags/feature",
+            "refs/tags/feature"
+        ));
+    }
 
     #[test]
     fn bearer_header_env_starts_at_zero() {

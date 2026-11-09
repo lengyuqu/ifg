@@ -118,6 +118,6 @@ impl Milestones<'_> {
             .client
             .raw(crate::Method::DELETE, &self.milestone_path(id), None)
             .await?;
-        Ok(crate::error::json_or_null(&bytes))
+        crate::error::json_or_null(&bytes)
     }
 }

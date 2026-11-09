@@ -23,7 +23,7 @@ pub async fn run(command: &OrgCommand, cli: &Cli) -> Result<(), AppError> {
             }
             let items = orgs.list().await?;
             if items.is_empty() {
-                println!("No organizations. Create one with `ifg org create <name>`.");
+                output::line!("No organizations. Create one with `ifg org create <name>`.");
                 return Ok(());
             }
             let rows: Vec<Vec<String>> = items
@@ -111,7 +111,7 @@ pub async fn run(command: &OrgCommand, cli: &Cli) -> Result<(), AppError> {
                 return Ok(());
             }
             let org = orgs.create(&options).await?;
-            println!("Created organization {} (id {})", org.name, org.id);
+            output::line!("Created organization {} (id {})", org.name, org.id);
             Ok(())
         }
         OrgCommand::Members { name } => {
@@ -128,7 +128,7 @@ pub async fn run(command: &OrgCommand, cli: &Cli) -> Result<(), AppError> {
             }
             let members = orgs.members(name).await?;
             if members.is_empty() {
-                println!("No members in {name}.");
+                output::line!("No members in {name}.");
                 return Ok(());
             }
             let rows: Vec<Vec<String>> = members
@@ -158,8 +158,12 @@ pub async fn run(command: &OrgCommand, cli: &Cli) -> Result<(), AppError> {
                 }
             }
             let user = ctx.client.users().get(username).await?;
-            orgs.add_member(name, user.id, role.as_deref()).await?;
-            println!(
+            let value = orgs.add_member(name, user.id, role.as_deref()).await?;
+            if cli.json || cli.template.is_some() {
+                super::show(cli, &value);
+                return Ok(());
+            }
+            output::line!(
                 "Added {} to {}{}",
                 user.username,
                 name,
@@ -171,8 +175,12 @@ pub async fn run(command: &OrgCommand, cli: &Cli) -> Result<(), AppError> {
         }
         OrgCommand::RemoveMember { name, username } => {
             let user = ctx.client.users().get(username).await?;
-            orgs.remove_member(name, user.id).await?;
-            println!("Removed {} from {}.", user.username, name);
+            let value = orgs.remove_member(name, user.id).await?;
+            if cli.json || cli.template.is_some() {
+                super::show(cli, &value);
+                return Ok(());
+            }
+            output::line!("Removed {} from {}.", user.username, name);
             Ok(())
         }
     }

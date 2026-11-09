@@ -3,16 +3,17 @@
 use crate::cli::Cli;
 use crate::cmd::bootstrap;
 use crate::error::AppError;
+use crate::output;
 
 pub async fn run(cli: &Cli) -> Result<(), AppError> {
-    println!("ifg {}", env!("CARGO_PKG_VERSION"));
+    output::line!("ifg {}", env!("CARGO_PKG_VERSION"));
 
     // Version must work without any configuration: resolve the host
     // best-effort and report a missing one instead of failing.
     let ctx = match bootstrap(cli) {
         Ok(ctx) => ctx,
         Err(error) => {
-            println!("server: not reachable ({error})");
+            output::line!("server: not reachable ({error})");
             return Ok(());
         }
     };
@@ -23,8 +24,8 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
             if let Some(phase) = health["phase"].as_u64() {
                 line.push_str(&format!(" (phase {phase})"));
             }
-            println!("{line}");
-            println!("host:   {}", ctx.host.url);
+            output::line!("{line}");
+            output::line!("host:   {}", ctx.host.url);
             // The instance endpoint can require a broader PAT scope. When a
             // repository is known, its scoped discovery also works with a
             // repository-limited token.
@@ -51,25 +52,25 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
                         Some(false) => "",
                         None => " (source state unknown)",
                     };
-                    println!("build:  {commit}{dirty}");
+                    output::line!("build:  {commit}{dirty}");
                 } else {
-                    println!("build:  unknown");
+                    output::line!("build:  unknown");
                 }
                 if let Some(features) = capabilities["api_capabilities"].as_array() {
                     let features: Vec<_> = features.iter().filter_map(|v| v.as_str()).collect();
-                    println!("api capabilities: {}", features.join(", "));
+                    output::line!("api capabilities: {}", features.join(", "));
                 } else {
-                    println!("api capabilities: unknown");
+                    output::line!("api capabilities: unknown");
                 }
             } else {
-                println!("build:  unknown (capability discovery unavailable)");
-                println!("api capabilities: unknown");
+                output::line!("build:  unknown (capability discovery unavailable)");
+                output::line!("api capabilities: unknown");
             }
             if let Some(message) = crate::version::outdated(version) {
                 eprintln!("ifg: warning: {message}");
             }
         }
-        Err(error) => println!("server: not reachable ({error})"),
+        Err(error) => output::line!("server: not reachable ({error})"),
     }
     Ok(())
 }

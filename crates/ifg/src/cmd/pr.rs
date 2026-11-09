@@ -60,6 +60,7 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
         } => {
             review(
                 &ctx,
+                cli,
                 &repo,
                 *number,
                 *approve,
@@ -217,7 +218,7 @@ async fn list(
         })
         .collect();
     if rows.is_empty() {
-        println!("No {state} pull requests in {repo}.");
+        output::line!("No {state} pull requests in {repo}.");
         return Ok(());
     }
     output::print_table(&["#", "STATE", "TITLE", "HEAD -> BASE", "UPDATED"], &rows);
@@ -267,16 +268,16 @@ async fn view(
     if comments {
         let list = pulls.comments(number).await?;
         if list.is_empty() {
-            println!("\nNo inline review comments.");
+            output::line!("\nNo inline review comments.");
         } else {
-            println!();
+            output::line!();
             for comment in &list {
                 let location = match (&comment.path, comment.line) {
                     (Some(path), Some(line)) => format!("{path}:{line}"),
                     (Some(path), None) => path.clone(),
                     _ => "general".to_string(),
                 };
-                println!(
+                output::line!(
                     "{} (author {}, {}):\n  {}\n",
                     output::sanitize(&location),
                     comment
@@ -308,14 +309,14 @@ async fn diff(
     match serde_json::from_str::<Value>(&raw) {
         Ok(value) if value.get("files_changed").is_some() => {
             let stats = &value["stats"];
-            println!(
+            output::line!(
                 "{} file(s) changed, {} insertion(s), {} deletion(s)",
                 stats["files_changed"].as_i64().unwrap_or(0),
                 stats["total_additions"].as_i64().unwrap_or(0),
                 stats["total_deletions"].as_i64().unwrap_or(0),
             );
             for file in value["files_changed"].as_array().unwrap_or(&Vec::new()) {
-                println!(
+                output::line!(
                     "\n{} ({})",
                     file["path"].as_str().unwrap_or("?"),
                     file["status"].as_str().unwrap_or("?")
@@ -415,9 +416,12 @@ async fn create(
         return Ok(());
     }
     let pr = pulls.create(&options).await?;
-    println!(
+    output::line!(
         "Created {repo}#{}: {} ({} -> {})",
-        pr.number, pr.title, pr.head_branch, pr.base_branch
+        pr.number,
+        pr.title,
+        pr.head_branch,
+        pr.base_branch
     );
     Ok(())
 }
@@ -608,7 +612,7 @@ async fn merge(
             );
             return Ok(());
         }
-        println!(
+        output::line!(
             "Auto-merge enabled for {repo}#{number} ({}).",
             strategy.as_str()
         );
@@ -625,18 +629,19 @@ async fn merge(
     }
     let outcome = pulls.merge(number, strategy).await?;
     match outcome.merge_commit_sha {
-        Some(sha) => println!(
+        Some(sha) => output::line!(
             "Merged {repo}#{number} ({}): {}",
             outcome.strategy.as_deref().unwrap_or(strategy.as_str()),
             &sha[..sha.len().min(12)]
         ),
-        None => println!("Merged {repo}#{number}."),
+        None => output::line!("Merged {repo}#{number}."),
     }
     Ok(())
 }
 
 async fn review(
     ctx: &super::CommandContext,
+    cli: &Cli,
     repo: &RepoContext,
     number: i64,
     approve: bool,
@@ -655,7 +660,7 @@ async fn review(
         .pulls(&repo.owner, &repo.name)
         .review_raw(number, action, body.as_deref())
         .await?;
-    output::print_json(&value);
+    super::show(cli, &value);
     Ok(())
 }
 
@@ -678,39 +683,44 @@ async fn checkout(
         .await?;
     let branch = pr.head_branch.clone();
     let local = format!("pr-{number}");
+    let target_url = format!("{}/git/{}/{}.git", ctx.host.url, repo.owner, repo.name);
 
     // Fork PRs: fetch from the head repository (needs the enrichment added
     // upstream — the PR row alone only knows head_repo_id).
     let (clone_url, origin_label) = match pr.head_repo_id {
-        None => (
-            format!("{}/git/{}/{}.git", ctx.host.url, repo.owner, repo.name),
-            repo.to_string(),
-        ),
+        None => (Some(target_url.clone()), repo.to_string()),
         Some(_) => match (pr.head_repo_owner.as_deref(), pr.head_repo_name.as_deref()) {
             (Some(owner), Some(name)) => (
-                format!("{}/git/{owner}/{name}.git", ctx.host.url),
+                Some(format!("{}/git/{owner}/{name}.git", ctx.host.url)),
                 format!("{owner}/{name}"),
             ),
-            _ => {
-                return Err(AppError::Other(
-                    "fork PR checkout needs the head repository, which this server did not                      report (upgrade IronForge to a build with head_repo_owner)"
-                        .into(),
-                ))
-            }
+            // The fork may have been deleted. Its PR mirror is still owned
+            // by the target repository and can be fetched without enrichment.
+            _ => (None, "unavailable fork".into()),
         },
     };
 
     // Try the head branch first (always fresh). When it is gone — deleted
     // after merge, the usual case for re-checkouts — fall back to the
     // server's refs/pull/<n>/head mirror.
-    let branch_error = fetch_ref(ctx, &clone_url, &branch).err();
+    let branch_error = match clone_url {
+        Some(url) => fetch_ref(ctx, &url, &branch).err(),
+        None => Some(AppError::Other(
+            "fork head repository is unavailable".into(),
+        )),
+    };
     if let Some(branch_error) = branch_error {
         let pull_ref = format!("refs/pull/{number}/head");
-        match fetch_ref(ctx, &clone_url, &pull_ref) {
+        match fetch_ref(ctx, &target_url, &pull_ref) {
             Ok(()) => eprintln!(
                 "ifg: note: branch '{branch}' is gone; fetched {pull_ref} instead (server mirror)"
             ),
-            Err(_) => return Err(branch_error),
+            Err(mirror_error) => {
+                return Err(AppError::Other(format!(
+                    "{branch_error}; target repository mirror is unavailable: {mirror_error}; \
+                 this server may not publish fork PR head mirrors"
+                )))
+            }
         }
     }
 
@@ -719,7 +729,7 @@ async fn checkout(
         // the user's commits — we refuse rather than reset.
         git_success(&["switch", &local])?;
         match git_success(&["merge", "--ff-only", "FETCH_HEAD"]) {
-            Ok(()) => println!("{repo}#{number} updated ({origin_label}:{branch} → {local})"),
+            Ok(()) => output::line!("{repo}#{number} updated ({origin_label}:{branch} → {local})"),
             Err(_) => {
                 return Err(AppError::Other(format!(
                     "local branch {local} has diverged from {origin_label}:{branch}; \
@@ -729,7 +739,7 @@ async fn checkout(
         }
     } else {
         git_success(&["switch", "-c", &local, "FETCH_HEAD"])?;
-        println!("{repo}#{number} '{branch}' checked out as {local} (from {origin_label})");
+        output::line!("{repo}#{number} '{branch}' checked out as {local} (from {origin_label})");
     }
     Ok(())
 }

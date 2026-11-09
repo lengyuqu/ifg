@@ -60,7 +60,7 @@ pub async fn run(command: &WikiCommand, cli: &Cli) -> Result<(), AppError> {
                     })
                     .collect();
                 if rows.is_empty() {
-                    println!("No Wiki pages in {repo}.");
+                    output::line!("No Wiki pages in {repo}.");
                 } else {
                     output::print_table(&["TITLE", "UPDATED"], &rows);
                 }
@@ -95,7 +95,7 @@ pub async fn run(command: &WikiCommand, cli: &Cli) -> Result<(), AppError> {
             if cli.json || cli.template.is_some() {
                 structured(cli, &value);
             } else {
-                println!("Created Wiki page {title} in {repo}.");
+                output::line!("Created Wiki page {title} in {repo}.");
             }
         }
         WikiCommand::Edit {
@@ -128,19 +128,19 @@ pub async fn run(command: &WikiCommand, cli: &Cli) -> Result<(), AppError> {
             if cli.json || cli.template.is_some() {
                 structured(cli, &value);
             } else {
-                println!("Updated Wiki page {title} in {repo}.");
+                output::line!("Updated Wiki page {title} in {repo}.");
             }
         }
         WikiCommand::Delete { title, yes } => {
             if !yes && !super::confirm(&format!("Delete Wiki page '{title}' from {repo}?"))? {
-                println!("Aborted.");
+                output::line!("Aborted.");
                 return Ok(());
             }
             wiki.delete(title).await?;
             if cli.json || cli.template.is_some() {
                 structured(cli, &serde_json::json!({"title":title,"deleted":true}));
             } else {
-                println!("Deleted Wiki page {title} from {repo}.");
+                output::line!("Deleted Wiki page {title} from {repo}.");
             }
         }
     }

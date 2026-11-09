@@ -120,7 +120,7 @@ async fn list(
         })
         .collect();
     if rows.is_empty() {
-        println!("No releases in {repo}.");
+        output::line!("No releases in {repo}.");
         return Ok(());
     }
     output::print_table(&["TAG", "TITLE", "DRAFT", "PRE", "CREATED"], &rows);
@@ -162,7 +162,7 @@ async fn view(
     output::print_table(&["FIELD", "VALUE"], &rows);
 
     if !assets.is_empty() {
-        println!();
+        output::line!();
         let rows: Vec<Vec<String>> = assets
             .iter()
             .map(|asset| {
@@ -245,7 +245,7 @@ async fn create(
         return Ok(());
     }
     let release = releases.create(&options).await?;
-    println!("Created release {} ({})", release.tag_name, release.id);
+    output::line!("Created release {} ({})", release.tag_name, release.id);
 
     for file in files {
         upload_file(ctx, repo, release.id, file).await?;
@@ -284,7 +284,7 @@ async fn upload_file(
     let value = upload_asset(ctx, repo, release_id, file).await?;
     let asset: ifg_client::Asset = serde_json::from_value(value)
         .map_err(|e| AppError::Other(format!("could not decode uploaded asset: {e}")))?;
-    println!(
+    output::line!(
         "Uploaded {} ({} bytes, {})",
         asset.filename,
         asset.size,
@@ -476,7 +476,7 @@ async fn download_asset(
             ))
         }
     })?;
-    println!("Downloaded {target} ({size} bytes)");
+    output::line!("Downloaded {target} ({size} bytes)");
     Ok(())
 }
 
@@ -619,7 +619,7 @@ async fn edit(
         return Ok(());
     }
     let updated = releases.update(release.id, &options).await?;
-    println!("Updated release {} ({}).", updated.tag_name, updated.title);
+    output::line!("Updated release {} ({}).", updated.tag_name, updated.title);
     Ok(())
 }
 
@@ -641,11 +641,11 @@ async fn delete(
             release.tag_name, release.tag_name
         ))?
     {
-        println!("Aborted.");
+        output::line!("Aborted.");
         return Ok(());
     }
     releases.delete(release.id).await?;
-    println!("Deleted release {}.", release.tag_name);
+    output::line!("Deleted release {}.", release.tag_name);
     Ok(())
 }
 

@@ -47,9 +47,9 @@ pub async fn run(command: &CiCommand, cli: &Cli) -> Result<(), AppError> {
         } => runs(&ctx, cli, &repo, branch, status, *limit).await,
         CiCommand::View { id } => view(&ctx, cli, &repo, *id).await,
         CiCommand::Logs { id, job, follow } => logs(&ctx, &repo, *id, job, *follow).await,
-        CiCommand::Cancel { id } => act(&ctx, &repo, *id, "cancel").await,
-        CiCommand::Retry { id } => act(&ctx, &repo, *id, "retry").await,
-        CiCommand::Approve { id, job } => approve(&ctx, &repo, *id, job).await,
+        CiCommand::Cancel { id } => act(&ctx, cli, &repo, *id, "cancel").await,
+        CiCommand::Retry { id } => act(&ctx, cli, &repo, *id, "retry").await,
+        CiCommand::Approve { id, job } => approve(&ctx, cli, &repo, *id, job).await,
     }
 }
 
@@ -167,7 +167,7 @@ async fn runs(
         })
         .collect();
     if rows.is_empty() {
-        println!("No pipelines in {repo}.");
+        output::line!("No pipelines in {repo}.");
         return Ok(());
     }
     output::print_table(
@@ -178,12 +178,13 @@ async fn runs(
 }
 
 fn matches_filter(item: &Value, branch: &Option<String>, status: &Option<String>) -> bool {
-    branch
+    branch.as_deref().is_none_or(|b| {
+        item["ref_name"]
+            .as_str()
+            .is_some_and(|r| crate::git::matches_ref(r, b))
+    }) && status
         .as_deref()
-        .is_none_or(|b| item["ref_name"].as_str() == Some(b))
-        && status
-            .as_deref()
-            .is_none_or(|s| item["status"].as_str() == Some(s))
+        .is_none_or(|s| item["status"].as_str() == Some(s))
 }
 
 async fn view(
@@ -241,7 +242,7 @@ async fn view(
         })
         .collect();
     if !rows.is_empty() {
-        println!();
+        output::line!();
         output::print_table(&["STAGE", "JOB", "STATUS", "EXIT", "ENV"], &rows);
     }
     Ok(())
@@ -566,9 +567,9 @@ fn blocked_hint(repo: &RepoContext, pipeline: i64, job: &ifg_client::Job) -> Str
 fn print_log(log: &Option<String>) -> usize {
     match log {
         Some(log) if !log.is_empty() => {
-            print!("{log}");
-            use std::io::Write;
-            let _ = std::io::stdout().flush();
+            output::text!("{log}");
+
+            output::flush();
             log.chars().count()
         }
         _ => 0,
@@ -582,16 +583,15 @@ fn print_log(log: &Option<String>) -> usize {
 /// the log is non-empty, so the cursor has to count it. Skipping it shifted the
 /// cursor one character left and the next poll repeated text.
 fn print_chunk(chunk: &str, printed_prefix: &mut String) -> usize {
-    use std::io::Write as _;
     let mut written = 0;
     if !printed_prefix.is_empty() {
-        println!();
+        output::line!();
         printed_prefix.push('\n');
         written += 1;
     }
-    print!("{chunk}");
+    output::text!("{chunk}");
     printed_prefix.push_str(chunk);
-    let _ = std::io::stdout().flush();
+    output::flush();
     written + chunk.chars().count()
 }
 
@@ -608,8 +608,6 @@ async fn reconcile_tail(
     job_id: i64,
     printed_prefix: &str,
 ) -> Result<(), AppError> {
-    use std::io::Write as _;
-
     let job = ci.job(pipeline_id, job_id).await?;
     let final_log = job.log.unwrap_or_default();
     let chars_seen = printed_prefix.chars().count();
@@ -626,8 +624,8 @@ async fn reconcile_tail(
         )
     })?;
     if !rest.is_empty() {
-        print!("{rest}");
-        let _ = std::io::stdout().flush();
+        output::text!("{rest}");
+        output::flush();
     }
     Ok(())
 }
@@ -645,14 +643,15 @@ fn print_increment(log: &Option<String>, printed: usize) -> usize {
     if rest.is_empty() {
         return 0;
     }
-    print!("{rest}");
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
+    output::text!("{rest}");
+
+    output::flush();
     rest.chars().count()
 }
 
 async fn act(
     ctx: &super::CommandContext,
+    cli: &Cli,
     repo: &RepoContext,
     id: i64,
     action: &str,
@@ -663,13 +662,16 @@ async fn act(
         "retry" => ci.retry(id).await?,
         _ => unreachable!("action routing is exhaustive"),
     };
-    println!("{action} requested for pipeline {id}.");
-    output::print_json(&value);
+    if !cli.json && cli.template.is_none() {
+        output::line!("{action} requested for pipeline {id}.");
+    }
+    super::show(cli, &value);
     Ok(())
 }
 
 async fn approve(
     ctx: &super::CommandContext,
+    cli: &Cli,
     repo: &RepoContext,
     id: i64,
     job: &str,
@@ -680,8 +682,10 @@ async fn approve(
         .find_job(job)
         .ok_or_else(|| AppError::Usage(format!("no job '{job}' in pipeline {id}")))?;
     let value = ci.approve_job(id, selected.id).await?;
-    println!("Approved job {} in pipeline {id}.", selected.name);
-    output::print_json(&value);
+    if !cli.json && cli.template.is_none() {
+        output::line!("Approved job {} in pipeline {id}.", selected.name);
+    }
+    super::show(cli, &value);
     Ok(())
 }
 

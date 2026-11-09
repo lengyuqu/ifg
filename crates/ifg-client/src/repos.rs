@@ -146,13 +146,15 @@ impl Repos<'_> {
         name: &str,
         user_id: i64,
     ) -> Result<(), Error> {
-        self.client
+        let bytes = self
+            .client
             .raw(
                 crate::Method::DELETE,
                 &format!("{}/collaborators/{user_id}", repo_path(owner, name)),
                 None,
             )
             .await?;
+        crate::error::json_or_null(&bytes)?;
         Ok(())
     }
     /// List a user's or organization's repositories (paginated).
@@ -209,9 +211,11 @@ impl Repos<'_> {
 
     /// `DELETE /repos/{owner}/{name}` — used by e2e cleanup.
     pub async fn delete(&self, owner: &str, name: &str) -> Result<(), Error> {
-        self.client
+        let bytes = self
+            .client
             .raw(crate::Method::DELETE, &repo_path(owner, name), None)
             .await?;
+        crate::error::json_or_null(&bytes)?;
         Ok(())
     }
 }

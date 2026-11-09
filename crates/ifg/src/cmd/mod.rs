@@ -26,6 +26,106 @@ use crate::config::Config;
 use crate::context::{self, ResolvedHost};
 use crate::error::AppError;
 
+/// Commands that produce documents, invoke git, or open a browser cannot
+/// silently accept structured-output flags. Validate before any side effect.
+pub(crate) fn validate_output(cli: &Cli) -> Result<(), AppError> {
+    use crate::cli::{
+        AuthCommand, CiCommand, Command, IssueCommand, LabelCommand, MilestoneCommand, PrCommand,
+        ReleaseCommand, RepoCommand,
+    };
+    if !cli.json && cli.template.is_none() {
+        return Ok(());
+    }
+    let supported = match &cli.command {
+        Command::Api { .. }
+        | Command::Status
+        | Command::Search { .. }
+        | Command::Doctor
+        | Command::Collab { .. }
+        | Command::Wiki { .. }
+        | Command::Org { .. }
+        | Command::Notifications { .. } => true,
+        Command::Auth { command } => matches!(command, AuthCommand::Status),
+        Command::Repo { command } => matches!(
+            command,
+            RepoCommand::Collaborators { .. }
+                | RepoCommand::List { .. }
+                | RepoCommand::View { web: false, .. }
+                | RepoCommand::Edit { .. }
+                | RepoCommand::Create { .. }
+        ),
+        Command::Issue { command } => matches!(
+            command,
+            IssueCommand::List { .. }
+                | IssueCommand::View { web: false, .. }
+                | IssueCommand::Create { .. }
+                | IssueCommand::Comment { .. }
+                | IssueCommand::Close { .. }
+                | IssueCommand::Reopen { .. }
+                | IssueCommand::Edit { .. }
+        ),
+        Command::Pr { command } => matches!(
+            command,
+            PrCommand::List { .. }
+                | PrCommand::View { web: false, .. }
+                | PrCommand::Create { .. }
+                | PrCommand::Merge { .. }
+                | PrCommand::Review { .. }
+                | PrCommand::Edit { .. }
+                | PrCommand::Close { .. }
+                | PrCommand::Reopen { .. }
+                | PrCommand::Comment { .. }
+                | PrCommand::Reviews { .. }
+                | PrCommand::Reviewers { .. }
+        ),
+        Command::Ci { command } => matches!(
+            command,
+            CiCommand::Run { .. }
+                | CiCommand::Wait { .. }
+                | CiCommand::Runs { .. }
+                | CiCommand::View { .. }
+                | CiCommand::Cancel { .. }
+                | CiCommand::Retry { .. }
+                | CiCommand::Approve { .. }
+        ),
+        Command::Release { command } => matches!(
+            command,
+            ReleaseCommand::List { .. }
+                | ReleaseCommand::View { web: false, .. }
+                | ReleaseCommand::Create { .. }
+                | ReleaseCommand::Edit { .. }
+        ),
+        Command::Label { command } => matches!(
+            command,
+            LabelCommand::List | LabelCommand::Create { .. } | LabelCommand::Edit { .. }
+        ),
+        Command::Milestone { command } => matches!(
+            command,
+            MilestoneCommand::List
+                | MilestoneCommand::Create { .. }
+                | MilestoneCommand::Edit { .. }
+        ),
+        _ => false,
+    };
+    if supported {
+        Ok(())
+    } else {
+        Err(AppError::Usage(
+            "this command does not support --json or --template".into(),
+        ))
+    }
+}
+
+pub(crate) fn show(cli: &Cli, value: &serde_json::Value) {
+    match &cli.template {
+        Some(template) => match value.as_array() {
+            Some(items) => crate::output::print_template(items, template),
+            None => crate::output::print_template(std::slice::from_ref(value), template),
+        },
+        None => crate::output::print_json(value),
+    }
+}
+
 /// Everything a command needs after flag parsing: the config, the resolved
 /// host and a client bound to it.
 pub(crate) struct CommandContext {

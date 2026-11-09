@@ -85,9 +85,11 @@ impl Wiki<'_> {
             .await
     }
     pub async fn delete(&self, title: &str) -> Result<(), Error> {
-        self.client
+        let bytes = self
+            .client
             .raw(Method::DELETE, &self.page(title), None)
             .await?;
+        crate::error::json_or_null(&bytes)?;
         Ok(())
     }
 }

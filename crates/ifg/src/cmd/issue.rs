@@ -147,7 +147,7 @@ async fn list(
         })
         .collect();
     if rows.is_empty() {
-        println!("No {state} issues in {repo}.");
+        output::line!("No {state} issues in {repo}.");
         return Ok(());
     }
     output::print_table(
@@ -196,12 +196,12 @@ async fn view(
     if comments {
         let list = issues.comments(number).await?;
         if list.is_empty() {
-            println!("No comments.");
+            output::line!("No comments.");
         }
         for comment in list {
             let author = output::sanitize(&comment.author.unwrap_or_else(|| "—".into()));
             let body = output::sanitize(&comment.body);
-            println!(
+            output::line!(
                 "\n{author} at {}: {body}",
                 short_date(comment.created_at.as_deref())
             );
@@ -261,7 +261,7 @@ async fn create(
         return Ok(());
     }
     let issue = issues.create(&options).await?;
-    println!("Created {repo}#{}: {}", issue.number, issue.title);
+    output::line!("Created {repo}#{}: {}", issue.number, issue.title);
     Ok(())
 }
 
@@ -282,7 +282,7 @@ async fn comment(
         return Ok(());
     }
     issues.add_comment(number, body).await?;
-    println!("Commented on {repo}#{number}.");
+    output::line!("Commented on {repo}#{number}.");
     Ok(())
 }
 
@@ -307,7 +307,7 @@ async fn set_state(
         return Ok(());
     }
     let issue = issues.update(number, &options).await?;
-    println!("{repo}#{} is {}.", issue.number, issue.state);
+    output::line!("{repo}#{} is {}.", issue.number, issue.state);
     Ok(())
 }
 
@@ -387,7 +387,7 @@ async fn edit(
         return Ok(());
     }
     let issue = issues.update(number, &options).await?;
-    println!("Updated {repo}#{}.", issue.number);
+    output::line!("Updated {repo}#{}.", issue.number);
     Ok(())
 }
 

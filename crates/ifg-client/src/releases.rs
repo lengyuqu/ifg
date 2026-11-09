@@ -195,7 +195,7 @@ impl Releases<'_> {
             .client
             .raw(crate::Method::DELETE, &self.release_path(id), None)
             .await?;
-        Ok(crate::error::json_or_null(&bytes))
+        crate::error::json_or_null(&bytes)
     }
 
     /// `POST …/releases`.

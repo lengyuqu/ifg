@@ -29,7 +29,13 @@ fn main() -> std::process::ExitCode {
         .enable_all()
         .build()
         .expect("failed to build the tokio runtime");
-    let code = runtime.block_on(run(cli));
+    let mut code = runtime.block_on(run(cli));
+    if let Err(error) = output::finish() {
+        eprintln!("ifg: could not write stdout: {error}");
+        if code == 0 {
+            code = error::EXIT_GENERAL;
+        }
+    }
     let code = u8::try_from(code.max(0)).unwrap_or(1);
     std::process::ExitCode::from(code)
 }
@@ -51,6 +57,10 @@ fn positional_target(command: &Command) -> Option<String> {
 }
 
 async fn run(mut cli: Cli) -> i32 {
+    if let Err(error) = cmd::validate_output(&cli) {
+        eprintln!("ifg: {error}");
+        return error.exit_code();
+    }
     // A full URL in a positional target (`repo view <URL>`) must decide the
     // instance before `bootstrap` picks a host, so hand it to the resolver.
     let target = positional_target(&cli.command);
@@ -61,8 +71,7 @@ async fn run(mut cli: Cli) -> i32 {
         let mut command = Cli::command();
         let mut buffer = Vec::new();
         clap_complete::generate(*shell, &mut command, "ifg", &mut buffer);
-        use std::io::Write;
-        let _ = std::io::stdout().write_all(&buffer);
+        output::print_bytes(&buffer);
         return 0;
     }
     let result = match &cli.command {

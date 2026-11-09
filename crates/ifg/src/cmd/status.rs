@@ -37,7 +37,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         runs.extend(page.data.into_iter().filter(|pipeline| {
             pipeline["ref_name"]
                 .as_str()
-                .is_some_and(|reference| matches_branch(reference, &branch))
+                .is_some_and(|reference| crate::git::matches_branch_ref(reference, &branch))
         }));
         if runs.len() >= WANTED || scanned >= SCAN_LIMIT {
             break;
@@ -69,10 +69,10 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         .collect::<Result<_, _>>()
         .map_err(|e| AppError::Other(format!("could not decode pipeline: {e}")))?;
 
-    println!("{repo}");
-    println!("branch  {branch}");
+    output::line!("{repo}");
+    output::line!("branch  {branch}");
     match matching {
-        Some(pr) => println!(
+        Some(pr) => output::line!(
             "pull    #{:<4} {} [{}] {} → {}{}",
             pr.number,
             output::sanitize(&pr.title),
@@ -81,13 +81,13 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
             pr.base_branch,
             if pr.is_draft { " (draft)" } else { "" }
         ),
-        None => println!("pull    (no open pull request for this branch)"),
+        None => output::line!("pull    (no open pull request for this branch)"),
     }
     if runs.is_empty() {
-        println!("runs    (no pipeline runs for this branch in the latest {scanned})");
+        output::line!("runs    (no pipeline runs for this branch in the latest {scanned})");
         return Ok(());
     }
-    println!();
+    output::line!();
     let rows: Vec<Vec<String>> = runs
         .iter()
         .map(|pipeline| {
@@ -101,13 +101,4 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         .collect();
     output::print_table(&["RUN", "STATUS", "TRIGGER", "CREATED"], &rows);
     Ok(())
-}
-
-/// Manual triggers may retain a full branch ref; tags with the same short
-/// name must not be included in the current branch's status.
-fn matches_branch(reference: &str, branch: &str) -> bool {
-    match reference.strip_prefix("refs/heads/") {
-        Some(name) => name == branch,
-        None => !reference.starts_with("refs/") && reference == branch,
-    }
 }
