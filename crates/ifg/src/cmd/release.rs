@@ -138,18 +138,16 @@ async fn view(
         .find_by_tag(tag)
         .await?
         .ok_or_else(|| not_found(tag))?;
-    let assets = releases.assets(release.id).await?;
-
     if cli.json || cli.template.is_some() {
-        let value = releases.get_raw(release.id).await?;
-        let mut value = value;
-        value["assets"] = serde_json::json!(assets);
+        let mut value = releases.get_raw(release.id).await?;
+        value["assets"] = releases.assets_raw(release.id).await?;
         match &cli.template {
             Some(template) => output::print_template(std::slice::from_ref(&value), template),
             None => output::print_json(&value),
         }
         return Ok(());
     }
+    let assets = releases.assets(release.id).await?;
     let rows = vec![
         vec!["tag".into(), release.tag_name.clone()],
         vec!["title".into(), release.title.clone()],

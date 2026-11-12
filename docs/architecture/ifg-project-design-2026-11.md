@@ -282,7 +282,7 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 - 目标平台：`aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`。Linux 用 musl 静态链接，配合 D7 的 rustls 即可不依赖系统 OpenSSL。
 - 没有 CI 时在本机构建：macOS 两个目标原生编译；Linux 目标用 `cargo zigbuild` 交叉编译，不需要 Docker 或 Linux 机器。打包成 `scripts/release.sh`，上 GitHub 后改由 Actions 调用。
 - 产物：`ifg-<version>-<target>.tar.gz` + `SHA256SUMS`，上传到仓库所在平台的 Release（目前是 git233，迁到 GitHub 后改为 GitHub Release）。
-- 版本号：`ifg` 独立 semver，1.0 之前允许命令行为变动；`--json` 输出的字段即 API 字段，不另作承诺。
+- 版本号：`ifg` 独立 semver；1.0 的机器输出兼容范围与服务端字段边界以 [JSON 兼容契约](../json-compatibility.md) 为准。
 - Homebrew tap 与 crates.io 发布放在 M4，发布前完成 D1 查重。
 
 ---
