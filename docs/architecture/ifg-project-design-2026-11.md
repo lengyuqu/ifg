@@ -73,7 +73,7 @@ ifg/
 | D2 | crate 名 | `ifg-client`（库）、`ifg`（二进制） | 与仓库同名，不占 IronForge 的 `rg-` 前缀 |
 | D3 | 是否与 `rg-mcp` 共享客户端 | 暂不共享 | 共享的收益（省掉 57 行）小于跨仓库版本耦合的代价。`ifg-client` 1.0 之后再提议 `rg-mcp` 通过 git tag 依赖 |
 | D4 | DTO 来源 | 手写，加 OpenAPI 漂移检查 | 草案已说明生成不可行（OpenAPI 注解覆盖不全）。手写 DTO 只声明 CLI 用到的字段，未知字段一律忽略（不加 `deny_unknown_fields`），服务端加字段不会弄坏 CLI |
-| D5 | `--json` 的数据来源 | 透传服务端原始 JSON（`serde_json::Value`），不经 DTO 重新序列化 | 与草案 §6「字段名即 API 字段名」一致，且不会因 DTO 只声明部分字段而丢数据 |
+| D5 | `--json` 的数据来源 | 使用服务端 JSON（`serde_json::Value`），不经表格 DTO；部分命令组合多个响应 | 保留服务端字段，但输出会重新序列化；聚合例外见 README，字段随服务端变化 |
 | D6 | token 存储 | M1 用 0600 明文文件；M3 加可选的 `keyring` 后端（`token_store = "keyring"`），默认仍为文件 | keychain 在 Linux 无桌面环境下不可用，不能作为默认 |
 | D7 | TLS 实现 | `reqwest` 关闭默认特性，启用 `rustls-tls` + `rustls-native-certs` | 静态链接、交叉编译简单；读系统证书库，支持自签 CA 的内网实例 |
 | D8 | 异步运行时 | `tokio`，只开 `rt` + `macros` + `time` + `fs` | 不用 `full`，减小体积 |

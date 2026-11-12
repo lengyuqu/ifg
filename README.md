@@ -154,7 +154,8 @@ ifg completions bash > /etc/bash_completion.d/ifg
 - 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`；Windows 默认 `%APPDATA%\ironforge\hosts.toml`（POSIX 的 0600 告警不适用，权限由用户目录 ACL 控制）。写入是「临时文件 + 原子替换」，并对同目录的 `.hosts.toml.lock` 加排他锁，多个 `ifg auth` 并发执行不会互相覆盖
 - 钥匙串（可选）：`token_store = "keyring"` 时优先将 PAT 保存到系统钥匙串（macOS 钥匙串 / Linux `secret-tool` / Windows 凭据管理器）；写入不可用时会告警并回退到配置文件。主机条目中显式保存的文件 PAT 优先于旧钥匙串条目，直到一次成功登录将 PAT 写入钥匙串并清除文件副本；从钥匙串读出的 PAT 不会随配置更新写回文件。macOS 与 Windows 直接调用系统凭据 API，token 不会出现在进程参数里
 - 配置凭据只会自动复用于相同协议、主机、有效端口和部署基础路径；覆盖为 HTTP 或另一部署路径时，不会自动携带原配置的 PAT。显式的 `IRONFORGE_PAT` 仍绑定到选定的目标。它覆盖配置时，`repo list` 会读取该令牌对应的用户名；缺少 `user` scope 时请显式指定 `repo list OWNER`
-- `--json` 输出服务端原始字段；`-q/--template` 走轻量子集（`{{.field}}`、`{{.a.b}}`、`{{range .list}}…{{end}}`，列表自动逐项渲染）
+- `--json` 使用服务端 JSON 字段，不经过表格用 DTO；它会重新序列化 JSON，并非原始字节。部分命令会组合响应：`issue view --comments` 和 `pr view --comments` 将评论写入对象的 `comments` 字段（覆盖同名字段）；`status` 和携带附件的 `release create` 的输出见上文。输出字段仍受服务端 API 版本影响，1.0 前不承诺字段冻结
+- `-q/--template` 走轻量子集（`{{.field}}`、`{{.a.b}}`、`{{range .list}}…{{end}}`，列表自动逐项渲染）
 - 管道输出自动关闭颜色与相对时间；`pr diff` 在终端里上色并走分页器
 - Windows 终端：仅在 Windows Terminal / VS Code / mintty（`WT_SESSION`、`TERM_PROGRAM`、`TERM`）下启用颜色，传统 `cmd.exe` 等价 `--no-color`；分页器默认直出，可设 `PAGER` 覆盖
 
