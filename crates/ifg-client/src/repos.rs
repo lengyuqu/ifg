@@ -183,6 +183,28 @@ impl Repos<'_> {
             .await
     }
 
+    /// `GET …/commits/{sha}/status` — combined commit status, returned as the
+    /// server's JSON object. The OpenAPI snapshot does not publish its
+    /// response schema, so no typed twin exists.
+    pub async fn combined_status_raw(
+        &self,
+        owner: &str,
+        name: &str,
+        sha: &str,
+    ) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::GET,
+                &format!(
+                    "{}/commits/{}/status",
+                    repo_path(owner, name),
+                    crate::path_segment(sha)
+                ),
+                None,
+            )
+            .await
+    }
+
     /// Update repository settings with the version read from GET.
     pub async fn update_settings(
         &self,

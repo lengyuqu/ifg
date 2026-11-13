@@ -94,10 +94,36 @@ fn from_authority_and_path(authority: &str, path: &str, is_ssh: bool) -> Option<
     })
 }
 
+/// A `git` command for ifg to run. Under `--no-input` it is set up so git
+/// cannot wait on a person (see [`apply_noninteractive`]); otherwise it is a
+/// plain `git`.
+pub fn command() -> Command {
+    let mut command = Command::new("git");
+    apply_noninteractive(&mut command, crate::input::enabled());
+    command
+}
+
+/// When `enabled`, keep git and the ssh it starts from asking anyone
+/// anything: terminal prompts are off, the askpass program is blanked so no
+/// GUI or terminal helper is started, and ssh runs in batch mode, which
+/// fails instead of asking for a password or a host key. A `GIT_SSH` or
+/// `GIT_SSH_COMMAND` the user set is left alone. When `enabled` is false the
+/// command is not touched.
+pub fn apply_noninteractive(command: &mut Command, enabled: bool) {
+    if !enabled {
+        return;
+    }
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command.env("GIT_ASKPASS", "");
+    if std::env::var_os("GIT_SSH_COMMAND").is_none() && std::env::var_os("GIT_SSH").is_none() {
+        command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+    }
+}
+
 /// Remotes of the current work tree, `origin` first, then alphabetically.
 /// Returns an empty vector outside a git work tree.
 pub fn git_remotes() -> Vec<(String, Remote)> {
-    let output = Command::new("git")
+    let output = command()
         .args(["config", "--get-regexp", r"^remote\..*\.url$"])
         .output();
     let Ok(output) = output else {
@@ -170,6 +196,87 @@ mod tests {
             "refs/heads/refs/tags/feature",
             "refs/tags/feature"
         ));
+    }
+
+    #[test]
+    fn noninteractive_env_is_only_added_when_the_switch_is_on() {
+        let mut off = Command::new("git");
+        apply_noninteractive(&mut off, false);
+        assert!(off.get_envs().all(|(key, _)| key != "GIT_TERMINAL_PROMPT"));
+
+        let mut on = Command::new("git");
+        apply_noninteractive(&mut on, true);
+        let prompt = on
+            .get_envs()
+            .find(|(key, _)| *key == "GIT_TERMINAL_PROMPT")
+            .and_then(|(_, value)| value);
+        assert_eq!(prompt, Some(std::ffi::OsStr::new("0")));
+    }
+
+    /// Real git against a server that always answers 401. With the switch on
+    /// git must fail on its own: it must not start the askpass program the
+    /// environment names, and it must not wait for an answer.
+    #[cfg(unix)]
+    #[test]
+    fn git_fails_instead_of_asking_when_switched_on() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut buffer = [0u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"ifg\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+
+        let record = dir.path().join("askpass-called");
+        let askpass = dir.path().join("askpass.sh");
+        std::fs::write(
+            &askpass,
+            format!(
+                "#!/bin/sh\necho called > '{}'\necho secret\n",
+                record.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&askpass, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let global_config = dir.path().join("gitconfig");
+        std::fs::write(&global_config, "").unwrap();
+
+        let mut command = Command::new("git");
+        command
+            .current_dir(dir.path())
+            .args(["ls-remote", &format!("http://{addr}/git/owner/repo.git")])
+            .env("GIT_CONFIG_GLOBAL", &global_config)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_ASKPASS", &askpass)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        apply_noninteractive(&mut command, true);
+        let mut child = command.spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("git kept running instead of failing");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(!status.success());
+        assert!(!record.exists(), "askpass must not be started");
     }
 
     #[test]

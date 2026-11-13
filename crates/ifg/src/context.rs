@@ -4,7 +4,10 @@
 //! inference (must match a configured host) > `default_host`.
 //! `IRONFORGE_PAT` without `IRONFORGE_URL` binds the token to whichever host
 //! is resolved; `IRONFORGE_URL` without `IRONFORGE_PAT` takes the token from
-//! the config entry of that host.
+//! the config entry of that host. With both set, nothing is read from the
+//! stored config (env-only credentials).
+
+use std::path::PathBuf;
 
 use ifg_client::Secret;
 
@@ -30,6 +33,25 @@ pub fn env_pat() -> Option<String> {
     std::env::var("IRONFORGE_PAT")
         .ok()
         .filter(|value| !value.is_empty())
+}
+
+/// Both `IRONFORGE_URL` and `IRONFORGE_PAT` are set. The credential then comes
+/// from the environment alone: the stored config is not read (see
+/// `config::load`).
+pub fn env_credentials_active() -> bool {
+    env_url().is_some() && env_pat().is_some()
+}
+
+/// Where the hosts `auth status` lists come from: the label (`env`,
+/// `config-dir` or `default`) and the config directory when a file is read.
+pub fn credential_source() -> (&'static str, Option<PathBuf>) {
+    if env_credentials_active() {
+        ("env", None)
+    } else if let Some(dir) = crate::config::config_dir_override() {
+        ("config-dir", Some(dir))
+    } else {
+        ("default", crate::config::config_dir())
+    }
 }
 
 pub fn is_url(value: &str) -> bool {
@@ -74,6 +96,12 @@ pub fn resolve_host(
             });
         }
         let entry = config.hosts.get(host_arg).ok_or_else(|| {
+            if env_credentials_active() {
+                return crate::error::AppError::Usage(format!(
+                    "--host {host_arg}: IRONFORGE_URL and IRONFORGE_PAT are set, so the stored \
+                     hosts are not read; pass --host <URL> or unset them"
+                ));
+            }
             crate::error::AppError::Other(format!(
                 "unknown host '{host_arg}'; configured: {}. Use `ifg auth login --host <url>`.",
                 configured_names(config)

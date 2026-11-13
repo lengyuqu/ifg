@@ -109,6 +109,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("POST", "/repos/{owner}/{name}/collaborators"),
     ("PATCH", "/repos/{owner}/{name}/collaborators/{id}"),
     ("DELETE", "/repos/{owner}/{name}/collaborators/{user_id}"),
+    ("GET", "/repos/{owner}/{name}/events"),
     // issues
     ("GET", "/repos/{owner}/{name}/issues"),
     ("POST", "/repos/{owner}/{name}/issues"),
@@ -132,6 +133,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("PUT", "/repos/{owner}/{name}/pulls/{number}/auto-merge"),
     ("GET", "/repos/{owner}/{name}/pulls/{number}/reviews"),
     ("POST", "/repos/{owner}/{name}/pulls/{number}/reviews"),
+    ("GET", "/repos/{owner}/{name}/commits/{sha}/status"),
     // ci (M3)
     ("GET", "/repos/{owner}/{name}/pipelines"),
     ("POST", "/repos/{owner}/{name}/pipelines"),
@@ -189,4 +191,11 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("DELETE", "/orgs/{name}/members/{user_id}"),
     // search
     ("GET", "/search"),
+    // AI aggregates. The snapshot keys the first three routes with the
+    // `/api/v1` prefix and the PR context route without it, so these entries
+    // are spelled exactly as the snapshot has them.
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/summary"),
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/tree"),
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/search/code"),
+    ("GET", "/ai/repos/{owner}/{name}/pulls/{number}/context"),
 ];

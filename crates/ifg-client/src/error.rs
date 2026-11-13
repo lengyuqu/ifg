@@ -19,6 +19,14 @@ pub enum Error {
         code: Option<String>,
         message: String,
         request_id: Option<String>,
+        /// Server explanation (`error.reason`), control characters removed.
+        reason: Option<Box<str>>,
+        /// Server suggestion for the next step (`error.hint`), control
+        /// characters removed.
+        hint: Option<Box<str>>,
+        /// Structured extras (`error.details`), kept as the server sent them.
+        /// Boxed (with the two fields above) to keep `Error` small.
+        details: Option<Box<Value>>,
     },
     /// Connection, TLS or timeout failures.
     #[error("transport error: {0}")]
@@ -55,6 +63,22 @@ impl Error {
         }
     }
 
+    /// Server explanation (`error.reason`) of an [`Error::Api`], if any.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Error::Api { reason, .. } => reason.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Server suggestion (`error.hint`) of an [`Error::Api`], if any.
+    pub fn hint(&self) -> Option<&str> {
+        match self {
+            Error::Api { hint, .. } => hint.as_deref(),
+            _ => None,
+        }
+    }
+
     /// The request needs authentication (401/403 or the matching codes).
     pub fn is_unauthorized(&self) -> bool {
         self.status() == Some(401) || self.code() == Some("UNAUTHORIZED")
@@ -83,6 +107,14 @@ struct ErrorBody {
     message: String,
     #[serde(default)]
     request_id: Option<String>,
+    // `reason` and `hint` are read as raw values so that a non-string value
+    // from a newer server cannot make the whole error body unparseable.
+    #[serde(default)]
+    reason: Option<Value>,
+    #[serde(default)]
+    hint: Option<Value>,
+    #[serde(default)]
+    details: Option<Value>,
 }
 
 /// Maximum number of body bytes quoted in snippets and `Decode` messages.
@@ -97,13 +129,28 @@ pub(crate) fn api_error(status: u16, body: &[u8]) -> Error {
             code: envelope.error.code.map(|code| crate::sanitize(&code)),
             message: crate::sanitize(&envelope.error.message),
             request_id: envelope.error.request_id.map(|id| crate::sanitize(&id)),
+            reason: sanitized_text(envelope.error.reason),
+            hint: sanitized_text(envelope.error.hint),
+            details: envelope.error.details.map(Box::new),
         },
         Err(_) => Error::Api {
             status,
             code: None,
             message: snippet(body),
             request_id: None,
+            reason: None,
+            hint: None,
+            details: None,
         },
+    }
+}
+
+/// Keep a JSON string field as sanitised text; anything else is treated as
+/// absent.
+fn sanitized_text(value: Option<Value>) -> Option<Box<str>> {
+    match value {
+        Some(Value::String(text)) => Some(crate::sanitize(&text).into_boxed_str()),
+        _ => None,
     }
 }
 
@@ -152,6 +199,7 @@ mod tests {
             code,
             message,
             request_id,
+            ..
         } = &err
         else {
             panic!("expected Api error, got {err:?}");
@@ -161,6 +209,52 @@ mod tests {
         assert_eq!(message, "repo not found");
         assert_eq!(*request_id, None);
         assert!(err.is_not_found());
+    }
+
+    #[test]
+    fn keeps_reason_hint_and_details() {
+        let body = br#"{"error":{"code":"CONFLICT","message":"branch exists",
+            "request_id":"req-1","reason":"branch_exists",
+            "hint":"choose another name","details":{"branch":"main"}}}"#;
+        let err = api_error(409, body);
+        assert_eq!(err.reason(), Some("branch_exists"));
+        assert_eq!(err.hint(), Some("choose another name"));
+        let Error::Api { details, .. } = &err else {
+            panic!("expected Api error, got {err:?}");
+        };
+        assert_eq!(
+            details.as_deref(),
+            Some(&serde_json::json!({"branch": "main"}))
+        );
+    }
+
+    #[test]
+    fn missing_or_null_extras_stay_none() {
+        let body = br#"{"error":{"code":"NOT_FOUND","message":"gone","reason":null}}"#;
+        let err = api_error(404, body);
+        assert_eq!(err.reason(), None);
+        assert_eq!(err.hint(), None);
+        let Error::Api { details, .. } = &err else {
+            panic!("expected Api error, got {err:?}");
+        };
+        assert!(details.is_none());
+    }
+
+    #[test]
+    fn extras_are_sanitised_and_non_string_values_ignored() {
+        let body = "{\"error\":{\"message\":\"m\",\"reason\":\"bad\\u001b[2Jreason\",\
+            \"hint\":\"line\\nnext\\u0007\",\"code\":\"CONFLICT\"}}"
+            .as_bytes();
+        let err = api_error(409, body);
+        assert_eq!(err.reason(), Some("bad[2Jreason"));
+        assert_eq!(err.hint(), Some("line\nnext"));
+        assert_eq!(err.code(), Some("CONFLICT"));
+
+        let body = br#"{"error":{"code":"CONFLICT","message":"m","reason":42,"hint":["x"]}}"#;
+        let err = api_error(409, body);
+        assert_eq!(err.code(), Some("CONFLICT"));
+        assert_eq!(err.reason(), None);
+        assert_eq!(err.hint(), None);
     }
 
     #[test]
