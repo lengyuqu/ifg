@@ -439,6 +439,109 @@ pub enum CollabCommand {
         #[arg(long)]
         limit: Option<u64>,
     },
+    /// Read, replace or confirm a task's completion conditions
+    Condition {
+        #[command(subcommand)]
+        command: CollabConditionCommand,
+    },
+    /// Show a task's budgets against reported usage (informational only)
+    Budget {
+        #[command(subcommand)]
+        command: CollabBudgetCommand,
+    },
+    /// List or report a task's usage records
+    Usage {
+        #[command(subcommand)]
+        command: CollabUsageCommand,
+    },
+    /// Show the rule files that govern a path at a ref
+    Rules {
+        /// Branch, tag or commit (default HEAD)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Repository-relative file or directory (default the repository root)
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Show the collaboration overview sections for this user
+    Overview {
+        /// Comma-separated subset of awaiting_me, blocked_waiting, pending_handoffs, in_progress
+        #[arg(long)]
+        sections: Option<String>,
+        /// Items per section, 1 to 100 (server default 50)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabConditionCommand {
+    /// List a task's completion conditions and their version (0 = none defined)
+    List { task_id: String },
+    /// Replace a task's completion conditions from a JSON object file
+    ///
+    /// The file is sent unchanged, so it must contain `client_request_id`,
+    /// `expected_version` (the version last read) and `conditions`. `--file -`
+    /// reads stdin.
+    Set {
+        task_id: String,
+        /// JSON object file ("-" for stdin)
+        #[arg(long = "file", value_name = "PATH|-")]
+        source: String,
+    },
+    /// Confirm a manual_confirmation condition against the current branch head
+    Confirm {
+        task_id: String,
+        condition_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabBudgetCommand {
+    /// Show budgets with matched usage; informational, nothing is enforced
+    View { task_id: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabUsageCommand {
+    /// List usage records, newest reported first
+    List {
+        task_id: String,
+        /// Exact unit filter
+        #[arg(long)]
+        unit: Option<String>,
+        /// Exact source filter
+        #[arg(long)]
+        source: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Report usage consumed during a period (a delta, not a running total)
+    Report {
+        task_id: String,
+        /// Idempotency key, unique per reporting session or user
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        unit: String,
+        #[arg(long)]
+        source: String,
+        /// Non-negative decimal, sent as a JSON string
+        #[arg(long)]
+        amount: String,
+        /// RFC 3339 date-time
+        #[arg(long)]
+        period_start: String,
+        /// RFC 3339 date-time
+        #[arg(long)]
+        period_end: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -527,6 +630,8 @@ pub enum CollabTaskCommand {
         #[arg(long, conflicts_with = "pr")]
         clear_pr: bool,
     },
+    /// Show each completion condition as satisfied, unsatisfied, stale or unknown
+    Status { id: String },
     /// Claim an unowned or abandoned task as this session
     Claim {
         id: String,
