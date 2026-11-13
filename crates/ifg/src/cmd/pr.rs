@@ -70,6 +70,7 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
             .await
         }
         PrCommand::Checkout { number } => checkout(&ctx, &repo, *number).await,
+        PrCommand::Checks { number } => checks(&ctx, cli, &repo, *number).await,
         PrCommand::Edit {
             number,
             title,
@@ -291,6 +292,79 @@ async fn view(
         }
     }
     Ok(())
+}
+
+/// `pr checks`: the combined status of the pull request's head commit. A
+/// pending or failing check is data, not an error, so the exit code is 0
+/// whenever the status was fetched.
+async fn checks(
+    ctx: &super::CommandContext,
+    cli: &Cli,
+    repo: &RepoContext,
+    number: i64,
+) -> Result<(), AppError> {
+    let pr = ctx
+        .client
+        .pulls(&repo.owner, &repo.name)
+        .get(number)
+        .await?;
+    let head_sha = match pr.head_sha.as_deref().map(str::trim) {
+        Some(sha) if !sha.is_empty() => sha.to_string(),
+        _ => {
+            return Err(AppError::Other(format!(
+                "pull request #{number} has no head commit SHA; cannot read its checks"
+            )))
+        }
+    };
+    let status = ctx
+        .client
+        .repos()
+        .combined_status_raw(&repo.owner, &repo.name, &head_sha)
+        .await?;
+
+    if cli.json || cli.template.is_some() {
+        let value = serde_json::json!({
+            "number": number,
+            "head_sha": head_sha,
+            "status": status,
+        });
+        show_value(cli, &value);
+        return Ok(());
+    }
+
+    let short = output::sanitize(&head_sha.chars().take(7).collect::<String>());
+    let state = status["state"].as_str().unwrap_or("unknown");
+    output::line!("PR #{number} @ {short}  state: {}", output::sanitize(state));
+    match status.get("statuses").and_then(Value::as_array) {
+        None => output::line!(
+            "The status response has no per-check list (statuses); use --json to inspect it."
+        ),
+        Some(checks) if checks.is_empty() => output::line!("No checks reported for this commit."),
+        Some(checks) => {
+            let rows: Vec<Vec<String>> = checks
+                .iter()
+                .map(|check| {
+                    vec![
+                        check_text(check, "context"),
+                        check_text(check, "state"),
+                        check_text(check, "description"),
+                        check_text(check, "target_url"),
+                    ]
+                })
+                .collect();
+            output::print_table(&["CHECK", "STATE", "DESCRIPTION", "TARGET URL"], &rows);
+        }
+    }
+    Ok(())
+}
+
+/// A string field of one check, sanitised for the terminal; `—` when absent.
+fn check_text(check: &Value, key: &str) -> String {
+    check
+        .get(key)
+        .and_then(Value::as_str)
+        .map(output::sanitize)
+        .unwrap_or_else(|| "—".into())
 }
 
 async fn diff(

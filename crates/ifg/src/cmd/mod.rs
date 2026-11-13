@@ -69,6 +69,7 @@ pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
     "pr comment",
     "pr reviews",
     "pr reviewers",
+    "pr checks",
     "ci run",
     "ci wait",
     "ci runs",

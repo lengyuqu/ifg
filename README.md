@@ -71,6 +71,7 @@ ifg pr close 12 && ifg pr reopen 12                    # 关闭、重新打开
 ifg pr comment 12 -b '请检查测试结果'                   # 提交普通评审评论
 ifg pr reviews 12                                      # 查看评审及普通评论
 ifg pr reviewers add 12 alice                          # 请求评审；也可 list / remove
+ifg pr checks 12                                       # 头提交的组合状态与各项检查；待定或失败时仍返回 0
 ifg ci logs 7 --follow                                 # WebSocket 流式日志（断线自动续传；无 WS 时退回轮询）
 ifg ci run --ref refs/heads/main --wait --timeout 600  # 触发并等待；也可传提交 SHA
 ifg ci wait 7 --timeout 600                            # 等待已有流水线

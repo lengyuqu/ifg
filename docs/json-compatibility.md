@@ -18,6 +18,7 @@
 | `release view` | Release 原始对象的 `assets` 被附件接口的原始数组覆盖。 |
 | `release create` | 输出服务端创建响应；指定附件时，`assets` 被本次成功上传的原始附件对象数组覆盖。上传失败返回非零，不输出不完整的成功结果，已创建资源不会自动回滚。 |
 | `status` | 对象含 `repository`、`branch` 字符串，`pull`（对象或 `null`）、`runs` 数组、`scanned_runs` 非负整数；嵌套资源为服务端原始对象。 |
+| `pr checks` | 对象含整数 `number`（请求的 PR 编号）、非空字符串 `head_sha`（PR 的 `head_sha`）和 `status`：`GET …/commits/{sha}/status` 返回的组合状态对象，原样保留服务端字段，不做转换。`--template` 作用于同一对象。检查通过、等待或失败均返回 0；PR 缺少 `head_sha` 时失败，且不请求状态接口。 |
 | `notifications count` | 对象含非负整数 `unread_count`。 |
 | `search` | 以首个响应对象为基础，`results` 替换为跨页合并并按 `--limit` 截断的数组；如果首个响应有 `total`，使用最后取得页面的 `total`（非数字时为 0）；其余首屏字段保留，因此 `page` 等元数据仍描述首屏。 |
 | `doctor` | 检查结果数组，每项含字符串 `check`、`status`、`detail` 和字符串或 `null` 的 `hint`；检查集合可随环境或版本增加。 |
