@@ -811,6 +811,20 @@ pub enum McpCommand {
         #[arg(long = "command", default_value = "ironforge-mcp", value_name = "PATH")]
         server_command: String,
     },
+    /// Check whether the MCP server can be used from this machine
+    ///
+    /// Reads the server's MCP declaration from its capabilities, then checks
+    /// the host and token, that the server declares stdio and how many tools
+    /// it names, that the server binary can be found (it is never run), and
+    /// that `IRONFORGE_PAT` is set in this environment. Prints the same check
+    /// items as `ifg doctor` and exits 1 when a check fails (warnings do not).
+    /// The token is never printed.
+    Doctor {
+        /// Server binary to look for (default: the name the server declares,
+        /// else `ironforge-mcp`)
+        #[arg(long = "command", value_name = "PATH")]
+        server_command: Option<String>,
+    },
 }
 
 /// MCP clients `ifg mcp config` can emit a snippet for.

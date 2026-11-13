@@ -25,6 +25,7 @@
 | `notifications count` | 对象含非负整数 `unread_count`。 |
 | `search` | 以首个响应对象为基础，`results` 替换为跨页合并并按 `--limit` 截断的数组；如果首个响应有 `total`，使用最后取得页面的 `total`（非数字时为 0）；其余首屏字段保留，因此 `page` 等元数据仍描述首屏。 |
 | `doctor` | 检查结果数组，每项含字符串 `check`、`status`、`detail` 和字符串或 `null` 的 `hint`；检查集合可随环境或版本增加。 |
+| `mcp doctor` | 与 `doctor` 相同形状的检查结果数组（`check`、`status`、`detail`、`hint`）；检查项名称和数量可随版本增加。检查失败时可输出 JSON 并返回非零。 |
 | `api --json` | 非分页响应解析为 JSON；空响应为 `null`，非 JSON 报错。`api --paginate --json` 合并分页数据为数组。`api` 不带 `--json`、`--template`、`--jq` 或 `--paginate` 时原样输出响应字节，不添加换行。 |
 | `schema` | 命令树描述对象，见下节。本地生成，不访问网络，不读取配置或令牌。 |
 

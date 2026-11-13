@@ -168,7 +168,7 @@ async fn run(mut cli: Cli, matches: &ArgMatches) -> i32 {
         Command::Org { command } => cmd::org::run(command, &cli).await,
         Command::Version => cmd::version::run(&cli).await,
         Command::Capabilities { has } => cmd::capabilities::run(has.as_deref(), &cli).await,
-        Command::Mcp { command } => cmd::mcp::run(command, &cli),
+        Command::Mcp { command } => cmd::mcp::run(command, &cli).await,
         Command::Doctor => cmd::doctor::run(&cli).await,
         Command::Completions { .. } => unreachable!("handled before dispatch"),
         Command::Schema { .. } => unreachable!("handled before dispatch"),

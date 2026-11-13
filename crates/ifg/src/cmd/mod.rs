@@ -41,6 +41,7 @@ use crate::error::AppError;
 pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
     "api",
     "mcp config",
+    "mcp doctor",
     "status",
     "search",
     "context",
@@ -126,7 +127,8 @@ pub(crate) fn validate_output(cli: &Cli, matches: &ArgMatches) -> Result<(), App
         .unwrap_or(false);
     // `mcp config` prints a snippet that is already JSON; a template would
     // only reshape it, so `--json` is accepted and `--template` is not.
-    let template_refused = path.first() == Some(&"mcp") && cli.template.is_some();
+    // `mcp doctor` prints check items like `doctor`, so it takes both.
+    let template_refused = path.starts_with(&["mcp", "config"]) && cli.template.is_some();
     if !web && !template_refused && structured_output_supported(&path) {
         Ok(())
     } else {

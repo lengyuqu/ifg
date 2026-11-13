@@ -83,6 +83,7 @@ ifg doctor                                             # 一条命令自检：�
 ifg capabilities [-R yourname/demo] [--has wiki]         # 服务端契约版本与能力列表；--has 只返回退出码（0 有 / 1 无）
 ifg schema pr merge                                    # 命令树的 JSON 描述（参数、--json 支持、读写副作用）；无需登录
 ifg mcp config --client claude-code                    # 打印 MCP 客户端配置（不含令牌，需自行导出 IRONFORGE_PAT）
+ifg mcp doctor                                         # 自检 MCP 服务能否在本机使用（服务端声明、二进制、IRONFORGE_PAT）；不运行服务
 ifg status                                             # 当前分支的 PR + 最近流水线
 ifg search "登录 超时" --type issue                      # 全局搜索（repo / issue / wiki）
 ifg context repo                                       # AI 上下文：仓库摘要（--json 原样输出服务端对象）

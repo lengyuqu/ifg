@@ -40,7 +40,8 @@ impl Status {
     }
 }
 
-struct Check {
+/// One line of a doctor-style report: shared with `ifg mcp doctor`.
+pub(crate) struct Check {
     name: &'static str,
     status: Status,
     detail: String,
@@ -48,7 +49,7 @@ struct Check {
 }
 
 impl Check {
-    fn ok(name: &'static str, detail: impl Into<String>) -> Self {
+    pub(crate) fn ok(name: &'static str, detail: impl Into<String>) -> Self {
         Self {
             name,
             status: Status::Ok,
@@ -57,7 +58,11 @@ impl Check {
         }
     }
 
-    fn warn(name: &'static str, detail: impl Into<String>, hint: impl Into<String>) -> Self {
+    pub(crate) fn warn(
+        name: &'static str,
+        detail: impl Into<String>,
+        hint: impl Into<String>,
+    ) -> Self {
         Self {
             name,
             status: Status::Warn,
@@ -66,7 +71,11 @@ impl Check {
         }
     }
 
-    fn fail(name: &'static str, detail: impl Into<String>, hint: impl Into<String>) -> Self {
+    pub(crate) fn fail(
+        name: &'static str,
+        detail: impl Into<String>,
+        hint: impl Into<String>,
+    ) -> Self {
         Self {
             name,
             status: Status::Fail,
@@ -75,7 +84,7 @@ impl Check {
         }
     }
 
-    fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         json!({
             "check": self.name,
             "status": self.status.as_str(),
@@ -103,15 +112,7 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
     if let Some(ctx) = &ctx {
         checks.push(host_check(cli, &ctx.host));
         checks.push(token_check(&ctx.host));
-
-        match ctx.client.health().await {
-            Ok(health) => checks.push(version_check(&health)),
-            Err(error) => checks.push(Check::fail(
-                "server",
-                format!("{} — {error}", ctx.host.url),
-                "is IronForge running and reachable from here?",
-            )),
-        }
+        checks.push(server_check(ctx).await);
 
         if ctx.host.token.is_some() {
             let (account, username) = account_check(ctx).await;
@@ -127,52 +128,17 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         checks.push(git_helper_check(&ctx.host));
     }
 
-    let failed = checks
-        .iter()
-        .filter(|check| check.status == Status::Fail)
-        .count();
+    let failed = failed_count(&checks);
 
     if cli.json || cli.template.is_some() {
-        let items: Vec<Value> = checks.iter().map(Check::to_json).collect();
-        match &cli.template {
-            Some(template) => output::print_template(&items, template),
-            None => output::print_json(&Value::Array(items)),
-        }
+        print_structured(cli, &checks);
     } else {
         output::line!(
             "ifg {} (min server {})",
             env!("CARGO_PKG_VERSION"),
             crate::version::MIN_SERVER_VERSION
         );
-        let width = checks
-            .iter()
-            .map(|check| check.name.len())
-            .max()
-            .unwrap_or(0);
-        for check in &checks {
-            output::line!(
-                "  {:<width$}  {}  {}",
-                check.name,
-                check.status.mark(),
-                output::sanitize(&check.detail),
-                width = width
-            );
-            if let Some(hint) = &check.hint {
-                output::line!(
-                    "  {:<width$}  {:<4}  → {}",
-                    "",
-                    "",
-                    output::sanitize(hint),
-                    width = width
-                );
-            }
-        }
-        output::line!();
-        if failed == 0 {
-            output::line!("all good.");
-        } else {
-            output::line!("{failed} check(s) failed.");
-        }
+        print_rows(&checks);
     }
 
     if failed > 0 {
@@ -181,7 +147,69 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
     Ok(())
 }
 
-fn host_check(cli: &Cli, host: &ResolvedHost) -> Check {
+pub(crate) fn failed_count(checks: &[Check]) -> usize {
+    checks
+        .iter()
+        .filter(|check| check.status == Status::Fail)
+        .count()
+}
+
+/// `--json` / `--template` output: one item per check, in order.
+pub(crate) fn print_structured(cli: &Cli, checks: &[Check]) {
+    let items: Vec<Value> = checks.iter().map(Check::to_json).collect();
+    match &cli.template {
+        Some(template) => output::print_template(&items, template),
+        None => output::print_json(&Value::Array(items)),
+    }
+}
+
+/// Human rows, then a blank line and the summary.
+pub(crate) fn print_rows(checks: &[Check]) {
+    let failed = failed_count(checks);
+    let width = checks
+        .iter()
+        .map(|check| check.name.len())
+        .max()
+        .unwrap_or(0);
+    for check in checks {
+        output::line!(
+            "  {:<width$}  {}  {}",
+            check.name,
+            check.status.mark(),
+            output::sanitize(&check.detail),
+            width = width
+        );
+        if let Some(hint) = &check.hint {
+            output::line!(
+                "  {:<width$}  {:<4}  → {}",
+                "",
+                "",
+                output::sanitize(hint),
+                width = width
+            );
+        }
+    }
+    output::line!();
+    if failed == 0 {
+        output::line!("all good.");
+    } else {
+        output::line!("{failed} check(s) failed.");
+    }
+}
+
+/// `GET /health`: the server answers and is not older than the minimum.
+pub(crate) async fn server_check(ctx: &crate::cmd::CommandContext) -> Check {
+    match ctx.client.health().await {
+        Ok(health) => version_check(&health),
+        Err(error) => Check::fail(
+            "server",
+            format!("{} — {error}", ctx.host.url),
+            "is IronForge running and reachable from here?",
+        ),
+    }
+}
+
+pub(crate) fn host_check(cli: &Cli, host: &ResolvedHost) -> Check {
     let source = if cli.host.is_some() {
         "--host".to_string()
     } else if std::env::var("IRONFORGE_URL").is_ok_and(|value| !value.is_empty()) {
@@ -194,7 +222,7 @@ fn host_check(cli: &Cli, host: &ResolvedHost) -> Check {
     Check::ok("host", format!("{} ({source})", host.url))
 }
 
-fn token_check(host: &ResolvedHost) -> Check {
+pub(crate) fn token_check(host: &ResolvedHost) -> Check {
     if host.token.is_some() {
         Check::ok("token", "present")
     } else {
@@ -222,7 +250,7 @@ fn version_check(health: &Value) -> Check {
     }
 }
 
-async fn account_check(ctx: &crate::cmd::CommandContext) -> (Check, Option<String>) {
+pub(crate) async fn account_check(ctx: &crate::cmd::CommandContext) -> (Check, Option<String>) {
     match ctx.client.users().me().await {
         Ok(profile) => {
             let mut detail = profile.username.clone();
