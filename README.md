@@ -89,6 +89,9 @@ ifg context repo                                       # AI 上下文：仓库�
 ifg context tree src --ref main                        # 文件树单页；带 --cursor 续页
 ifg context search "重试" --limit 10                    # 代码搜索（仅默认分支）
 ifg context pr 12                                      # PR 上下文聚合对象（服务端默认预算）
+ifg context pr 12 --budget 2000                        # 指定服务端预算（token，500–50000）；不带则用服务端默认
+ifg context issues --state closed --limit 10           # AI 上下文：Issue 摘要列表（--state open|closed）
+ifg context prs --state merged                         # AI 上下文：PR 摘要列表（--state open|closed|merged）
 ifg notifications                                      # 通知列表；notifications count 只看未读
 ifg org list                                           # 组织；org members / add-member / remove-member
 ifg org create acme -d "Acme 团队"                      # 建组织，成员用 --role 指定

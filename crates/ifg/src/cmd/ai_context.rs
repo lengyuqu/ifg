@@ -1,10 +1,11 @@
 //! `ifg context …` — read-only AI aggregates: a repository summary, one page
-//! of its file tree, code search on the default branch and a pull request
-//! context. Each subcommand is one request. `--json` and `--template` pass the
-//! server's object through unchanged; the default output is a compact
-//! Markdown-style view in which every server-provided string is sanitized.
+//! of its file tree, code search on the default branch, a pull request
+//! context and the issue and pull request summary lists. Each subcommand is
+//! one request. `--json` and `--template` pass the server's object through
+//! unchanged; the default output is a compact Markdown-style view in which
+//! every server-provided string is sanitized.
 
-use ifg_client::{CodeSearchPage, CodeSearchQuery, TreeQuery};
+use ifg_client::{AiListQuery, CodeSearchPage, CodeSearchQuery, PrContextQuery, TreeQuery};
 use serde_json::Value;
 
 use crate::cli::{Cli, ContextCommand};
@@ -70,12 +71,39 @@ pub async fn run(command: &ContextCommand, cli: &Cli) -> Result<(), AppError> {
                 print_search(&repo, query, &page)?;
             }
         }
-        ContextCommand::Pr { number } => {
-            let value = ai.pr_context(&repo.owner, &repo.name, *number).await?;
+        ContextCommand::Pr { number, budget } => {
+            let query = PrContextQuery { budget: *budget };
+            let value = ai
+                .pr_context_with(&repo.owner, &repo.name, *number, &query)
+                .await?;
             if structured {
                 show(cli, &value);
             } else {
                 print_pr(&repo, *number, &value);
+            }
+        }
+        ContextCommand::Issues { state, limit } => {
+            let query = AiListQuery {
+                state: state.clone(),
+                limit: *limit,
+            };
+            let value = ai.issues(&repo.owner, &repo.name, &query).await?;
+            if structured {
+                show(cli, &value);
+            } else {
+                print_issues(&repo, &value)?;
+            }
+        }
+        ContextCommand::Prs { state, limit } => {
+            let query = AiListQuery {
+                state: state.clone(),
+                limit: *limit,
+            };
+            let value = ai.prs(&repo.owner, &repo.name, &query).await?;
+            if structured {
+                show(cli, &value);
+            } else {
+                print_prs(&repo, &value)?;
             }
         }
     }
@@ -206,4 +234,66 @@ fn print_pr(repo: &RepoContext, number: i64, value: &Value) {
     for (key, item) in object {
         print_item(&output::sanitize(key), &describe(item));
     }
+}
+
+/// A summary field on one line: sanitized, with line breaks and tabs turned
+/// into spaces so each item stays on one line. A missing field shows `?`.
+fn inline(value: &Value, key: &str) -> String {
+    field(value, key)
+        .map(|text| text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .unwrap_or_else(|| "?".to_string())
+}
+
+/// One line per issue, with the fields `IssueSummary` declares.
+fn issue_line(item: &Value) -> String {
+    format!(
+        "- #{} {} ({}, author {}, created {})",
+        inline(item, "number"),
+        inline(item, "title"),
+        inline(item, "state"),
+        inline(item, "author_id"),
+        inline(item, "created_at"),
+    )
+}
+
+/// One line per pull request, with the fields `PrSummary` declares.
+fn pr_line(item: &Value) -> String {
+    format!(
+        "- #{} {} ({}, {} -> {}, author {}, created {})",
+        inline(item, "number"),
+        inline(item, "title"),
+        inline(item, "state"),
+        inline(item, "head_branch"),
+        inline(item, "base_branch"),
+        inline(item, "author_id"),
+        inline(item, "created_at"),
+    )
+}
+
+/// The server's summary array as a Markdown list under a `# repo kind` heading.
+fn print_summaries(
+    repo: &RepoContext,
+    kind: &str,
+    value: &Value,
+    line: fn(&Value) -> String,
+) -> Result<(), AppError> {
+    let items = value
+        .as_array()
+        .ok_or_else(|| AppError::Other(format!("invalid {kind} response: expected an array")))?;
+    output::line!("# {repo} {kind}");
+    if items.is_empty() {
+        output::line!("No {kind}.");
+    }
+    for item in items {
+        output::line!("{}", line(item));
+    }
+    Ok(())
+}
+
+fn print_issues(repo: &RepoContext, value: &Value) -> Result<(), AppError> {
+    print_summaries(repo, "issues", value, issue_line)
+}
+
+fn print_prs(repo: &RepoContext, value: &Value) -> Result<(), AppError> {
+    print_summaries(repo, "pull requests", value, pr_line)
 }
