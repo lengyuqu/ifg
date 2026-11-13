@@ -132,6 +132,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("PUT", "/repos/{owner}/{name}/pulls/{number}/auto-merge"),
     ("GET", "/repos/{owner}/{name}/pulls/{number}/reviews"),
     ("POST", "/repos/{owner}/{name}/pulls/{number}/reviews"),
+    ("GET", "/repos/{owner}/{name}/commits/{sha}/status"),
     // ci (M3)
     ("GET", "/repos/{owner}/{name}/pipelines"),
     ("POST", "/repos/{owner}/{name}/pipelines"),

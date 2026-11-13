@@ -966,6 +966,8 @@ pub enum PrCommand {
     },
     /// Fetch the PR head branch and check it out as pr-<number>
     Checkout { number: i64 },
+    /// Show the commit status checks of the PR's head commit
+    Checks { number: i64 },
 }
 
 #[derive(Debug, Subcommand)]
