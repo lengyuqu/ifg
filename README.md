@@ -181,6 +181,21 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 **`--no-input` 不等于 `--yes`**。它从不替调用方确认：破坏性命令仍需显式传入 `--yes` 才会执行，例如 `ifg --no-input repo delete OWNER/NAME --yes`。
 
+## 幂等写入（超时后安全重跑）
+
+写命令超时后，调用方不知道服务端是否已经执行。给命令加上 `--idempotency-key <KEY>`（或设置 `IRONFORGE_IDEMPOTENCY_KEY`，命令行参数优先），ifg 会把它作为 `Idempotency-Key` 请求头发送。同一个键重跑同一请求时，服务端返回第一次的结果，不会重复创建。
+
+- 键由调用方自己选择，ifg 从不生成。取值为 1 到 255 个字符，只能是 `A-Z`、`a-z`、`0-9`、`.`、`_`、`:`、`-`；格式错误直接以退出码 2 失败，且不发送任何请求。
+- 只有“一次调用只发一个写请求、且路由受服务端支持”的命令接受该参数，例如 `issue create/comment/close/reopen/edit`、`pr create/edit/close/reopen/comment/review/merge/reviewers add|remove`、`label`、`milestone`、`wiki` 的增改删，`release edit/delete` 与 `repo create`。`ifg schema` 中的 `accepts_idempotency_key` 列出了全部命令。
+- 其他命令（包括所有读命令、`release create`、`release upload`、`repo edit`、`ci`、`collab` 等）收到该参数时以退出码 2 拒绝，不发送任何请求。`release create` 会对每个附件各发一次请求，共用同一个键会被服务端以 `IDEMPOTENCY_KEY_REUSED` 拒绝。
+- 带键的写请求在连接中断、HTTP 5xx 和 429 时会用同一个键自动重试（沿用退出前的退避与重试次数设置，并遵守 `Retry-After`）。不带键的写请求从不自动重试。
+- 服务端拒绝时，错误对象的 `reason` 原样输出（例如 `IDEMPOTENCY_NOT_SUPPORTED`、`IDEMPOTENCY_KEY_REUSED`，后者为 409）。
+
+```sh
+ifg --idempotency-key "release-notes-v1" -R alice/demo issue comment 12 -b "shipped"
+IRONFORGE_IDEMPOTENCY_KEY="retry-42" ifg -R alice/demo pr merge 7 --squash
+```
+
 ## 多 Agent 协作
 
 固定基线的本地镜像 ID 和 OpenAPI 快照包含协作接口；不同部署应先确认其服务端具备这些接口。用户 PAT 用于身份和仓库权限；每个 Agent 还需要独立的会话凭据。会话名称和消息正文均是自报内容，不是安全身份或可信指令。

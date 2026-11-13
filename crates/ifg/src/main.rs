@@ -128,6 +128,15 @@ async fn run(mut cli: Cli, matches: &ArgMatches) -> i32 {
         report_error(&error, json);
         return error.exit_code();
     }
+    // An idempotency key is refused here, before any request, when the command
+    // cannot use it.
+    match cmd::validate_idempotency(&cli, matches) {
+        Ok(key) => cli.idempotency = key,
+        Err(error) => {
+            report_error(&error, json);
+            return error.exit_code();
+        }
+    }
     // A full URL in a positional target (`repo view <URL>`) must decide the
     // instance before `bootstrap` picks a host, so hand it to the resolver.
     let target = positional_target(&cli.command);

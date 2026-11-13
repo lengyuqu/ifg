@@ -4,7 +4,7 @@
 .SH NAME
 ifg \- Work with IronForge repositories, issues, pull requests, CI and releases from the terminal
 .SH SYNOPSIS
-\fBifg\fR [\fB\-\-host\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-json\fR] [\fB\-q\fR|\fB\-\-template\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-input\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+\fBifg\fR [\fB\-\-host\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-json\fR] [\fB\-q\fR|\fB\-\-template\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-input\fR] [\fB\-\-idempotency\-key\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
 Work with IronForge repositories, issues, pull requests, CI and releases from the terminal.
 .PP
@@ -44,6 +44,11 @@ Disable colored output (also honors NO_COLOR)
 Never prompt: fail with exit code 2 where a person would be asked
 
 Use in scripts and by AI agents. A confirmation then refuses and names `\-\-yes`, `auth login` needs `\-\-with\-token`, `\-\-editor` is refused (use `\-t`/`\-b`), the pager is skipped and git subprocesses do not prompt. This is NOT `\-\-yes`: nothing destructive runs unless `\-\-yes` is also given. Also enabled by `IFG_NO_INPUT=1` (`1` or `true`); the flag wins.
+.TP
+\fB\-\-idempotency\-key\fR \fI<KEY>\fR
+Caller\-chosen key that makes a write safe to repeat after a timeout
+
+The server replays the first response for the same key. Only single\-write commands on routes that support keys accept it (see `ifg schema`, field `accepts_idempotency_key`); any other command exits with code 2 before sending anything. The key is sent as the `Idempotency\-Key` header on that command\*(Aqs write request, and a keyed write is retried with the same key after connection errors, 429 and 5xx. Use a key you chose: ifg never generates one. Allowed characters: A\-Z, a\-z, 0\-9, `.`, `_`, `:`, `\-` (1 to 255). When absent, the environment variable IRONFORGE_IDEMPOTENCY_KEY is used; this flag wins.
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR
 Verbosity: \-v logs each request, \-vv also logs headers
