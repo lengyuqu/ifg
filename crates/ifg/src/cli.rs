@@ -106,6 +106,26 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_input: bool,
 
+    /// Caller-chosen key that makes a write safe to repeat after a timeout
+    ///
+    /// The server replays the first response for the same key. Only single-write commands on routes that support keys accept it (see
+    /// `ifg schema`, field `accepts_idempotency_key`); any other command exits
+    /// with code 2 before sending anything. The key is sent as the
+    /// `Idempotency-Key` header on that command's write request, and a keyed
+    /// write is retried with the same key after connection errors, 429 and
+    /// 5xx. Use a key you chose: ifg never generates one. Allowed characters:
+    /// A-Z, a-z, 0-9, `.`, `_`, `:`, `-` (1 to 255). When absent, the
+    /// environment variable IRONFORGE_IDEMPOTENCY_KEY is used; this flag wins.
+    #[arg(long, global = true, value_name = "KEY")]
+    pub idempotency_key: Option<String>,
+
+    /// The validated key for this invocation, filled in by `main` after the
+    /// command is known. Never accepted from the command line.
+    #[arg(skip)]
+    // Read by `bootstrap`; the `gen_man` example only walks clap metadata.
+    #[allow(dead_code)]
+    pub idempotency: Option<ifg_client::IdempotencyKey>,
+
     /// Verbosity: -v logs each request, -vv also logs headers
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count, global = true, default_value_t = 0)]
     pub verbose: u8,

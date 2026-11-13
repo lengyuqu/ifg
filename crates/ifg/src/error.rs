@@ -46,8 +46,9 @@ impl ErrorKind {
         }
     }
 
-    /// Only network failures, 429 and 5xx are worth retrying. The CLI does
-    /// not retry POST itself, so this tells the caller what to try again.
+    /// Only network failures, 429 and 5xx are worth retrying. The CLI retries
+    /// a write only when it carries an idempotency key, so this tells the
+    /// caller what to try again.
     pub fn retryable(self) -> bool {
         matches!(
             self,

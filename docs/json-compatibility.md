@@ -49,8 +49,9 @@
 - `subcommands`：子命令对象数组；叶子命令为 `[]`。
 - `json_supported`：叶子命令为布尔值，表示是否接受 `--json` / `--template`（`view` 命令加 `--web` 时不接受，该限制未在此表示）；非叶子命令为 `null`。
 - `effect`：叶子命令为 `"read"`、`"write"` 或 `"destructive"`；非叶子命令为 `null`。`api` 固定为 `write`，因为其 HTTP 方法在运行时决定。
+- `accepts_idempotency_key`：叶子命令为布尔值，表示是否接受全局参数 `--idempotency-key`（见 README 的“幂等写入”一节）；非叶子命令为 `null`。取值来自 `cmd::IDEMPOTENT_WRITES` 表，该表只列出一次请求、且路由受服务端支持的写命令。
 
-兼容规则：1.x 内可以新增字段和新的枚举值（例如新的 `effect` 取值），但不删除或改变已列出字段的类型与含义。使用方应忽略不认识的字段；遇到不认识的 `effect` 值按 `write` 处理，不把它当作只读。`json_supported` 与 `effect` 的依据分别是 `cmd::STRUCTURED_OUTPUT` 表和 `cmd/schema.rs` 中的副作用列表，新增命令时须同步更新，未列出的叶子命令默认为 `read`。
+兼容规则：1.x 内可以新增字段和新的枚举值（例如新的 `effect` 取值），但不删除或改变已列出字段的类型与含义。`accepts_idempotency_key` 即为 1.x 内新增的字段，旧版本的使用方应忽略它。使用方应忽略不认识的字段；遇到不认识的 `effect` 值按 `write` 处理，不把它当作只读。`json_supported` 与 `effect` 的依据分别是 `cmd::STRUCTURED_OUTPUT` 表和 `cmd/schema.rs` 中的副作用列表，新增命令时须同步更新，未列出的叶子命令默认为 `read`。`accepts_idempotency_key` 的依据是 `cmd::IDEMPOTENT_WRITES`，同样须与命令同步更新。
 
 其他客户端构造的结果按当前命令语义使用；不把它们误认为单个服务端响应。模板输出不是 JSON 契约的一部分。
 
@@ -69,7 +70,7 @@
 | `reason` | 字符串或 `null` | 服务端 `error.reason`，去除控制字符后原样输出；缺失时为 `null`。ifg 不把它映射为其他文本。 |
 | `hint` | 字符串或 `null` | 服务端 `error.hint`，处理同 `reason`。 |
 | `message` | 字符串 | 与 `ifg:` 提示行相同的文本，不含 `ifg: ` 前缀。 |
-| `retryable` | 布尔 | 仅网络失败、429 和 5xx 为 `true`。ifg 不会重试 POST；该字段只表示此类错误值得由调用方重试。 |
+| `retryable` | 布尔 | 仅网络失败、429 和 5xx 为 `true`。ifg 只会重试带幂等键的写请求（见 README）；该字段只表示此类错误值得由调用方重试。 |
 
 错误对象不含服务端的 `details`，本版本也不输出它。退出码仍为 0/1/2/4/8，与是否带 `--json` 无关。`ifg api` 不带 `--json` 时的原始响应字节不受影响。
 
