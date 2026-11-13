@@ -22,6 +22,30 @@
 | `search` | 以首个响应对象为基础，`results` 替换为跨页合并并按 `--limit` 截断的数组；如果首个响应有 `total`，使用最后取得页面的 `total`（非数字时为 0）；其余首屏字段保留，因此 `page` 等元数据仍描述首屏。 |
 | `doctor` | 检查结果数组，每项含字符串 `check`、`status`、`detail` 和字符串或 `null` 的 `hint`；检查集合可随环境或版本增加。 |
 | `api --json` | 非分页响应解析为 JSON；空响应为 `null`，非 JSON 报错。`api --paginate --json` 合并分页数据为数组。`api` 不带 `--json`、`--template`、`--jq` 或 `--paginate` 时原样输出响应字节，不添加换行。 |
+| `schema` | 命令树描述对象，见下节。本地生成，不访问网络，不读取配置或令牌。 |
+
+## `ifg schema` 文档
+
+`ifg schema [COMMAND...]` 从 clap 定义在运行时生成一个 JSON 对象，供 agent 发现命令。不带参数时列出全部命令；给出命令路径（如 `ifg schema pr merge`）时，`commands` 只含该子树。未知路径返回用法错误（退出码 2）。
+
+顶层字段：
+
+- `schema_version`：整数，当前为 `1`。
+- `ifg_version`：字符串，生成本文档的 ifg 版本。
+- `commands`：数组，每项为一个命令（子树根或全部顶层命令）。
+- `global_args`：根命令的全局参数（如 `--host`、`--json`），各命令不重复列出。
+- `exit_codes`：对象，键为退出码字符串（`"0"`、`"1"`、`"2"`、`"4"`、`"8"`），值为含义说明。
+
+命令对象字段：
+
+- `path`：字符串数组，从顶层到该命令的名字，例如 `["pr", "merge"]`。
+- `about`：字符串或 `null`，简短描述。
+- `args`：参数数组。每项含 `name`、`long`（如 `"--merge"`，无则 `null`）、`short`（如 `"-R"`，无则 `null`）、`positional`、`required`、`takes_value`、`multiple`（布尔）、`possible_values`（字符串数组或 `null`）、`help`（字符串或 `null`）。
+- `subcommands`：子命令对象数组；叶子命令为 `[]`。
+- `json_supported`：叶子命令为布尔值，表示是否接受 `--json` / `--template`（`view` 命令加 `--web` 时不接受，该限制未在此表示）；非叶子命令为 `null`。
+- `effect`：叶子命令为 `"read"`、`"write"` 或 `"destructive"`；非叶子命令为 `null`。`api` 固定为 `write`，因为其 HTTP 方法在运行时决定。
+
+兼容规则：1.x 内可以新增字段和新的枚举值（例如新的 `effect` 取值），但不删除或改变已列出字段的类型与含义。使用方应忽略不认识的字段；遇到不认识的 `effect` 值按 `write` 处理，不把它当作只读。`json_supported` 与 `effect` 的依据分别是 `cmd::STRUCTURED_OUTPUT` 表和 `cmd/schema.rs` 中的副作用列表，新增命令时须同步更新，未列出的叶子命令默认为 `read`。
 
 其他客户端构造的结果按当前命令语义使用；不把它们误认为单个服务端响应。模板输出不是 JSON 契约的一部分。
 

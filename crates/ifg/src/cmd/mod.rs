@@ -14,11 +14,13 @@ pub mod org;
 pub mod pr;
 pub mod release;
 pub mod repo;
+pub mod schema;
 pub mod search;
 pub mod status;
 pub mod version;
 pub mod wiki;
 
+use clap::ArgMatches;
 use ifg_client::Client;
 
 use crate::cli::Cli;
@@ -26,88 +28,94 @@ use crate::config::Config;
 use crate::context::{self, ResolvedHost};
 use crate::error::AppError;
 
+/// Leaf commands that accept `--json` / `--template`, by clap command path.
+/// A group path covers every leaf under it. `view` commands also accept the
+/// flags, except with `--web`, which `validate_output` checks on its own.
+///
+/// This table is the one place that decides structured-output support:
+/// `validate_output` enforces it and `ifg schema` reports it.
+pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
+    "api",
+    "status",
+    "search",
+    "doctor",
+    "collab",
+    "wiki",
+    "org",
+    "notifications",
+    "auth status",
+    "repo collaborators",
+    "repo list",
+    "repo view",
+    "repo edit",
+    "repo create",
+    "issue list",
+    "issue view",
+    "issue create",
+    "issue comment",
+    "issue close",
+    "issue reopen",
+    "issue edit",
+    "pr list",
+    "pr view",
+    "pr create",
+    "pr merge",
+    "pr review",
+    "pr edit",
+    "pr close",
+    "pr reopen",
+    "pr comment",
+    "pr reviews",
+    "pr reviewers",
+    "ci run",
+    "ci wait",
+    "ci runs",
+    "ci view",
+    "ci cancel",
+    "ci retry",
+    "ci approve",
+    "release list",
+    "release view",
+    "release create",
+    "release edit",
+    "label list",
+    "label create",
+    "label edit",
+    "milestone list",
+    "milestone create",
+    "milestone edit",
+];
+
+/// Whether the leaf or group at `path` (clap names, outermost first) accepts
+/// structured output. Does not consider `--web`; see `STRUCTURED_OUTPUT`.
+pub(crate) fn structured_output_supported(path: &[&str]) -> bool {
+    STRUCTURED_OUTPUT.iter().any(|entry| {
+        let entry: Vec<&str> = entry.split(' ').collect();
+        path.starts_with(&entry)
+    })
+}
+
 /// Commands that produce documents, invoke git, or open a browser cannot
 /// silently accept structured-output flags. Validate before any side effect.
-pub(crate) fn validate_output(cli: &Cli) -> Result<(), AppError> {
-    use crate::cli::{
-        AuthCommand, CiCommand, Command, IssueCommand, LabelCommand, MilestoneCommand, PrCommand,
-        ReleaseCommand, RepoCommand,
-    };
+/// `matches` is the parse result behind `cli`; it gives the leaf command path.
+pub(crate) fn validate_output(cli: &Cli, matches: &ArgMatches) -> Result<(), AppError> {
     if !cli.json && cli.template.is_none() {
         return Ok(());
     }
-    let supported = match &cli.command {
-        Command::Api { .. }
-        | Command::Status
-        | Command::Search { .. }
-        | Command::Doctor
-        | Command::Collab { .. }
-        | Command::Wiki { .. }
-        | Command::Org { .. }
-        | Command::Notifications { .. } => true,
-        Command::Auth { command } => matches!(command, AuthCommand::Status),
-        Command::Repo { command } => matches!(
-            command,
-            RepoCommand::Collaborators { .. }
-                | RepoCommand::List { .. }
-                | RepoCommand::View { web: false, .. }
-                | RepoCommand::Edit { .. }
-                | RepoCommand::Create { .. }
-        ),
-        Command::Issue { command } => matches!(
-            command,
-            IssueCommand::List { .. }
-                | IssueCommand::View { web: false, .. }
-                | IssueCommand::Create { .. }
-                | IssueCommand::Comment { .. }
-                | IssueCommand::Close { .. }
-                | IssueCommand::Reopen { .. }
-                | IssueCommand::Edit { .. }
-        ),
-        Command::Pr { command } => matches!(
-            command,
-            PrCommand::List { .. }
-                | PrCommand::View { web: false, .. }
-                | PrCommand::Create { .. }
-                | PrCommand::Merge { .. }
-                | PrCommand::Review { .. }
-                | PrCommand::Edit { .. }
-                | PrCommand::Close { .. }
-                | PrCommand::Reopen { .. }
-                | PrCommand::Comment { .. }
-                | PrCommand::Reviews { .. }
-                | PrCommand::Reviewers { .. }
-        ),
-        Command::Ci { command } => matches!(
-            command,
-            CiCommand::Run { .. }
-                | CiCommand::Wait { .. }
-                | CiCommand::Runs { .. }
-                | CiCommand::View { .. }
-                | CiCommand::Cancel { .. }
-                | CiCommand::Retry { .. }
-                | CiCommand::Approve { .. }
-        ),
-        Command::Release { command } => matches!(
-            command,
-            ReleaseCommand::List { .. }
-                | ReleaseCommand::View { web: false, .. }
-                | ReleaseCommand::Create { .. }
-                | ReleaseCommand::Edit { .. }
-        ),
-        Command::Label { command } => matches!(
-            command,
-            LabelCommand::List | LabelCommand::Create { .. } | LabelCommand::Edit { .. }
-        ),
-        Command::Milestone { command } => matches!(
-            command,
-            MilestoneCommand::List
-                | MilestoneCommand::Create { .. }
-                | MilestoneCommand::Edit { .. }
-        ),
-        _ => false,
-    };
-    if supported {
+    let mut path = Vec::new();
+    let mut leaf = matches;
+    while let Some((name, sub)) = leaf.subcommand() {
+        path.push(name);
+        leaf = sub;
+    }
+    // `--web` opens a browser page instead of printing a result.
+    let web = leaf
+        .try_get_one::<bool>("web")
+        .ok()
+        .flatten()
+        .copied()
+        .unwrap_or(false);
+    if !web && structured_output_supported(&path) {
         Ok(())
     } else {
         Err(AppError::Usage(

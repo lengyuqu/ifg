@@ -18,18 +18,21 @@ mod time;
 mod version;
 mod web;
 
-use clap::{CommandFactory, Parser};
+use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use cli::{Cli, Command, RepoCommand};
 
 fn main() -> std::process::ExitCode {
-    let cli = Cli::parse();
+    // Parse through `ArgMatches` so the leaf command path stays available to
+    // `validate_output`; this is what `Cli::parse()` does internally.
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     output::init(cli.no_color);
     init_tracing(cli.verbose);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("failed to build the tokio runtime");
-    let mut code = runtime.block_on(run(cli));
+    let mut code = runtime.block_on(run(cli, &matches));
     if let Err(error) = output::finish() {
         eprintln!("ifg: could not write stdout: {error}");
         if code == 0 {
@@ -56,8 +59,18 @@ fn positional_target(command: &Command) -> Option<String> {
     }
 }
 
-async fn run(mut cli: Cli) -> i32 {
-    if let Err(error) = cmd::validate_output(&cli) {
+async fn run(mut cli: Cli, matches: &ArgMatches) -> i32 {
+    // The schema describes this binary only: no config, token or network.
+    if let Command::Schema { command_path } = &cli.command {
+        return match cmd::schema::run(command_path) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("ifg: {error}");
+                error.exit_code()
+            }
+        };
+    }
+    if let Err(error) = cmd::validate_output(&cli, matches) {
         eprintln!("ifg: {error}");
         return error.exit_code();
     }
@@ -100,6 +113,7 @@ async fn run(mut cli: Cli) -> i32 {
         Command::Version => cmd::version::run(&cli).await,
         Command::Doctor => cmd::doctor::run(&cli).await,
         Command::Completions { .. } => unreachable!("handled before dispatch"),
+        Command::Schema { .. } => unreachable!("handled before dispatch"),
     };
     match result {
         Ok(()) => 0,

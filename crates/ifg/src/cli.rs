@@ -220,6 +220,16 @@ pub enum Command {
     Doctor,
     /// Print the client version and (when reachable) the server version
     Version,
+    /// Describe the commands as JSON for agents (no network or login needed)
+    ///
+    /// Lists every command with its arguments, whether `--json` is accepted,
+    /// and whether it reads, writes or deletes. Give a command path to print
+    /// only that subtree, e.g. `ifg schema pr merge`.
+    Schema {
+        /// Command path to narrow the output to (default: every command)
+        #[arg(value_name = "COMMAND")]
+        command_path: Vec<String>,
+    },
     /// Print a shell completion script (bash / zsh / fish / powershell)
     Completions {
         /// Target shell
