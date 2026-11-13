@@ -49,6 +49,25 @@
 
 其他客户端构造的结果按当前命令语义使用；不把它们误认为单个服务端响应。模板输出不是 JSON 契约的一部分。
 
+## 失败时的错误对象
+
+带 `--json` 的命令失败时，stderr 的最后一行是一个单行 JSON 对象；stdout 从不写入它。该行之前是普通的 `ifg: ...` 提示；服务端给出 `hint` 时，提示之后还会多一行 `hint: ...`。无 `--json` 时只有普通提示（以及可能出现的 `hint:` 行），不输出 JSON。
+
+```json
+{"error":{"kind":"conflict","http_status":409,"reason":"branch_exists","hint":"choose another name","message":"API error (HTTP 409): branch already exists","retryable":false}}
+```
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `kind` | 字符串 | 固定词表：`usage`（命令行用法错误，含 clap 拒绝的参数）、`auth`（401/403 或本地无 token）、`not_found`（404 或本地未找到）、`conflict`（409）、`validation`（422）、`rate_limited`（429）、`server`（5xx）、`network`（连接、TLS、超时）、`other`（其余）。1.x 中可以新增取值；遇到不认识的取值按 `other` 处理。 |
+| `http_status` | 整数或 `null` | 服务端 HTTP 状态码；没有 HTTP 响应（网络失败、本地用法错误）时为 `null`。 |
+| `reason` | 字符串或 `null` | 服务端 `error.reason`，去除控制字符后原样输出；缺失时为 `null`。ifg 不把它映射为其他文本。 |
+| `hint` | 字符串或 `null` | 服务端 `error.hint`，处理同 `reason`。 |
+| `message` | 字符串 | 与 `ifg:` 提示行相同的文本，不含 `ifg: ` 前缀。 |
+| `retryable` | 布尔 | 仅网络失败、429 和 5xx 为 `true`。ifg 不会重试 POST；该字段只表示此类错误值得由调用方重试。 |
+
+错误对象不含服务端的 `details`，本版本也不输出它。退出码仍为 0/1/2/4/8，与是否带 `--json` 无关。`ifg api` 不带 `--json` 时的原始响应字节不受影响。
+
 ## 验证
 
-`bash scripts/check.sh` 包含格式、Clippy、手册和工作区测试。重点回归位于 `crates/ifg/tests/`：`cli.rs`（PR 评论聚合）、`issue_view_comments.rs`、`release_create.rs`、`release_view_json.rs`、`search_raw.rs`、`status.rs`、`notifications.rs`、`api_raw.rs`、`output_errors.rs` 和 `structured_commands.rs`。这些本地模拟测试验证 ifg 的转换；OpenAPI 快照测试仅检查登记的路径和部分字段，不能证明所有服务端版本兼容。发布验收还须按发布清单检查指定服务端和真实环境。
+`bash scripts/check.sh` 包含格式、Clippy、手册和工作区测试。重点回归位于 `crates/ifg/tests/`：`cli.rs`（PR 评论聚合）、`issue_view_comments.rs`、`release_create.rs`、`release_view_json.rs`、`search_raw.rs`、`status.rs`、`notifications.rs`、`api_raw.rs`、`output_errors.rs`、`structured_commands.rs` 和 `error_json.rs`（失败时的错误对象）。这些本地模拟测试验证 ifg 的转换；OpenAPI 快照测试仅检查登记的路径和部分字段，不能证明所有服务端版本兼容。发布验收还须按发布清单检查指定服务端和真实环境。
