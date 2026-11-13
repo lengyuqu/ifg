@@ -1105,6 +1105,19 @@ pub enum PrReviewersCommand {
     Remove { number: i64, username: String },
 }
 
+/// Value parser for `--expected-head`: exactly 40 hex digits, lower-cased.
+/// Abbreviations are refused, not resolved, so the server compares the full
+/// commit SHA the caller reviewed.
+fn parse_full_sha(raw: &str) -> Result<String, String> {
+    if raw.len() == 40 && raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(raw.to_ascii_lowercase())
+    } else {
+        Err(format!(
+            "expected a full 40-character commit SHA, got {raw:?}"
+        ))
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum PrCommand {
     /// List pull requests
@@ -1183,9 +1196,18 @@ pub enum PrCommand {
         squash: bool,
         #[arg(long, group = "strategy")]
         rebase: bool,
-        /// Enable auto-merge instead of merging now
+        /// Enable auto-merge instead of merging now. The auto-merge endpoint
+        /// does not take an expected head, so this cannot be combined with
+        /// --expected-head.
         #[arg(long)]
         auto: bool,
+        /// Merge only if the head branch still points at this commit: the
+        /// full 40-character SHA you reviewed (case-insensitive). The server
+        /// refuses the merge with REF_ADVANCED when the head has moved; re-read
+        /// the PR with `ifg pr checks` and retry with the current SHA. Not
+        /// accepted with --auto.
+        #[arg(long, value_name = "SHA", value_parser = parse_full_sha, conflicts_with = "auto")]
+        expected_head: Option<String>,
     },
     /// Review a pull request
     Review {

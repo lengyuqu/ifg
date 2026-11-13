@@ -436,6 +436,13 @@ mod tests {
                 "help": help,
             })
         };
+        // A value-taking flag: `flag` builds boolean switches only.
+        let mut expected_head = flag(
+            "--expected-head",
+            "expected_head",
+            Some("Merge only if the head branch still points at this commit: the full 40-character SHA you reviewed (case-insensitive). The server refuses the merge with REF_ADVANCED when the head has moved; re-read the PR with `ifg pr checks` and retry with the current SHA. Not accepted with --auto"),
+        );
+        expected_head["takes_value"] = json!(true);
         json!([{
             "path": ["pr", "merge"],
             "about": "Merge a pull request",
@@ -454,7 +461,8 @@ mod tests {
                 flag("--merge", "merge", None),
                 flag("--squash", "squash", None),
                 flag("--rebase", "rebase", None),
-                flag("--auto", "auto", Some("Enable auto-merge instead of merging now")),
+                flag("--auto", "auto", Some("Enable auto-merge instead of merging now. The auto-merge endpoint does not take an expected head, so this cannot be combined with --expected-head")),
+                expected_head,
             ],
             "subcommands": [],
             "json_supported": true,
