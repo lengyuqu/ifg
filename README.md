@@ -195,6 +195,10 @@ ifg -R owner/repo collab inbox --user
 ifg -R owner/repo collab question view '<问题 ID>'
 ifg -R owner/repo collab question answer '<问题 ID>' --key a-1 --expected-version '<版本>' --context-hash '<已查看的 context_hash>' --option-id o1
 ifg -R owner/repo collab task reassign '<任务 ID>' --key move-1 --expected-version '<任务版本>' --expected-owner '<原会话 ID>' --to '<新会话 ID>' --reason '用户重新分配'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" work-package create '<任务 ID>' --key wp-1 --goal '实现解析器' --commit '<完整提交 SHA>' --completed '解析器' --next-step '补充测试'
+ifg -R owner/repo collab work-package list '<任务 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" dependency add '<任务 ID>' '<前置任务 ID>' --key dep-1 --expected-graph-version '<dependency list 返回的 graph_version>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" decision create '<任务 ID>' --key dec-1 --title '采用方案一' --rationale '与问题答复一致'
 ```
 
 会话文件含仅展示一次的密钥，绑定服务端 URL 和仓库，Unix 创建权限为 `0600`；不要提交或分享，保留该文件可在新进程中恢复会话。当前安全文件存储仅支持 Unix；Windows 上需要会话凭据的操作尚不可用。任务更新和交接接受/取消需传入最新 `--expected-version`；消息与交接的 `--key` 由调用方生成并在重试同一请求时复用，不同请求不能复用。任务、会话和交接列表返回 `next_cursor`；消息列表使用 `next_after_seq` 和 `--after-seq` 翻页。协作命令默认输出 JSON，可用 `--template` 格式化。

@@ -330,6 +330,21 @@ pub enum CollabCommand {
         #[command(subcommand)]
         command: CollabQuestionCommand,
     },
+    /// Record, list and view work packages reported on a task
+    WorkPackage {
+        #[command(subcommand)]
+        command: CollabWorkPackageCommand,
+    },
+    /// Add, list or remove the dependencies of a task
+    Dependency {
+        #[command(subcommand)]
+        command: CollabDependencyCommand,
+    },
+    /// Record, list and view decisions on a task
+    Decision {
+        #[command(subcommand)]
+        command: CollabDecisionCommand,
+    },
     /// List the session's or user's inbox
     Inbox {
         /// Read the account inbox instead of a session inbox
@@ -521,6 +536,103 @@ pub enum CollabQuestionCommand {
         #[arg(long)]
         expected_version: i64,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabWorkPackageCommand {
+    /// List a task's work package revisions, newest first
+    List {
+        task_id: String,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Record a new work package revision with a caller-supplied idempotency key
+    Create {
+        task_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        goal: Option<String>,
+        #[arg(long)]
+        scope: Option<String>,
+        #[arg(long)]
+        commit: Option<String>,
+        /// Must equal the task's current version when given
+        #[arg(long)]
+        expected_task_version: Option<i64>,
+        #[arg(long)]
+        artifact: Vec<String>,
+        #[arg(long)]
+        completed: Vec<String>,
+        #[arg(long)]
+        next_step: Vec<String>,
+        #[arg(long)]
+        open_item: Vec<String>,
+    },
+    /// View a work package and its pipeline evidence resolution
+    View { id: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabDependencyCommand {
+    /// List a task's direct dependencies and the graph version to pass to add or remove
+    List { task_id: String },
+    /// Make a task wait for another task; pass the graph version from `dependency list`
+    Add {
+        task_id: String,
+        depends_on_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        expected_graph_version: i64,
+    },
+    /// Remove a dependency; removed=false when the edge did not exist
+    Remove {
+        task_id: String,
+        depends_on_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        expected_graph_version: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabDecisionCommand {
+    /// List a task's decisions by creation time
+    List {
+        task_id: String,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Record an immutable decision with a caller-supplied idempotency key
+    Create {
+        task_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        title: String,
+        /// The writer's own account of why; not verified by the server
+        #[arg(long)]
+        rationale: String,
+        #[arg(long)]
+        question_id: Option<String>,
+        #[arg(long)]
+        answer_id: Option<String>,
+        /// Must equal the task's current version when given
+        #[arg(long)]
+        task_version: Option<i64>,
+        #[arg(long)]
+        base_sha: Option<String>,
+        #[arg(long)]
+        head_sha: Option<String>,
+    },
+    /// View a decision with its change, status and context freshness
+    View { id: String },
 }
 
 #[derive(Debug, Subcommand)]
