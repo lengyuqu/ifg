@@ -191,4 +191,11 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("DELETE", "/orgs/{name}/members/{user_id}"),
     // search
     ("GET", "/search"),
+    // AI aggregates. The snapshot keys the first three routes with the
+    // `/api/v1` prefix and the PR context route without it, so these entries
+    // are spelled exactly as the snapshot has them.
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/summary"),
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/tree"),
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/search/code"),
+    ("GET", "/ai/repos/{owner}/{name}/pulls/{number}/context"),
 ];

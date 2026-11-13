@@ -224,6 +224,17 @@ pub enum Command {
         #[arg(long)]
         limit: Option<u64>,
     },
+    /// Read AI-oriented project context: summary, tree, code search, PR
+    ///
+    /// Each subcommand is one read-only request to IronForge's AI aggregate
+    /// endpoints, so an agent gets a repository's context in a single call.
+    /// `--json` prints the server's object unchanged; `--template` renders
+    /// the same object; without either, a compact Markdown-style view is
+    /// printed. Code search covers the default branch only.
+    Context {
+        #[command(subcommand)]
+        command: ContextCommand,
+    },
     /// Work with organizations
     ///
     /// Members are addressed by username: `org add-member` resolves the name
@@ -284,6 +295,56 @@ pub enum Command {
     Completions {
         /// Target shell
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContextCommand {
+    /// Repository summary: default branch, description, counts, dates
+    Repo,
+    /// List one page of the repository file tree
+    ///
+    /// Without `--ref` the default branch is used. When the output says
+    /// more entries exist, pass its cursor back with `--cursor`.
+    Tree {
+        /// Subdirectory to list (default: the root)
+        path: Option<String>,
+        /// Branch, tag or commit SHA (default: the default branch)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Directory levels to descend (default 1, max 8)
+        #[arg(long)]
+        depth: Option<u32>,
+        /// Entries per page (default 200, max 1000)
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Cursor from the previous page
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    /// Search file contents on the default branch
+    ///
+    /// The server rejects any other `--ref` with an error, and a repository
+    /// that has not been indexed yet cannot be searched.
+    Search {
+        /// Query text
+        query: String,
+        /// Must be the default branch if given
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Max results (default 20, max 100)
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Results to skip (default 0)
+        #[arg(long)]
+        offset: Option<u64>,
+    },
+    /// Pull request context: the PR and what it touches, in one object
+    ///
+    /// The server limits the answer to its default token budget.
+    Pr {
+        /// Pull request number
+        number: i64,
     },
 }
 

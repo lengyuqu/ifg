@@ -1,6 +1,7 @@
 //! Subcommand implementations (M1: `auth`, `api`; M2: `repo`, `issue`, `pr`;
 //! M3: `ci`, `release`; M5: `label`, `milestone`, `status`).
 
+pub mod ai_context;
 pub mod api;
 pub mod auth;
 pub mod capabilities;
@@ -42,6 +43,7 @@ pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
     "mcp config",
     "status",
     "search",
+    "context",
     "doctor",
     "capabilities",
     "collab",
