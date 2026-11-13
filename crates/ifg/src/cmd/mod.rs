@@ -171,6 +171,13 @@ pub(crate) fn bootstrap(cli: &Cli) -> Result<CommandContext, AppError> {
 /// refuse rather than assume.
 pub(crate) fn confirm(question: &str) -> Result<bool, AppError> {
     use std::io::{IsTerminal, Write};
+    // --no-input refuses outright, even on a terminal: it never answers "yes"
+    // for the user, so only the command's own --yes can proceed.
+    if crate::input::enabled() {
+        return Err(AppError::Usage(format!(
+            "{question} (--no-input forbids prompting; pass --yes to confirm)"
+        )));
+    }
     if !std::io::stdin().is_terminal() {
         return Err(AppError::Usage(format!(
             "{question} — rerun with --yes to confirm non-interactively"
@@ -195,6 +202,12 @@ pub(crate) fn compose_in_editor(
     initial_title: &str,
     initial_body: &str,
 ) -> Result<(String, String), AppError> {
+    if crate::input::enabled() {
+        return Err(AppError::Usage(
+            "--editor opens $EDITOR, which --no-input forbids; pass -t/--title and -b/--body instead"
+                .into(),
+        ));
+    }
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .map_err(|_| AppError::Usage("--editor needs $EDITOR (or $VISUAL) to be set".into()))?;

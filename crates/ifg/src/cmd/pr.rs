@@ -428,7 +428,7 @@ async fn create(
 
 /// Current branch via `git symbolic-ref --short HEAD`.
 pub(crate) fn current_branch() -> Result<String, AppError> {
-    let output = std::process::Command::new("git")
+    let output = crate::git::command()
         .args(["symbolic-ref", "--short", "HEAD"])
         .output()
         .map_err(|e| AppError::Other(format!("could not run git: {e}")))?;
@@ -442,7 +442,7 @@ pub(crate) fn current_branch() -> Result<String, AppError> {
 
 /// First commit subject of HEAD, as a default PR title.
 fn head_commit_subject() -> Option<String> {
-    let output = std::process::Command::new("git")
+    let output = crate::git::command()
         .args(["log", "-1", "--pretty=%s"])
         .output()
         .ok()?;
@@ -532,7 +532,7 @@ fn matching_remotes(ctx: &super::CommandContext, repo: &RepoContext) -> Vec<Stri
 /// The configured upstream's remote and display name. Git supplies the remote
 /// explicitly because remote names may themselves contain `/`.
 fn upstream_ref(branch: &str) -> Option<(String, String)> {
-    let output = std::process::Command::new("git")
+    let output = crate::git::command()
         .args([
             "for-each-ref",
             "--format=%(upstream:remotename)%00%(upstream:short)",
@@ -549,7 +549,7 @@ fn upstream_ref(branch: &str) -> Option<(String, String)> {
 }
 
 fn rev_count(range: &str) -> Option<u64> {
-    let output = std::process::Command::new("git")
+    let output = crate::git::command()
         .args(["rev-list", "--count", range])
         .output()
         .ok()?;
@@ -560,7 +560,7 @@ fn rev_count(range: &str) -> Option<u64> {
 }
 
 fn git_rev_parse(reference: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
+    let output = crate::git::command()
         .args(["rev-parse", "--verify", "--quiet", reference])
         .output()
         .ok()?;
@@ -754,7 +754,7 @@ fn fetch_ref(ctx: &super::CommandContext, url: &str, refspec: &str) -> Result<()
             "refusing to fetch a refspec that parses as an option: {refspec}"
         )));
     }
-    let mut fetch = std::process::Command::new("git");
+    let mut fetch = crate::git::command();
     fetch.args(["fetch", url, refspec]);
     if let Some(token) = &ctx.host.token {
         let existing = std::env::var("GIT_CONFIG_COUNT").ok();
@@ -777,7 +777,7 @@ fn fetch_ref(ctx: &super::CommandContext, url: &str, refspec: &str) -> Result<()
 
 /// Whether a local branch with this name exists.
 fn branch_exists(name: &str) -> bool {
-    std::process::Command::new("git")
+    crate::git::command()
         .args([
             "rev-parse",
             "--verify",
@@ -791,7 +791,7 @@ fn branch_exists(name: &str) -> bool {
 
 /// Run a git command, erroring with its stderr when it fails.
 fn git_success(args: &[&str]) -> Result<(), AppError> {
-    let output = std::process::Command::new("git")
+    let output = crate::git::command()
         .args(args)
         .output()
         .map_err(|e| AppError::Other(format!("could not run git: {e}")))?;
