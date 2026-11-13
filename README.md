@@ -79,6 +79,7 @@ ifg milestone create v1 --due 2026-12-31               # 里程碑
 ifg issue edit 3 --label bug --milestone v1 --assignee alice
 ifg doctor                                             # 一条命令自检：主机/令牌/权限/版本/流式
 ifg schema pr merge                                    # 命令树的 JSON 描述（参数、--json 支持、读写副作用）；无需登录
+ifg mcp config --client claude-code                    # 打印 MCP 客户端配置（不含令牌，需自行导出 IRONFORGE_PAT）
 ifg status                                             # 当前分支的 PR + 最近流水线
 ifg search "登录 超时" --type issue                      # 全局搜索（repo / issue / wiki）
 ifg notifications                                      # 通知列表；notifications count 只看未读

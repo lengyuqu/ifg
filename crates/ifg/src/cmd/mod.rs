@@ -8,6 +8,7 @@ pub mod collab;
 pub mod doctor;
 pub mod issue;
 pub mod label;
+pub mod mcp;
 pub mod milestone;
 pub mod notifications;
 pub mod org;
@@ -36,6 +37,7 @@ use crate::error::AppError;
 /// `validate_output` enforces it and `ifg schema` reports it.
 pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
     "api",
+    "mcp config",
     "status",
     "search",
     "doctor",
@@ -115,7 +117,10 @@ pub(crate) fn validate_output(cli: &Cli, matches: &ArgMatches) -> Result<(), App
         .flatten()
         .copied()
         .unwrap_or(false);
-    if !web && structured_output_supported(&path) {
+    // `mcp config` prints a snippet that is already JSON; a template would
+    // only reshape it, so `--json` is accepted and `--template` is not.
+    let template_refused = path.first() == Some(&"mcp") && cli.template.is_some();
+    if !web && !template_refused && structured_output_supported(&path) {
         Ok(())
     } else {
         Err(AppError::Usage(
