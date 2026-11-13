@@ -74,6 +74,7 @@ ifg pr reviewers add 12 alice                          # 请求评审；也可 l
 ifg ci logs 7 --follow                                 # WebSocket 流式日志（断线自动续传；无 WS 时退回轮询）
 ifg ci run --ref refs/heads/main --wait --timeout 600  # 触发并等待；也可传提交 SHA
 ifg ci wait 7 --timeout 600                            # 等待已有流水线
+ifg events list -R yourname/demo --since 40            # 仓库事件：读一次 --since 之后的事件，next cursor 在 stderr
 ifg label create bug -c ff0000 -d "坏了"                # 标签
 ifg milestone create v1 --due 2026-12-31               # 里程碑
 ifg issue edit 3 --label bug --milestone v1 --assignee alice
