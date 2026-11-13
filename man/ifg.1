@@ -4,7 +4,7 @@
 .SH NAME
 ifg \- Work with IronForge repositories, issues, pull requests, CI and releases from the terminal
 .SH SYNOPSIS
-\fBifg\fR [\fB\-\-host\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-json\fR] [\fB\-q\fR|\fB\-\-template\fR] [\fB\-\-no\-color\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+\fBifg\fR [\fB\-\-host\fR] [\fB\-R\fR|\fB\-\-repo\fR] [\fB\-\-json\fR] [\fB\-q\fR|\fB\-\-template\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-input\fR] [\fB\-v\fR|\fB\-\-verbose\fR]... [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
 Work with IronForge repositories, issues, pull requests, CI and releases from the terminal.
 .PP
@@ -13,6 +13,8 @@ Work with IronForge repositories, issues, pull requests, CI and releases from th
 Machine\-readable output: `\-\-json` prints the server\*(Aqs own field names, `\-q/\-\-template` renders a small template per result (`{{.number}} {{.title}}`, `{{range .labels}}{{.}} {{end}}`). Colors, relative timestamps and the pager only switch on when stdout is a terminal.
 .PP
 Long\-tail API surface (wiki, webhooks, packages, secrets, …) is reachable through `ifg api <path>`.
+.PP
+Scripts and AI agents should pass `\-\-no\-input` (or set `IFG_NO_INPUT=1`). Anything that would ask a person a question then fails at once with exit code 2 and names the flag to pass instead. `\-\-no\-input` is not `\-\-yes`: a destructive command still needs `\-\-yes` to run.
 .SH OPTIONS
 .TP
 \fB\-\-host\fR \fI<NAME|URL>\fR
@@ -37,6 +39,11 @@ Supported subset: `{{.field}}`, `{{.nested.field}}`, `{{.array.0}}`, `{{range .l
 .TP
 \fB\-\-no\-color\fR
 Disable colored output (also honors NO_COLOR)
+.TP
+\fB\-\-no\-input\fR
+Never prompt: fail with exit code 2 where a person would be asked
+
+Use in scripts and by AI agents. A confirmation then refuses and names `\-\-yes`, `auth login` needs `\-\-with\-token`, `\-\-editor` is refused (use `\-t`/`\-b`), the pager is skipped and git subprocesses do not prompt. This is NOT `\-\-yes`: nothing destructive runs unless `\-\-yes` is also given. Also enabled by `IFG_NO_INPUT=1` (`1` or `true`); the flag wins.
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR
 Verbosity: \-v logs each request, \-vv also logs headers
@@ -112,6 +119,7 @@ EXAMPLES:
   ifg ci logs 7 \-\-follow                           stream a job log
   ifg pr list \-q \*(Aq{{.number}} {{.title}}\*(Aq           script\-friendly output
   ifg api users/me                                 raw API passthrough
+  ifg \-\-no\-input repo delete \-R alice/demo \-\-yes   never prompt; \-\-yes still needed
 
 Run `ifg help <command>` for the full description of one command,
 or `man ifg` / `man ifg\-<command>` when the man pages are installed.

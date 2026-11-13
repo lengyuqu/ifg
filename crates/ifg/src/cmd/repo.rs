@@ -441,7 +441,7 @@ fn clone(
         format!("{}/git/{}.git", ctx.host.url, repo)
     };
     output::line!("Cloning {url}");
-    let status = std::process::Command::new("git")
+    let status = crate::git::command()
         .arg("clone")
         .arg(&url)
         .args(dir)

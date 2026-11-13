@@ -11,6 +11,7 @@ mod config;
 mod context;
 mod error;
 mod git;
+mod input;
 mod keyring;
 mod output;
 mod template;
@@ -23,6 +24,10 @@ use cli::{Cli, Command, RepoCommand};
 
 fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    input::set(input::resolve(
+        cli.no_input,
+        std::env::var(input::ENV_VAR).ok().as_deref(),
+    ));
     output::init(cli.no_color);
     init_tracing(cli.verbose);
     let runtime = tokio::runtime::Builder::new_current_thread()

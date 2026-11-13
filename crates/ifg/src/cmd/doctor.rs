@@ -331,7 +331,7 @@ async fn repo_check(cli: &Cli, ctx: &crate::cmd::CommandContext) -> Check {
 /// The credential helper keeps `git clone`/`push` on the same token; a missing
 /// helper is a warning, not an error (git may use its own store).
 fn git_helper_check(host: &ResolvedHost) -> Check {
-    let output = std::process::Command::new("git")
+    let output = crate::git::command()
         .args(["config", "--get-urlmatch", "credential.helper", &host.url])
         .output();
     let Ok(output) = output else {

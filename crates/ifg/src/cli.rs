@@ -19,6 +19,11 @@ use clap::{ArgAction, Parser, Subcommand};
 ///
 /// Long-tail API surface (wiki, webhooks, packages, secrets, …) is reachable
 /// through `ifg api <path>`.
+///
+/// Scripts and AI agents should pass `--no-input` (or set `IFG_NO_INPUT=1`).
+/// Anything that would ask a person a question then fails at once with exit
+/// code 2 and names the flag to pass instead. `--no-input` is not `--yes`: a
+/// destructive command still needs `--yes` to run.
 #[derive(Debug, Parser)]
 #[command(
     name = "ifg",
@@ -31,6 +36,7 @@ use clap::{ArgAction, Parser, Subcommand};
   ifg ci logs 7 --follow                           stream a job log
   ifg pr list -q '{{.number}} {{.title}}'           script-friendly output
   ifg api users/me                                 raw API passthrough
+  ifg --no-input repo delete -R alice/demo --yes   never prompt; --yes still needed
 
 Run `ifg help <command>` for the full description of one command,
 or `man ifg` / `man ifg-<command>` when the man pages are installed."
@@ -80,6 +86,16 @@ pub struct Cli {
     /// Disable colored output (also honors NO_COLOR)
     #[arg(long, global = true)]
     pub no_color: bool,
+
+    /// Never prompt: fail with exit code 2 where a person would be asked
+    ///
+    /// Use in scripts and by AI agents. A confirmation then refuses and names
+    /// `--yes`, `auth login` needs `--with-token`, `--editor` is refused (use
+    /// `-t`/`-b`), the pager is skipped and git subprocesses do not prompt.
+    /// This is NOT `--yes`: nothing destructive runs unless `--yes` is also
+    /// given. Also enabled by `IFG_NO_INPUT=1` (`1` or `true`); the flag wins.
+    #[arg(long, global = true)]
+    pub no_input: bool,
 
     /// Verbosity: -v logs each request, -vv also logs headers
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count, global = true, default_value_t = 0)]

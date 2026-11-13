@@ -181,7 +181,13 @@ pub fn print_table(headers: &[&str], rows: &[Vec<String>]) {
 /// where `less` is usually absent and `more` mishandles ANSI escapes). Falls
 /// back to a plain print when the pager cannot be spawned.
 fn page(content: &str) {
-    let pager = std::env::var("PAGER").ok().or_else(default_pager);
+    // A pager waits for someone to quit it; under --no-input the output is
+    // printed straight through instead.
+    let pager = if crate::input::enabled() {
+        None
+    } else {
+        std::env::var("PAGER").ok().or_else(default_pager)
+    };
     let Some(pager) = pager else {
         write_format(format_args!("{content}"));
         flush();

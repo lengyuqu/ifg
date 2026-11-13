@@ -26,6 +26,13 @@ pub async fn run(command: &AuthCommand, cli: &Cli) -> Result<(), AppError> {
 /// Read the PAT: all of stdin with `--with-token` (pipes), a no-echo prompt
 /// on a terminal, or stdin when it is redirected without the flag.
 fn read_token(with_token: bool) -> Result<String, AppError> {
+    // Without --with-token the token comes from a no-echo prompt or from an
+    // implicit read of stdin; --no-input forbids both, so the flag is required.
+    if !with_token && crate::input::enabled() {
+        return Err(AppError::Usage(
+            "auth login reads the token from a prompt or from stdin unless --with-token is given; --no-input forbids the prompt, so pass --with-token and pipe the token on stdin".into(),
+        ));
+    }
     if with_token {
         use std::io::Read;
         let mut buffer = String::new();

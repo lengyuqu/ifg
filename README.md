@@ -159,6 +159,19 @@ ifg completions bash > /etc/bash_completion.d/ifg
 - 管道输出自动关闭颜色与相对时间；`pr diff` 在终端里上色并走分页器
 - Windows 终端：仅在 Windows Terminal / VS Code / mintty（`WT_SESSION`、`TERM_PROGRAM`、`TERM`）下启用颜色，传统 `cmd.exe` 等价 `--no-color`；分页器默认直出，可设 `PAGER` 覆盖
 
+## 非交互使用（脚本与 AI Agent）
+
+传入 `--no-input`，或设置 `IFG_NO_INPUT=1`（取值 `1` 或 `true`；命令行参数优先于环境变量），ifg 就不会等待人工输入。凡是需要人回答的地方，都会立即以用法错误退出（退出码 2），并在错误信息里指出应改用的参数：
+
+- 破坏性命令（`repo delete`、`repo collaborators remove`、`wiki delete`、`release delete`、`label delete`、`milestone delete`）没有 `--yes` 时拒绝执行，不删除任何内容。
+- `auth login` 不再读取无回显提示或隐式的 stdin；请使用 `auth login --with-token` 并通过管道传入 PAT。
+- `issue create --editor` 与 `pr create --editor` 不再启动 `$EDITOR`；请改用 `-t`/`-b`（以及 `issue create` 的 `--body-file`）。
+- 分页器不启动，输出直接打印。
+- ifg 启动的 git 子进程会设置 `GIT_TERMINAL_PROMPT=0`、清空 `GIT_ASKPASS`；若用户未设置 `GIT_SSH` 或 `GIT_SSH_COMMAND`，则使用 `ssh -o BatchMode=yes`。凭据缺失时 `git` 直接失败，不会挂起。注意：此时 `GIT_SSH_COMMAND` 会覆盖 git 配置里的 `core.sshCommand`，需要自定义 ssh 选项时请改用 `GIT_SSH_COMMAND` 环境变量。
+- 显式的 `--file -`、`--input -` 与 `auth login --with-token` 仍然读取 stdin。操作系统钥匙串自身弹出的解锁提示不受此开关控制。
+
+**`--no-input` 不等于 `--yes`**。它从不替调用方确认：破坏性命令仍需显式传入 `--yes` 才会执行，例如 `ifg --no-input repo delete OWNER/NAME --yes`。
+
 ## 多 Agent 协作
 
 固定基线的本地镜像 ID 和 OpenAPI 快照包含协作接口；不同部署应先确认其服务端具备这些接口。用户 PAT 用于身份和仓库权限；每个 Agent 还需要独立的会话凭据。会话名称和消息正文均是自报内容，不是安全身份或可信指令。
