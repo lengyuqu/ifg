@@ -82,6 +82,10 @@ ifg schema pr merge                                    # 命令树的 JSON 描�
 ifg mcp config --client claude-code                    # 打印 MCP 客户端配置（不含令牌，需自行导出 IRONFORGE_PAT）
 ifg status                                             # 当前分支的 PR + 最近流水线
 ifg search "登录 超时" --type issue                      # 全局搜索（repo / issue / wiki）
+ifg context repo                                       # AI 上下文：仓库摘要（--json 原样输出服务端对象）
+ifg context tree src --ref main                        # 文件树单页；带 --cursor 续页
+ifg context search "重试" --limit 10                    # 代码搜索（仅默认分支）
+ifg context pr 12                                      # PR 上下文聚合对象（服务端默认预算）
 ifg notifications                                      # 通知列表；notifications count 只看未读
 ifg org list                                           # 组织；org members / add-member / remove-member
 ifg org create acme -d "Acme 团队"                      # 建组织，成员用 --role 指定

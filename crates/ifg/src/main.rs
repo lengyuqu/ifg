@@ -162,6 +162,7 @@ async fn run(mut cli: Cli, matches: &ArgMatches) -> i32 {
             search_type,
             limit,
         } => cmd::search::run(&cli, query, search_type, *limit).await,
+        Command::Context { command } => cmd::ai_context::run(command, &cli).await,
         Command::Notifications { command } => cmd::notifications::run(command, &cli).await,
         Command::Org { command } => cmd::org::run(command, &cli).await,
         Command::Version => cmd::version::run(&cli).await,
