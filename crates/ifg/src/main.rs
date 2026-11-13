@@ -98,6 +98,7 @@ async fn run(mut cli: Cli) -> i32 {
         Command::Notifications { command } => cmd::notifications::run(command, &cli).await,
         Command::Org { command } => cmd::org::run(command, &cli).await,
         Command::Version => cmd::version::run(&cli).await,
+        Command::Mcp { command } => cmd::mcp::run(command, &cli),
         Command::Doctor => cmd::doctor::run(&cli).await,
         Command::Completions { .. } => unreachable!("handled before dispatch"),
     };

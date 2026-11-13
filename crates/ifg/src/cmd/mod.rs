@@ -8,6 +8,7 @@ pub mod collab;
 pub mod doctor;
 pub mod issue;
 pub mod label;
+pub mod mcp;
 pub mod milestone;
 pub mod notifications;
 pub mod org;
@@ -105,6 +106,8 @@ pub(crate) fn validate_output(cli: &Cli) -> Result<(), AppError> {
                 | MilestoneCommand::Create { .. }
                 | MilestoneCommand::Edit { .. }
         ),
+        // The snippet is already JSON; a template would only reshape it.
+        Command::Mcp { .. } => cli.template.is_none(),
         _ => false,
     };
     if supported {

@@ -213,6 +213,17 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<NotificationsCommand>,
     },
+    /// Print an MCP client config for IronForge's stdio MCP server
+    ///
+    /// Prints a JSON snippet (`mcpServers`) that starts `ironforge-mcp` with
+    /// the resolved host. The token is never printed: the snippet refers to
+    /// `${IRONFORGE_PAT}`, which you export in the environment the client
+    /// starts from (for example `export IRONFORGE_PAT="$(ifg auth token)"`).
+    /// Nothing is written to disk and no request is made to the server.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
     /// Check the whole setup: host, token, scopes, server version, streaming
     ///
     /// Answers "why does this command fail" without a debugging session, and
@@ -562,6 +573,30 @@ pub enum CollabHandoffCommand {
         #[arg(long)]
         expected_version: i64,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum McpCommand {
+    /// Print an MCP client config snippet for the resolved host (stdout)
+    Config {
+        /// Client whose config format to print
+        #[arg(long, value_enum, default_value_t = McpClient::Generic)]
+        client: McpClient,
+        /// Name of the server entry in the snippet
+        #[arg(long, default_value = "ironforge", value_name = "NAME")]
+        name: String,
+        /// Executable the client runs to start the MCP server
+        #[arg(long = "command", default_value = "ironforge-mcp", value_name = "PATH")]
+        server_command: String,
+    },
+}
+
+/// MCP clients `ifg mcp config` can emit a snippet for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum McpClient {
+    ClaudeCode,
+    Cursor,
+    Generic,
 }
 
 #[derive(Debug, Subcommand)]
