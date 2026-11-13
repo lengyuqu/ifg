@@ -282,6 +282,16 @@ impl Client {
             .await
     }
 
+    /// `GET /repos/{owner}/{name}/collaboration/capabilities`: the same
+    /// contract plus the caller's access to that repository.
+    pub async fn repo_capabilities(&self, owner: &str, name: &str) -> Result<Value, Error> {
+        let path = format!(
+            "{}/collaboration/capabilities",
+            crate::repos::repo_path(owner, name)
+        );
+        self.send(reqwest::Method::GET, &path, None).await
+    }
+
     /// `GET /health` — outside `/api/v1/`. Returns the parsed JSON body
     /// (includes `version`; D10 uses it for server-version checks). A
     /// degraded `503` still parses, because "server is up" is the signal

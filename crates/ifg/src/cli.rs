@@ -247,6 +247,19 @@ pub enum Command {
     Doctor,
     /// Print the client version and (when reachable) the server version
     Version,
+    /// Show the contract, versions and capabilities the server offers
+    ///
+    /// Without `-R` this reads the instance-wide endpoint, even inside a git
+    /// checkout. `-R OWNER/NAME` reads the repository endpoint instead, which
+    /// also reports your access to that repository. `--has NAME` prints
+    /// nothing: it exits 0 when the server lists the capability and 1 when it
+    /// does not. A server too old to expose capabilities fails with exit
+    /// code 8 rather than reporting an empty list.
+    Capabilities {
+        /// Check for one capability by name instead of printing the list
+        #[arg(long, value_name = "NAME")]
+        has: Option<String>,
+    },
     /// Describe the commands as JSON for agents (no network or login needed)
     ///
     /// Lists every command with its arguments, whether `--json` is accepted,

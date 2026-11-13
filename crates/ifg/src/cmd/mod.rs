@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod capabilities;
 pub mod ci;
 pub mod collab;
 pub mod doctor;
@@ -41,6 +42,7 @@ pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
     "status",
     "search",
     "doctor",
+    "capabilities",
     "collab",
     "wiki",
     "org",
