@@ -242,11 +242,22 @@ ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" work-package c
 ifg -R owner/repo collab work-package list '<任务 ID>'
 ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" dependency add '<任务 ID>' '<前置任务 ID>' --key dep-1 --expected-graph-version '<dependency list 返回的 graph_version>'
 ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" decision create '<任务 ID>' --key dec-1 --title '采用方案一' --rationale '与问题答复一致'
+ifg -R owner/repo collab condition list '<任务 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" condition set '<任务 ID>' --file conditions.json   # 文件须含 client_request_id、expected_version、conditions；--file - 读取 stdin
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" condition confirm '<任务 ID>' '<条件 ID>' --key confirm-1 --note '已人工确认'
+ifg -R owner/repo collab task status '<任务 ID>'
+ifg -R owner/repo collab budget view '<任务 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" usage report '<任务 ID>' --key usage-1 --unit tokens --source ci --amount 1200 --period-start 2026-11-01T00:00:00Z --period-end 2026-11-02T00:00:00Z
+ifg -R owner/repo collab usage list '<任务 ID>' --unit tokens
+ifg -R owner/repo collab rules --ref main --path src
+ifg -R owner/repo collab overview --sections awaiting_me,in_progress --limit 10
 ```
 
 会话文件含仅展示一次的密钥，绑定服务端 URL 和仓库，Unix 创建权限为 `0600`；不要提交或分享，保留该文件可在新进程中恢复会话。当前安全文件存储仅支持 Unix；Windows 上需要会话凭据的操作尚不可用。任务更新和交接接受/取消需传入最新 `--expected-version`；消息与交接的 `--key` 由调用方生成并在重试同一请求时复用，不同请求不能复用。任务、会话和交接列表返回 `next_cursor`；消息列表使用 `next_after_seq` 和 `--after-seq` 翻页。协作命令默认输出 JSON，可用 `--template` 格式化。
 
 `question view` 返回上下文及 `context_freshness`；回答时应先检查上下文，再明确传入读取到的版本和哈希，服务端会拒绝过期上下文。`task claim` 以会话身份接管空闲或已离线任务，活跃的原负责人可能导致拒绝；`task reassign` 以用户身份操作且不得携带会话文件。两者都要求调用方提供看到的任务版本、原负责人和幂等键；无负责人时省略 `--expected-owner`。问答与接管列表使用 `next_cursor` 翻页。
+
+`condition set` 原样发送 `--file` 指定的 JSON 对象，因此文件须自带 `client_request_id`、`expected_version`（最近读取的版本，0 表示尚未定义）和 `conditions`；非对象或无效 JSON 返回用法错误且不发送请求。`condition confirm`、`usage report` 的 `--key` 为幂等键。预算和用量仅作参考，服务端不据此强制执行任何限制。
 
 ## 文档
 

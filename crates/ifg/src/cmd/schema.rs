@@ -85,6 +85,9 @@ const WRITE: &[&str] = &[
     "collab dependency add",
     "collab dependency remove",
     "collab decision create",
+    "collab condition set",
+    "collab condition confirm",
+    "collab usage report",
 ];
 
 /// Leaf commands that delete data.
