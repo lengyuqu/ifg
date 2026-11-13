@@ -373,10 +373,37 @@ pub enum ContextCommand {
     },
     /// Pull request context: the PR and what it touches, in one object
     ///
-    /// The server limits the answer to its default token budget.
+    /// The server cuts the answer to a token budget (default 6000);
+    /// `--budget` asks for another size between 500 and 50000.
     Pr {
         /// Pull request number
         number: i64,
+        /// Approximate answer size in tokens (default 6000, 500 to 50000)
+        #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(500..=50000))]
+        budget: Option<u32>,
+    },
+    /// List issue summaries for AI use
+    ///
+    /// Each item carries the number, title, state, author and creation time.
+    Issues {
+        /// open / closed (default open)
+        #[arg(long, value_parser = ["open", "closed"])]
+        state: Option<String>,
+        /// Max results (default 20)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// List pull request summaries for AI use
+    ///
+    /// Each item carries the number, title, state, branches, author and
+    /// creation time.
+    Prs {
+        /// open / closed / merged (default open)
+        #[arg(long, value_parser = ["open", "closed", "merged"])]
+        state: Option<String>,
+        /// Max results (default 20)
+        #[arg(long)]
+        limit: Option<u64>,
     },
 }
 

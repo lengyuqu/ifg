@@ -29,7 +29,7 @@ mod text;
 mod users;
 mod wiki;
 
-pub use ai::{Ai, CodeSearchPage, CodeSearchQuery, TreeQuery};
+pub use ai::{Ai, AiListQuery, CodeSearchPage, CodeSearchQuery, PrContextQuery, TreeQuery};
 pub use ci::{Ci, Job, Pipeline, PipelineDetail, Stage, StageWithJobs};
 /// Path-segment encoder for resource routes (`repos/{owner}/{name}`, `orgs/{name}`).
 /// Untrusted segments must never be able to change the route, so every
