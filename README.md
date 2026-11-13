@@ -161,7 +161,23 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 ## 配置与凭据
 
-- 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`；Windows 默认 `%APPDATA%\ironforge\hosts.toml`（POSIX 的 0600 告警不适用，权限由用户目录 ACL 控制）。写入是「临时文件 + 原子替换」，并对同目录的 `.hosts.toml.lock` 加排他锁，多个 `ifg auth` 并发执行不会互相覆盖
+- 配置目录按优先级选择：`IRONFORGE_CONFIG_DIR`（非空时即为配置目录，`hosts.toml` 直接放在其中）> `$XDG_CONFIG_HOME/ironforge` > 平台默认（`$HOME/.config/ironforge`；Windows 为 `%APPDATA%\ironforge`）。空值视为未设置。配置文件为 `hosts.toml`（POSIX 的 0600 告警不适用于 Windows，权限由用户目录 ACL 控制）。写入是「临时文件 + 原子替换」，并对同目录的 `.hosts.toml.lock` 加排他锁，多个 `ifg auth` 并发执行不会互相覆盖
+- 同一台机器上的多个 Agent 可以各用一个配置目录；每个目录的令牌只保存在它自己的 `hosts.toml` 中（0600），请求只携带所用目录的令牌：
+
+  ```bash
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-a" ifg auth login --host https://forge.example.com --with-token
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-b" ifg auth login --host https://forge.example.com --with-token
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-a" ifg -R owner/repo issue list
+  ```
+
+- 设置 `IRONFORGE_CONFIG_DIR` 时 ifg 不读写系统钥匙串，即使 `hosts.toml` 写有 `token_store = "keyring"`：钥匙串条目只按主机区分，两个配置目录会共用同一个令牌。此时令牌保存在该目录的 `hosts.toml` 中，`auth login` 会提示这一点
+- 仅环境变量凭据：同时设置 `IRONFORGE_URL` 与 `IRONFORGE_PAT` 时，命令不读取 `hosts.toml`、不探测钥匙串，也不创建配置目录或任何文件。适合无可写 HOME、无钥匙串的容器。此时 `--host` 须使用 URL 而不是配置中的名称；`auth login` 与 `auth logout` 仍然读写配置文件
+
+  ```bash
+  IRONFORGE_URL=https://forge.example.com IRONFORGE_PAT="$TOKEN" ifg api users/me
+  ```
+
+- `ifg auth status` 的 `source` 字段（表格的 SOURCE 列）给出凭据来源：`env`、`config-dir` 或 `default`；`config_dir` 给出读取配置文件的目录。令牌只以脱敏形式显示。`ifg doctor` 的 `config-dir` 检查项显示目录及是否可写；目录不可写只是告警，仅环境变量模式下也不影响凭据
 - 钥匙串（可选）：`token_store = "keyring"` 时优先将 PAT 保存到系统钥匙串（macOS 钥匙串 / Linux `secret-tool` / Windows 凭据管理器）；写入不可用时会告警并回退到配置文件。主机条目中显式保存的文件 PAT 优先于旧钥匙串条目，直到一次成功登录将 PAT 写入钥匙串并清除文件副本；从钥匙串读出的 PAT 不会随配置更新写回文件。macOS 与 Windows 直接调用系统凭据 API，token 不会出现在进程参数里
 - 配置凭据只会自动复用于相同协议、主机、有效端口和部署基础路径；覆盖为 HTTP 或另一部署路径时，不会自动携带原配置的 PAT。显式的 `IRONFORGE_PAT` 仍绑定到选定的目标。它覆盖配置时，`repo list` 会读取该令牌对应的用户名；缺少 `user` scope 时请显式指定 `repo list OWNER`
 - `--json` 的 1.x 兼容规则、服务端字段边界和聚合输出见 [JSON 兼容契约](docs/json-compatibility.md)。输出会重新序列化，并非原始字节

@@ -8,7 +8,7 @@ ifg \- Work with IronForge repositories, issues, pull requests, CI and releases 
 .SH DESCRIPTION
 Work with IronForge repositories, issues, pull requests, CI and releases from the terminal.
 .PP
-`ifg` talks to the IronForge REST API with a personal access token. The token is validated by `auth login`, stored in `$XDG_CONFIG_HOME/ironforge/hosts.toml` (or the system keychain when `token_store = "keyring"`), and reused by every command.
+`ifg` talks to the IronForge REST API with a personal access token. The token is validated by `auth login`, stored in `hosts.toml` (in `IRONFORGE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/ironforge`, else the platform default), and reused by every command. `token_store = "keyring"` moves it to the system keychain, but never while `IRONFORGE_CONFIG_DIR` is set. With both `IRONFORGE_URL` and `IRONFORGE_PAT` set, the stored config is not read at all.
 .PP
 Machine\-readable output: `\-\-json` prints the server\*(Aqs own field names, `\-q/\-\-template` renders a small template per result (`{{.number}} {{.title}}`, `{{range .labels}}{{.}} {{end}}`). Colors, relative timestamps and the pager only switch on when stdout is a terminal.
 .PP
@@ -20,7 +20,7 @@ Scripts and AI agents should pass `\-\-no\-input` (or set `IFG_NO_INPUT=1`). Any
 \fB\-\-host\fR \fI<NAME|URL>\fR
 Host name from the config, or a base URL like https://forge.example.com
 
-Resolution order: this flag, `IRONFORGE_URL`, the repository\*(Aqs git remote (when run inside a checkout), then `default_host` from the config file.
+Resolution order: this flag, `IRONFORGE_URL`, the repository\*(Aqs git remote (when run inside a checkout), then `default_host` from the config file. A NAME needs the stored config, so with both `IRONFORGE_URL` and `IRONFORGE_PAT` set, pass a URL instead.
 .TP
 \fB\-R\fR, \fB\-\-repo\fR \fI<OWNER/NAME>\fR
 Target repository as OWNER/NAME, or a full remote URL
@@ -135,6 +135,11 @@ EXAMPLES:
   ifg pr list \-q \*(Aq{{.number}} {{.title}}\*(Aq           script\-friendly output
   ifg api users/me                                 raw API passthrough
   ifg \-\-no\-input repo delete \-R alice/demo \-\-yes   never prompt; \-\-yes still needed
+
+ENVIRONMENT:
+  IRONFORGE_URL, IRONFORGE_PAT   host and token; with both set, no stored config is read
+  IRONFORGE_CONFIG_DIR           directory holding hosts.toml; beats XDG_CONFIG_HOME and HOME
+  IFG_NO_INPUT                   same as \-\-no\-input
 
 Run `ifg help <command>` for the full description of one command,
 or `man ifg` / `man ifg\-<command>` when the man pages are installed.

@@ -7,9 +7,12 @@ use clap::{ArgAction, Parser, Subcommand};
 /// from the terminal.
 ///
 /// `ifg` talks to the IronForge REST API with a personal access token. The
-/// token is validated by `auth login`, stored in
-/// `$XDG_CONFIG_HOME/ironforge/hosts.toml` (or the system keychain when
-/// `token_store = "keyring"`), and reused by every command.
+/// token is validated by `auth login`, stored in `hosts.toml` (in
+/// `IRONFORGE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/ironforge`, else the
+/// platform default), and reused by every command. `token_store = "keyring"`
+/// moves it to the system keychain, but never while `IRONFORGE_CONFIG_DIR` is
+/// set. With both `IRONFORGE_URL` and `IRONFORGE_PAT` set, the stored config
+/// is not read at all.
 ///
 /// Machine-readable output: `--json` prints the server's own field names,
 /// `-q/--template` renders a small template per result
@@ -38,6 +41,11 @@ use clap::{ArgAction, Parser, Subcommand};
   ifg api users/me                                 raw API passthrough
   ifg --no-input repo delete -R alice/demo --yes   never prompt; --yes still needed
 
+ENVIRONMENT:
+  IRONFORGE_URL, IRONFORGE_PAT   host and token; with both set, no stored config is read
+  IRONFORGE_CONFIG_DIR           directory holding hosts.toml; beats XDG_CONFIG_HOME and HOME
+  IFG_NO_INPUT                   same as --no-input
+
 Run `ifg help <command>` for the full description of one command,
 or `man ifg` / `man ifg-<command>` when the man pages are installed."
 )]
@@ -46,7 +54,8 @@ pub struct Cli {
     ///
     /// Resolution order: this flag, `IRONFORGE_URL`, the repository's git
     /// remote (when run inside a checkout), then `default_host` from the
-    /// config file.
+    /// config file. A NAME needs the stored config, so with both
+    /// `IRONFORGE_URL` and `IRONFORGE_PAT` set, pass a URL instead.
     #[arg(long, global = true, value_name = "NAME|URL")]
     pub host: Option<String>,
 
@@ -113,6 +122,9 @@ pub enum Command {
     /// (Settings → Tokens). `auth login` reads one from a no-echo prompt on a
     /// terminal, or from stdin with `--with-token`/a pipe. `token_store =
     /// "keyring"` in the config keeps the token out of the config file.
+    /// `IRONFORGE_CONFIG_DIR` gives an agent its own `hosts.toml` (tokens stay
+    /// in that file; the keychain is not used). `status` shows which source
+    /// the credential came from.
     /// `auth git-credential` implements the git credential helper protocol so
     /// `git clone`/`push` reuse the same token.
     Auth {
@@ -843,7 +855,11 @@ pub enum AuthCommand {
         #[arg(long)]
         with_token: bool,
     },
-    /// List configured hosts, token prefixes and usable scopes
+    /// List configured hosts, token prefixes, usable scopes and the credential source
+    ///
+    /// `source` is `env` (IRONFORGE_URL and IRONFORGE_PAT), `config-dir`
+    /// (IRONFORGE_CONFIG_DIR) or `default` (XDG_CONFIG_HOME or HOME). The
+    /// token is never printed; only its redacted form is.
     Status,
     /// Remove local credentials (the token stays valid server-side)
     Logout,
