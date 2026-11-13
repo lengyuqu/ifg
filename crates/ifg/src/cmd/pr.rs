@@ -51,7 +51,17 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
             squash,
             rebase,
             auto,
-        } => merge(&ctx, cli, &repo, *number, *squash, *rebase, *auto).await,
+            expected_head,
+        } => {
+            let args = MergeArgs {
+                number: *number,
+                squash: *squash,
+                rebase: *rebase,
+                auto: *auto,
+                expected_head: expected_head.as_deref(),
+            };
+            merge(&ctx, cli, &repo, &args).await
+        }
         PrCommand::Review {
             number,
             approve,
@@ -653,15 +663,29 @@ fn remote_tracking_matches_head(remote: &str, branch: &str) -> bool {
     git_rev_parse(&format!("refs/remotes/{remote}/{branch}")).as_deref() == Some(head.as_str())
 }
 
-async fn merge(
-    ctx: &super::CommandContext,
-    cli: &Cli,
-    repo: &RepoContext,
+/// Parsed `pr merge` flags. `expected_head` is always `None` with `auto`
+/// (clap rejects the combination).
+struct MergeArgs<'a> {
     number: i64,
     squash: bool,
     rebase: bool,
     auto: bool,
+    expected_head: Option<&'a str>,
+}
+
+async fn merge(
+    ctx: &super::CommandContext,
+    cli: &Cli,
+    repo: &RepoContext,
+    args: &MergeArgs<'_>,
 ) -> Result<(), AppError> {
+    let MergeArgs {
+        number,
+        squash,
+        rebase,
+        auto,
+        expected_head,
+    } = *args;
     let strategy = if squash {
         MergeStrategy::Squash
     } else if rebase {
@@ -694,14 +718,29 @@ async fn merge(
         return Ok(());
     }
     if cli.json || cli.template.is_some() {
-        let value = pulls.merge_raw(number, strategy).await?;
+        let value = pulls
+            .merge_with_expected_head_raw(number, strategy, expected_head)
+            .await?;
         match &cli.template {
             Some(template) => output::print_template(std::slice::from_ref(&value), template),
             None => output::print_json(&value),
         }
         return Ok(());
     }
-    let outcome = pulls.merge(number, strategy).await?;
+    let outcome = match pulls
+        .merge_with_expected_head(number, strategy, expected_head)
+        .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            // Human-only pointer. The generic printer runs after this
+            // returns, so this line comes before the `ifg:` line.
+            if error.status() == Some(409) && error.reason() == Some("REF_ADVANCED") {
+                eprintln!("rerun 'ifg pr checks {number}' to read the current head");
+            }
+            return Err(error.into());
+        }
+    };
     match outcome.merge_commit_sha {
         Some(sha) => output::line!(
             "Merged {repo}#{number} ({}): {}",
