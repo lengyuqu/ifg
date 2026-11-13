@@ -47,6 +47,25 @@ pub struct CodeSearchPage {
     pub total: Option<u64>,
 }
 
+/// Query for `ai/repos/{owner}/{name}/issues` and `ai/repos/{owner}/{name}/prs`.
+/// Unset fields are left out so the server defaults apply.
+#[derive(Debug, Clone, Default)]
+pub struct AiListQuery {
+    /// Issue state (`open` or `closed`; server default `open`) or PR state
+    /// (`open`, `closed` or `merged`; server default `open`).
+    pub state: Option<String>,
+    /// Max results (server default 20).
+    pub limit: Option<u64>,
+}
+
+/// Query for `ai/repos/{owner}/{name}/pulls/{number}/context`.
+#[derive(Debug, Clone, Default)]
+pub struct PrContextQuery {
+    /// Approximate answer size in tokens (server default 6000, documented
+    /// range 500 to 50000). Callers validate the range.
+    pub budget: Option<u32>,
+}
+
 /// Accessor for the AI aggregate endpoints.
 pub struct Ai<'a> {
     client: &'a Client,
@@ -116,13 +135,60 @@ impl Ai<'_> {
         Ok(CodeSearchPage { results, total })
     }
 
-    /// `GET ai/repos/{owner}/{name}/pulls/{number}/context`. The server's
-    /// default token budget applies; this client does not send `budget`.
+    /// `GET ai/repos/{owner}/{name}/pulls/{number}/context` with the server's
+    /// default budget (no `budget` parameter is sent).
     pub async fn pr_context(&self, owner: &str, name: &str, number: i64) -> Result<Value, Error> {
-        let path = format!(
-            "ai/repos/{}/{}/pulls/{number}/context",
-            seg(owner),
-            seg(name)
+        self.pr_context_with(owner, name, number, &PrContextQuery::default())
+            .await
+    }
+
+    /// `GET ai/repos/{owner}/{name}/pulls/{number}/context` with the given query.
+    pub async fn pr_context_with(
+        &self,
+        owner: &str,
+        name: &str,
+        number: i64,
+        query: &PrContextQuery,
+    ) -> Result<Value, Error> {
+        let path = with_query(
+            format!(
+                "ai/repos/{}/{}/pulls/{number}/context",
+                seg(owner),
+                seg(name)
+            ),
+            &[("budget", query.budget.map(|v| v.to_string()))],
+        );
+        self.client.send(crate::Method::GET, &path, None).await
+    }
+
+    /// `GET ai/repos/{owner}/{name}/issues`: the server's array of issue summaries.
+    pub async fn issues(
+        &self,
+        owner: &str,
+        name: &str,
+        query: &AiListQuery,
+    ) -> Result<Value, Error> {
+        self.list(owner, name, "issues", query).await
+    }
+
+    /// `GET ai/repos/{owner}/{name}/prs`: the server's array of PR summaries.
+    pub async fn prs(&self, owner: &str, name: &str, query: &AiListQuery) -> Result<Value, Error> {
+        self.list(owner, name, "prs", query).await
+    }
+
+    async fn list(
+        &self,
+        owner: &str,
+        name: &str,
+        resource: &str,
+        query: &AiListQuery,
+    ) -> Result<Value, Error> {
+        let path = with_query(
+            format!("ai/repos/{}/{}/{resource}", seg(owner), seg(name)),
+            &[
+                ("state", query.state.clone()),
+                ("limit", query.limit.map(|v| v.to_string())),
+            ],
         );
         self.client.send(crate::Method::GET, &path, None).await
     }

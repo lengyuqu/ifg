@@ -7,9 +7,12 @@ use clap::{ArgAction, Parser, Subcommand};
 /// from the terminal.
 ///
 /// `ifg` talks to the IronForge REST API with a personal access token. The
-/// token is validated by `auth login`, stored in
-/// `$XDG_CONFIG_HOME/ironforge/hosts.toml` (or the system keychain when
-/// `token_store = "keyring"`), and reused by every command.
+/// token is validated by `auth login`, stored in `hosts.toml` (in
+/// `IRONFORGE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/ironforge`, else the
+/// platform default), and reused by every command. `token_store = "keyring"`
+/// moves it to the system keychain, but never while `IRONFORGE_CONFIG_DIR` is
+/// set. With both `IRONFORGE_URL` and `IRONFORGE_PAT` set, the stored config
+/// is not read at all.
 ///
 /// Machine-readable output: `--json` prints the server's own field names,
 /// `-q/--template` renders a small template per result
@@ -38,6 +41,11 @@ use clap::{ArgAction, Parser, Subcommand};
   ifg api users/me                                 raw API passthrough
   ifg --no-input repo delete -R alice/demo --yes   never prompt; --yes still needed
 
+ENVIRONMENT:
+  IRONFORGE_URL, IRONFORGE_PAT   host and token; with both set, no stored config is read
+  IRONFORGE_CONFIG_DIR           directory holding hosts.toml; beats XDG_CONFIG_HOME and HOME
+  IFG_NO_INPUT                   same as --no-input
+
 Run `ifg help <command>` for the full description of one command,
 or `man ifg` / `man ifg-<command>` when the man pages are installed."
 )]
@@ -46,7 +54,8 @@ pub struct Cli {
     ///
     /// Resolution order: this flag, `IRONFORGE_URL`, the repository's git
     /// remote (when run inside a checkout), then `default_host` from the
-    /// config file.
+    /// config file. A NAME needs the stored config, so with both
+    /// `IRONFORGE_URL` and `IRONFORGE_PAT` set, pass a URL instead.
     #[arg(long, global = true, value_name = "NAME|URL")]
     pub host: Option<String>,
 
@@ -97,6 +106,26 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_input: bool,
 
+    /// Caller-chosen key that makes a write safe to repeat after a timeout
+    ///
+    /// The server replays the first response for the same key. Only single-write commands on routes that support keys accept it (see
+    /// `ifg schema`, field `accepts_idempotency_key`); any other command exits
+    /// with code 2 before sending anything. The key is sent as the
+    /// `Idempotency-Key` header on that command's write request, and a keyed
+    /// write is retried with the same key after connection errors, 429 and
+    /// 5xx. Use a key you chose: ifg never generates one. Allowed characters:
+    /// A-Z, a-z, 0-9, `.`, `_`, `:`, `-` (1 to 255). When absent, the
+    /// environment variable IRONFORGE_IDEMPOTENCY_KEY is used; this flag wins.
+    #[arg(long, global = true, value_name = "KEY")]
+    pub idempotency_key: Option<String>,
+
+    /// The validated key for this invocation, filled in by `main` after the
+    /// command is known. Never accepted from the command line.
+    #[arg(skip)]
+    // Read by `bootstrap`; the `gen_man` example only walks clap metadata.
+    #[allow(dead_code)]
+    pub idempotency: Option<ifg_client::IdempotencyKey>,
+
     /// Verbosity: -v logs each request, -vv also logs headers
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count, global = true, default_value_t = 0)]
     pub verbose: u8,
@@ -113,6 +142,9 @@ pub enum Command {
     /// (Settings → Tokens). `auth login` reads one from a no-echo prompt on a
     /// terminal, or from stdin with `--with-token`/a pipe. `token_store =
     /// "keyring"` in the config keeps the token out of the config file.
+    /// `IRONFORGE_CONFIG_DIR` gives an agent its own `hosts.toml` (tokens stay
+    /// in that file; the keychain is not used). `status` shows which source
+    /// the credential came from.
     /// `auth git-credential` implements the git credential helper protocol so
     /// `git clone`/`push` reuse the same token.
     Auth {
@@ -341,10 +373,37 @@ pub enum ContextCommand {
     },
     /// Pull request context: the PR and what it touches, in one object
     ///
-    /// The server limits the answer to its default token budget.
+    /// The server cuts the answer to a token budget (default 6000);
+    /// `--budget` asks for another size between 500 and 50000.
     Pr {
         /// Pull request number
         number: i64,
+        /// Approximate answer size in tokens (default 6000, 500 to 50000)
+        #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(500..=50000))]
+        budget: Option<u32>,
+    },
+    /// List issue summaries for AI use
+    ///
+    /// Each item carries the number, title, state, author and creation time.
+    Issues {
+        /// open / closed (default open)
+        #[arg(long, value_parser = ["open", "closed"])]
+        state: Option<String>,
+        /// Max results (default 20)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// List pull request summaries for AI use
+    ///
+    /// Each item carries the number, title, state, branches, author and
+    /// creation time.
+    Prs {
+        /// open / closed / merged (default open)
+        #[arg(long, value_parser = ["open", "closed", "merged"])]
+        state: Option<String>,
+        /// Max results (default 20)
+        #[arg(long)]
+        limit: Option<u64>,
     },
 }
 
@@ -439,6 +498,109 @@ pub enum CollabCommand {
         #[arg(long)]
         limit: Option<u64>,
     },
+    /// Read, replace or confirm a task's completion conditions
+    Condition {
+        #[command(subcommand)]
+        command: CollabConditionCommand,
+    },
+    /// Show a task's budgets against reported usage (informational only)
+    Budget {
+        #[command(subcommand)]
+        command: CollabBudgetCommand,
+    },
+    /// List or report a task's usage records
+    Usage {
+        #[command(subcommand)]
+        command: CollabUsageCommand,
+    },
+    /// Show the rule files that govern a path at a ref
+    Rules {
+        /// Branch, tag or commit (default HEAD)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Repository-relative file or directory (default the repository root)
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Show the collaboration overview sections for this user
+    Overview {
+        /// Comma-separated subset of awaiting_me, blocked_waiting, pending_handoffs, in_progress
+        #[arg(long)]
+        sections: Option<String>,
+        /// Items per section, 1 to 100 (server default 50)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabConditionCommand {
+    /// List a task's completion conditions and their version (0 = none defined)
+    List { task_id: String },
+    /// Replace a task's completion conditions from a JSON object file
+    ///
+    /// The file is sent unchanged, so it must contain `client_request_id`,
+    /// `expected_version` (the version last read) and `conditions`. `--file -`
+    /// reads stdin.
+    Set {
+        task_id: String,
+        /// JSON object file ("-" for stdin)
+        #[arg(long = "file", value_name = "PATH|-")]
+        source: String,
+    },
+    /// Confirm a manual_confirmation condition against the current branch head
+    Confirm {
+        task_id: String,
+        condition_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabBudgetCommand {
+    /// Show budgets with matched usage; informational, nothing is enforced
+    View { task_id: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabUsageCommand {
+    /// List usage records, newest reported first
+    List {
+        task_id: String,
+        /// Exact unit filter
+        #[arg(long)]
+        unit: Option<String>,
+        /// Exact source filter
+        #[arg(long)]
+        source: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Report usage consumed during a period (a delta, not a running total)
+    Report {
+        task_id: String,
+        /// Idempotency key, unique per reporting session or user
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        unit: String,
+        #[arg(long)]
+        source: String,
+        /// Non-negative decimal, sent as a JSON string
+        #[arg(long)]
+        amount: String,
+        /// RFC 3339 date-time
+        #[arg(long)]
+        period_start: String,
+        /// RFC 3339 date-time
+        #[arg(long)]
+        period_end: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -527,6 +689,8 @@ pub enum CollabTaskCommand {
         #[arg(long, conflicts_with = "pr")]
         clear_pr: bool,
     },
+    /// Show each completion condition as satisfied, unsatisfied, stale or unknown
+    Status { id: String },
     /// Claim an unowned or abandoned task as this session
     Claim {
         id: String,
@@ -811,6 +975,20 @@ pub enum McpCommand {
         #[arg(long = "command", default_value = "ironforge-mcp", value_name = "PATH")]
         server_command: String,
     },
+    /// Check whether the MCP server can be used from this machine
+    ///
+    /// Reads the server's MCP declaration from its capabilities, then checks
+    /// the host and token, that the server declares stdio and how many tools
+    /// it names, that the server binary can be found (it is never run), and
+    /// that `IRONFORGE_PAT` is set in this environment. Prints the same check
+    /// items as `ifg doctor` and exits 1 when a check fails (warnings do not).
+    /// The token is never printed.
+    Doctor {
+        /// Server binary to look for (default: the name the server declares,
+        /// else `ironforge-mcp`)
+        #[arg(long = "command", value_name = "PATH")]
+        server_command: Option<String>,
+    },
 }
 
 /// MCP clients `ifg mcp config` can emit a snippet for.
@@ -829,7 +1007,11 @@ pub enum AuthCommand {
         #[arg(long)]
         with_token: bool,
     },
-    /// List configured hosts, token prefixes and usable scopes
+    /// List configured hosts, token prefixes, usable scopes and the credential source
+    ///
+    /// `source` is `env` (IRONFORGE_URL and IRONFORGE_PAT), `config-dir`
+    /// (IRONFORGE_CONFIG_DIR) or `default` (XDG_CONFIG_HOME or HOME). The
+    /// token is never printed; only its redacted form is.
     Status,
     /// Remove local credentials (the token stays valid server-side)
     Logout,
@@ -1055,6 +1237,19 @@ pub enum PrReviewersCommand {
     Remove { number: i64, username: String },
 }
 
+/// Value parser for `--expected-head`: exactly 40 hex digits, lower-cased.
+/// Abbreviations are refused, not resolved, so the server compares the full
+/// commit SHA the caller reviewed.
+fn parse_full_sha(raw: &str) -> Result<String, String> {
+    if raw.len() == 40 && raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(raw.to_ascii_lowercase())
+    } else {
+        Err(format!(
+            "expected a full 40-character commit SHA, got {raw:?}"
+        ))
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum PrCommand {
     /// List pull requests
@@ -1133,9 +1328,18 @@ pub enum PrCommand {
         squash: bool,
         #[arg(long, group = "strategy")]
         rebase: bool,
-        /// Enable auto-merge instead of merging now
+        /// Enable auto-merge instead of merging now. The auto-merge endpoint
+        /// does not take an expected head, so this cannot be combined with
+        /// --expected-head.
         #[arg(long)]
         auto: bool,
+        /// Merge only if the head branch still points at this commit: the
+        /// full 40-character SHA you reviewed (case-insensitive). The server
+        /// refuses the merge with REF_ADVANCED when the head has moved; re-read
+        /// the PR with `ifg pr checks` and retry with the current SHA. Not
+        /// accepted with --auto.
+        #[arg(long, value_name = "SHA", value_parser = parse_full_sha, conflicts_with = "auto")]
+        expected_head: Option<String>,
     },
     /// Review a pull request
     Review {

@@ -1,15 +1,23 @@
-//! `hosts.toml` (design doc §5.1): `$XDG_CONFIG_HOME/ironforge/hosts.toml`,
-//! else the platform-native config directory (`$HOME/.config` on POSIX,
-//! `%APPDATA%` on Windows). On POSIX it is written with 0600 permissions; a
-//! file with wider permissions is loaded but its tokens are refused
-//! (`*.ai/guardrails.md` credential policy).
+//! `hosts.toml` (design doc §5.1). Its directory is, in order: `IRONFORGE_CONFIG_DIR`
+//! (used as given), `$XDG_CONFIG_HOME/ironforge`, then the platform-native
+//! config directory (`$HOME/.config/ironforge` on POSIX, `%APPDATA%\ironforge`
+//! on Windows). On POSIX it is written with 0600 permissions; a file with wider
+//! permissions is loaded but its tokens are refused (`*.ai/guardrails.md`
+//! credential policy).
+//!
+//! `IRONFORGE_CONFIG_DIR` also turns the OS keychain off: keychain entries are
+//! keyed by host only, so two config directories would share one token.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+/// Environment variable naming the config directory (see the module docs).
+pub const CONFIG_DIR_ENV: &str = "IRONFORGE_CONFIG_DIR";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -29,9 +37,10 @@ pub struct Config {
 }
 
 impl Config {
-    /// Whether tokens belong in the system keychain instead of the file.
+    /// Whether tokens belong in the system keychain instead of the file. An
+    /// explicit `IRONFORGE_CONFIG_DIR` always answers no (see [`keyring_allowed`]).
     pub fn uses_keyring(&self) -> bool {
-        self.token_store.as_deref() == Some("keyring")
+        self.token_store.as_deref() == Some("keyring") && keyring_allowed()
     }
 
     /// Keep `token` in the file for this host. Used when the keychain is
@@ -84,15 +93,37 @@ pub enum ConfigError {
     Parse { path: PathBuf, message: String },
 }
 
-/// The config directory: `$XDG_CONFIG_HOME/ironforge` when set, else the
-/// platform-native location — `%APPDATA%\ironforge` on Windows,
-/// `$HOME/.config/ironforge` elsewhere. Deliberately not `dirs::config_dir()`,
-/// which would return `~/Library/Application Support` on macOS (design doc §5.2).
+/// The config directory, by precedence: `IRONFORGE_CONFIG_DIR` (used as given,
+/// not joined with `ironforge`), then `$XDG_CONFIG_HOME/ironforge`, then the
+/// platform-native location. Deliberately not `dirs::config_dir()`, which would
+/// return `~/Library/Application Support` on macOS (design doc §5.2).
 pub fn config_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+    resolve_config_dir(|name| std::env::var_os(name))
+}
+
+/// The explicit `IRONFORGE_CONFIG_DIR` override, when set and non-empty.
+pub fn config_dir_override() -> Option<PathBuf> {
+    std::env::var_os(CONFIG_DIR_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .or_else(native_config_base)?;
+}
+
+/// Whether the OS keychain may be read or written by this process. An explicit
+/// config directory turns it off so that two directories never share a token.
+pub fn keyring_allowed() -> bool {
+    config_dir_override().is_none()
+}
+
+/// [`config_dir`] over an injectable environment lookup. Empty values count as
+/// unset at every step.
+fn resolve_config_dir(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let set = |name: &str| env(name).filter(|value| !value.is_empty());
+    if let Some(dir) = set(CONFIG_DIR_ENV) {
+        return Some(PathBuf::from(dir));
+    }
+    let base = set("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| native_config_base(&set))?;
     Some(base.join("ironforge"))
 }
 
@@ -100,25 +131,34 @@ pub fn config_dir() -> Option<PathBuf> {
 /// user; `HOME` usually is not, so without this fallback `auth login` could
 /// not persist anything from PowerShell or cmd.
 #[cfg(windows)]
-fn native_config_base() -> Option<PathBuf> {
-    std::env::var_os("APPDATA")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+fn native_config_base(get: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    get("APPDATA").map(PathBuf::from)
 }
 
 #[cfg(not(windows))]
-fn native_config_base() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").filter(|value| !value.is_empty())?;
-    Some(PathBuf::from(home).join(".config"))
+fn native_config_base(get: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    get("HOME").map(|home| PathBuf::from(home).join(".config"))
 }
 
 pub fn config_path() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("hosts.toml"))
 }
 
-/// Load the config. A missing file yields an empty config. When the file is
-/// more permissive than 0600, a warning is printed and tokens are dropped.
+/// The config for resolving a host. With env-only credentials (`IRONFORGE_URL`
+/// and `IRONFORGE_PAT` both set) the stored file and the keychain are not read
+/// at all, so the command creates nothing and prompts for nothing.
 pub fn load() -> Result<Config, ConfigError> {
+    if crate::context::env_credentials_active() {
+        return Ok(Config::default());
+    }
+    load_stored()
+}
+
+/// The stored config, even when env-only credentials are active. Only for the
+/// commands that manage the stored file itself (`auth login`, `auth logout`).
+/// A missing file yields an empty config. When the file is more permissive than
+/// 0600, a warning is printed and tokens are dropped.
+pub fn load_stored() -> Result<Config, ConfigError> {
     match config_path() {
         Some(path) => load_from(&path),
         None => Ok(Config::default()),
@@ -552,6 +592,55 @@ mod tests {
             "lost updates: {:?}",
             config.hosts.keys().collect::<Vec<_>>()
         );
+    }
+
+    fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        let map: BTreeMap<String, OsString> = pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), OsString::from(value)))
+            .collect();
+        move |name| map.get(name).cloned()
+    }
+
+    /// `IRONFORGE_CONFIG_DIR` wins over XDG and HOME and is used as given.
+    #[test]
+    fn config_dir_override_takes_precedence_and_is_not_joined() {
+        let dir = resolve_config_dir(env_of(&[
+            (CONFIG_DIR_ENV, "/agents/a"),
+            ("XDG_CONFIG_HOME", "/xdg"),
+            ("HOME", "/home/u"),
+        ]));
+        assert_eq!(dir, Some(PathBuf::from("/agents/a")));
+    }
+
+    #[test]
+    fn xdg_config_home_wins_over_home() {
+        let dir = resolve_config_dir(env_of(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", "/home/u")]));
+        assert_eq!(dir, Some(PathBuf::from("/xdg/ironforge")));
+    }
+
+    /// An empty value is the same as an unset one at every step.
+    #[test]
+    fn empty_values_are_ignored() {
+        let dir = resolve_config_dir(env_of(&[
+            (CONFIG_DIR_ENV, ""),
+            ("XDG_CONFIG_HOME", ""),
+            ("HOME", "/home/u"),
+        ]));
+        #[cfg(not(windows))]
+        assert_eq!(dir, Some(PathBuf::from("/home/u/.config/ironforge")));
+        #[cfg(windows)]
+        assert_eq!(dir, None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn home_is_the_last_resort_and_nothing_gives_none() {
+        assert_eq!(
+            resolve_config_dir(env_of(&[("HOME", "/home/u")])),
+            Some(PathBuf::from("/home/u/.config/ironforge"))
+        );
+        assert_eq!(resolve_config_dir(env_of(&[])), None);
     }
 
     #[test]

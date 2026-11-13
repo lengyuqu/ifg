@@ -25,7 +25,7 @@ pub mod version;
 pub mod wiki;
 
 use clap::ArgMatches;
-use ifg_client::Client;
+use ifg_client::{Client, IdempotencyKey};
 
 use crate::cli::Cli;
 use crate::config::Config;
@@ -41,6 +41,7 @@ use crate::error::AppError;
 pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
     "api",
     "mcp config",
+    "mcp doctor",
     "status",
     "search",
     "context",
@@ -104,6 +105,93 @@ pub(crate) fn structured_output_supported(path: &[&str]) -> bool {
     })
 }
 
+/// Environment variable that supplies the idempotency key when the flag is
+/// absent. An empty value counts as unset.
+pub(crate) const IDEMPOTENCY_ENV: &str = "IRONFORGE_IDEMPOTENCY_KEY";
+
+/// Leaf commands that accept `--idempotency-key`, by clap path. Each one makes
+/// exactly one write request, on a route the server lists as supporting keys.
+/// Every other command refuses the key before it sends anything (exit 2), so
+/// `ifg schema` reports `accepts_idempotency_key` from this table alone.
+///
+/// Deliberately absent: `release create` and `release upload`, which send one
+/// request per asset under the same key (the server would answer the second
+/// one with `IDEMPOTENCY_KEY_REUSED`), and every route the server does not
+/// list: `repo edit`, `repo delete`, collaborators, `ci`, `collab`,
+/// `notifications`, `org`, `auth`, `api` and the rest.
+pub(crate) const IDEMPOTENT_WRITES: &[&str] = &[
+    "repo create",
+    "issue create",
+    "issue comment",
+    "issue close",
+    "issue reopen",
+    "issue edit",
+    "pr create",
+    "pr edit",
+    "pr close",
+    "pr reopen",
+    "pr comment",
+    "pr review",
+    "pr merge",
+    "pr reviewers add",
+    "pr reviewers remove",
+    "label create",
+    "label edit",
+    "label delete",
+    "milestone create",
+    "milestone edit",
+    "milestone delete",
+    "wiki create",
+    "wiki edit",
+    "wiki delete",
+    "release edit",
+    "release delete",
+];
+
+/// Whether the leaf command at `path` (clap names) accepts an idempotency key.
+pub(crate) fn accepts_idempotency_key(path: &[&str]) -> bool {
+    IDEMPOTENT_WRITES.contains(&path.join(" ").as_str())
+}
+
+/// Clap names from the top command down to the leaf, and the leaf's matches.
+fn leaf_of(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
+    let mut path = Vec::new();
+    let mut leaf = matches;
+    while let Some((name, sub)) = leaf.subcommand() {
+        path.push(name);
+        leaf = sub;
+    }
+    (path, leaf)
+}
+
+/// Decide the idempotency key for this invocation: the flag, else the
+/// environment variable. A malformed key, or a key given to a command that does
+/// not accept one, is a usage error raised before any request. Nothing is ever
+/// generated here.
+pub(crate) fn validate_idempotency(
+    cli: &Cli,
+    matches: &ArgMatches,
+) -> Result<Option<IdempotencyKey>, AppError> {
+    let (raw, source) = match cli.idempotency_key.as_deref() {
+        Some(flag) => (flag.to_owned(), "--idempotency-key"),
+        None => match std::env::var(IDEMPOTENCY_ENV) {
+            Ok(value) if !value.is_empty() => (value, IDEMPOTENCY_ENV),
+            _ => return Ok(None),
+        },
+    };
+    let key = IdempotencyKey::parse(&raw)
+        .map_err(|error| AppError::Usage(format!("{source} {error}")))?;
+    let (path, _) = leaf_of(matches);
+    if accepts_idempotency_key(&path) {
+        return Ok(Some(key));
+    }
+    Err(AppError::Usage(format!(
+        "`ifg {}` does not accept an idempotency key, but {source} is set: run it without {source}. \
+         `ifg schema` lists the commands that accept one (accepts_idempotency_key)",
+        path.join(" ")
+    )))
+}
+
 /// Commands that produce documents, invoke git, or open a browser cannot
 /// silently accept structured-output flags. Validate before any side effect.
 /// `matches` is the parse result behind `cli`; it gives the leaf command path.
@@ -111,12 +199,7 @@ pub(crate) fn validate_output(cli: &Cli, matches: &ArgMatches) -> Result<(), App
     if !cli.json && cli.template.is_none() {
         return Ok(());
     }
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = leaf_of(matches);
     // `--web` opens a browser page instead of printing a result.
     let web = leaf
         .try_get_one::<bool>("web")
@@ -126,7 +209,8 @@ pub(crate) fn validate_output(cli: &Cli, matches: &ArgMatches) -> Result<(), App
         .unwrap_or(false);
     // `mcp config` prints a snippet that is already JSON; a template would
     // only reshape it, so `--json` is accepted and `--template` is not.
-    let template_refused = path.first() == Some(&"mcp") && cli.template.is_some();
+    // `mcp doctor` prints check items like `doctor`, so it takes both.
+    let template_refused = path.starts_with(&["mcp", "config"]) && cli.template.is_some();
     if !web && !template_refused && structured_output_supported(&path) {
         Ok(())
     } else {
@@ -170,6 +254,9 @@ pub(crate) fn bootstrap(cli: &Cli) -> Result<CommandContext, AppError> {
     let mut builder = Client::builder(&host.url).user_agent(user_agent());
     if let Some(token) = &host.token {
         builder = builder.token(token.clone());
+    }
+    if let Some(key) = &cli.idempotency {
+        builder = builder.idempotency_key(key.clone());
     }
     let client = builder.build()?;
     Ok(CommandContext {
@@ -332,6 +419,53 @@ fn parse_editor(input: &str) -> Result<Vec<String>, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::EXIT_USAGE;
+    use clap::{CommandFactory, FromArgMatches};
+
+    fn parsed(args: &[&str]) -> (Cli, ArgMatches) {
+        let matches = Cli::command().try_get_matches_from(args).unwrap();
+        let cli = Cli::from_arg_matches(&matches).unwrap();
+        (cli, matches)
+    }
+
+    #[test]
+    fn flag_key_is_accepted_only_on_commands_in_the_table() {
+        let (cli, matches) = parsed(&["ifg", "--idempotency-key", "k-1", "pr", "merge", "7"]);
+        let key = validate_idempotency(&cli, &matches).unwrap().unwrap();
+        assert_eq!(key.as_str(), "k-1");
+
+        for args in [
+            &["ifg", "--idempotency-key", "k-1", "issue", "list"][..],
+            &["ifg", "--idempotency-key", "k-1", "release", "create", "v1"][..],
+            &["ifg", "--idempotency-key", "k-1", "ci", "cancel", "7"][..],
+        ] {
+            let (cli, matches) = parsed(args);
+            let err = validate_idempotency(&cli, &matches).unwrap_err();
+            assert_eq!(err.exit_code(), EXIT_USAGE, "{args:?}");
+            assert!(
+                err.to_string()
+                    .contains("does not accept an idempotency key"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_key_is_a_usage_error_and_never_echoes_the_value() {
+        let (cli, matches) = parsed(&["ifg", "--idempotency-key", "bad key!", "pr", "merge", "7"]);
+        let err = validate_idempotency(&cli, &matches).unwrap_err();
+        assert_eq!(err.exit_code(), EXIT_USAGE);
+        let message = err.to_string();
+        assert!(message.starts_with("--idempotency-key "), "{message}");
+        assert!(!message.contains("bad key"), "{message}");
+    }
+
+    #[test]
+    fn accepts_idempotency_key_reads_the_table() {
+        assert!(accepts_idempotency_key(&["issue", "create"]));
+        assert!(!accepts_idempotency_key(&["issue"]));
+        assert!(!accepts_idempotency_key(&["release", "upload"]));
+    }
 
     #[test]
     fn editor_arguments_handle_quotes_escapes_and_windows_paths() {

@@ -72,6 +72,7 @@ ifg pr comment 12 -b '请检查测试结果'                   # 提交普通评
 ifg pr reviews 12                                      # 查看评审及普通评论
 ifg pr reviewers add 12 alice                          # 请求评审；也可 list / remove
 ifg pr checks 12                                       # 头提交的组合状态与各项检查；待定或失败时仍返回 0
+ifg pr merge 12 --squash --expected-head <SHA>         # 仅当头提交仍是已审查的完整 SHA 时合并；被推进时返回 409 REF_ADVANCED，不自动重试
 ifg ci logs 7 --follow                                 # WebSocket 流式日志（断线自动续传；无 WS 时退回轮询）
 ifg ci run --ref refs/heads/main --wait --timeout 600  # 触发并等待；也可传提交 SHA
 ifg ci wait 7 --timeout 600                            # 等待已有流水线
@@ -83,12 +84,16 @@ ifg doctor                                             # 一条命令自检：�
 ifg capabilities [-R yourname/demo] [--has wiki]         # 服务端契约版本与能力列表；--has 只返回退出码（0 有 / 1 无）
 ifg schema pr merge                                    # 命令树的 JSON 描述（参数、--json 支持、读写副作用）；无需登录
 ifg mcp config --client claude-code                    # 打印 MCP 客户端配置（不含令牌，需自行导出 IRONFORGE_PAT）
+ifg mcp doctor                                         # 自检 MCP 服务能否在本机使用（服务端声明、二进制、IRONFORGE_PAT）；不运行服务
 ifg status                                             # 当前分支的 PR + 最近流水线
 ifg search "登录 超时" --type issue                      # 全局搜索（repo / issue / wiki）
 ifg context repo                                       # AI 上下文：仓库摘要（--json 原样输出服务端对象）
 ifg context tree src --ref main                        # 文件树单页；带 --cursor 续页
 ifg context search "重试" --limit 10                    # 代码搜索（仅默认分支）
 ifg context pr 12                                      # PR 上下文聚合对象（服务端默认预算）
+ifg context pr 12 --budget 2000                        # 指定服务端预算（token，500–50000）；不带则用服务端默认
+ifg context issues --state closed --limit 10           # AI 上下文：Issue 摘要列表（--state open|closed）
+ifg context prs --state merged                         # AI 上下文：PR 摘要列表（--state open|closed|merged）
 ifg notifications                                      # 通知列表；notifications count 只看未读
 ifg org list                                           # 组织；org members / add-member / remove-member
 ifg org create acme -d "Acme 团队"                      # 建组织，成员用 --role 指定
@@ -160,7 +165,23 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 ## 配置与凭据
 
-- 配置：`$XDG_CONFIG_HOME/ironforge/hosts.toml`；Windows 默认 `%APPDATA%\ironforge\hosts.toml`（POSIX 的 0600 告警不适用，权限由用户目录 ACL 控制）。写入是「临时文件 + 原子替换」，并对同目录的 `.hosts.toml.lock` 加排他锁，多个 `ifg auth` 并发执行不会互相覆盖
+- 配置目录按优先级选择：`IRONFORGE_CONFIG_DIR`（非空时即为配置目录，`hosts.toml` 直接放在其中）> `$XDG_CONFIG_HOME/ironforge` > 平台默认（`$HOME/.config/ironforge`；Windows 为 `%APPDATA%\ironforge`）。空值视为未设置。配置文件为 `hosts.toml`（POSIX 的 0600 告警不适用于 Windows，权限由用户目录 ACL 控制）。写入是「临时文件 + 原子替换」，并对同目录的 `.hosts.toml.lock` 加排他锁，多个 `ifg auth` 并发执行不会互相覆盖
+- 同一台机器上的多个 Agent 可以各用一个配置目录；每个目录的令牌只保存在它自己的 `hosts.toml` 中（0600），请求只携带所用目录的令牌：
+
+  ```bash
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-a" ifg auth login --host https://forge.example.com --with-token
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-b" ifg auth login --host https://forge.example.com --with-token
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-a" ifg -R owner/repo issue list
+  ```
+
+- 设置 `IRONFORGE_CONFIG_DIR` 时 ifg 不读写系统钥匙串，即使 `hosts.toml` 写有 `token_store = "keyring"`：钥匙串条目只按主机区分，两个配置目录会共用同一个令牌。此时令牌保存在该目录的 `hosts.toml` 中，`auth login` 会提示这一点
+- 仅环境变量凭据：同时设置 `IRONFORGE_URL` 与 `IRONFORGE_PAT` 时，命令不读取 `hosts.toml`、不探测钥匙串，也不创建配置目录或任何文件。适合无可写 HOME、无钥匙串的容器。此时 `--host` 须使用 URL 而不是配置中的名称；`auth login` 与 `auth logout` 仍然读写配置文件
+
+  ```bash
+  IRONFORGE_URL=https://forge.example.com IRONFORGE_PAT="$TOKEN" ifg api users/me
+  ```
+
+- `ifg auth status` 的 `source` 字段（表格的 SOURCE 列）给出凭据来源：`env`、`config-dir` 或 `default`；`config_dir` 给出读取配置文件的目录。令牌只以脱敏形式显示。`ifg doctor` 的 `config-dir` 检查项显示目录及是否可写；目录不可写只是告警，仅环境变量模式下也不影响凭据
 - 钥匙串（可选）：`token_store = "keyring"` 时优先将 PAT 保存到系统钥匙串（macOS 钥匙串 / Linux `secret-tool` / Windows 凭据管理器）；写入不可用时会告警并回退到配置文件。主机条目中显式保存的文件 PAT 优先于旧钥匙串条目，直到一次成功登录将 PAT 写入钥匙串并清除文件副本；从钥匙串读出的 PAT 不会随配置更新写回文件。macOS 与 Windows 直接调用系统凭据 API，token 不会出现在进程参数里
 - 配置凭据只会自动复用于相同协议、主机、有效端口和部署基础路径；覆盖为 HTTP 或另一部署路径时，不会自动携带原配置的 PAT。显式的 `IRONFORGE_PAT` 仍绑定到选定的目标。它覆盖配置时，`repo list` 会读取该令牌对应的用户名；缺少 `user` scope 时请显式指定 `repo list OWNER`
 - `--json` 的 1.x 兼容规则、服务端字段边界和聚合输出见 [JSON 兼容契约](docs/json-compatibility.md)。输出会重新序列化，并非原始字节
@@ -180,6 +201,21 @@ ifg completions bash > /etc/bash_completion.d/ifg
 - 显式的 `--file -`、`--input -` 与 `auth login --with-token` 仍然读取 stdin。操作系统钥匙串自身弹出的解锁提示不受此开关控制。
 
 **`--no-input` 不等于 `--yes`**。它从不替调用方确认：破坏性命令仍需显式传入 `--yes` 才会执行，例如 `ifg --no-input repo delete OWNER/NAME --yes`。
+
+## 幂等写入（超时后安全重跑）
+
+写命令超时后，调用方不知道服务端是否已经执行。给命令加上 `--idempotency-key <KEY>`（或设置 `IRONFORGE_IDEMPOTENCY_KEY`，命令行参数优先），ifg 会把它作为 `Idempotency-Key` 请求头发送。同一个键重跑同一请求时，服务端返回第一次的结果，不会重复创建。
+
+- 键由调用方自己选择，ifg 从不生成。取值为 1 到 255 个字符，只能是 `A-Z`、`a-z`、`0-9`、`.`、`_`、`:`、`-`；格式错误直接以退出码 2 失败，且不发送任何请求。
+- 只有“一次调用只发一个写请求、且路由受服务端支持”的命令接受该参数，例如 `issue create/comment/close/reopen/edit`、`pr create/edit/close/reopen/comment/review/merge/reviewers add|remove`、`label`、`milestone`、`wiki` 的增改删，`release edit/delete` 与 `repo create`。`ifg schema` 中的 `accepts_idempotency_key` 列出了全部命令。
+- 其他命令（包括所有读命令、`release create`、`release upload`、`repo edit`、`ci`、`collab` 等）收到该参数时以退出码 2 拒绝，不发送任何请求。`release create` 会对每个附件各发一次请求，共用同一个键会被服务端以 `IDEMPOTENCY_KEY_REUSED` 拒绝。
+- 带键的写请求在连接中断、HTTP 5xx 和 429 时会用同一个键自动重试（沿用退出前的退避与重试次数设置，并遵守 `Retry-After`）。不带键的写请求从不自动重试。
+- 服务端拒绝时，错误对象的 `reason` 原样输出（例如 `IDEMPOTENCY_NOT_SUPPORTED`、`IDEMPOTENCY_KEY_REUSED`，后者为 409）。
+
+```sh
+ifg --idempotency-key "release-notes-v1" -R alice/demo issue comment 12 -b "shipped"
+IRONFORGE_IDEMPOTENCY_KEY="retry-42" ifg -R alice/demo pr merge 7 --squash
+```
 
 ## 多 Agent 协作
 
@@ -206,11 +242,22 @@ ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" work-package c
 ifg -R owner/repo collab work-package list '<任务 ID>'
 ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" dependency add '<任务 ID>' '<前置任务 ID>' --key dep-1 --expected-graph-version '<dependency list 返回的 graph_version>'
 ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" decision create '<任务 ID>' --key dec-1 --title '采用方案一' --rationale '与问题答复一致'
+ifg -R owner/repo collab condition list '<任务 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" condition set '<任务 ID>' --file conditions.json   # 文件须含 client_request_id、expected_version、conditions；--file - 读取 stdin
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" condition confirm '<任务 ID>' '<条件 ID>' --key confirm-1 --note '已人工确认'
+ifg -R owner/repo collab task status '<任务 ID>'
+ifg -R owner/repo collab budget view '<任务 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" usage report '<任务 ID>' --key usage-1 --unit tokens --source ci --amount 1200 --period-start 2026-11-01T00:00:00Z --period-end 2026-11-02T00:00:00Z
+ifg -R owner/repo collab usage list '<任务 ID>' --unit tokens
+ifg -R owner/repo collab rules --ref main --path src
+ifg -R owner/repo collab overview --sections awaiting_me,in_progress --limit 10
 ```
 
 会话文件含仅展示一次的密钥，绑定服务端 URL 和仓库，Unix 创建权限为 `0600`；不要提交或分享，保留该文件可在新进程中恢复会话。当前安全文件存储仅支持 Unix；Windows 上需要会话凭据的操作尚不可用。任务更新和交接接受/取消需传入最新 `--expected-version`；消息与交接的 `--key` 由调用方生成并在重试同一请求时复用，不同请求不能复用。任务、会话和交接列表返回 `next_cursor`；消息列表使用 `next_after_seq` 和 `--after-seq` 翻页。协作命令默认输出 JSON，可用 `--template` 格式化。
 
 `question view` 返回上下文及 `context_freshness`；回答时应先检查上下文，再明确传入读取到的版本和哈希，服务端会拒绝过期上下文。`task claim` 以会话身份接管空闲或已离线任务，活跃的原负责人可能导致拒绝；`task reassign` 以用户身份操作且不得携带会话文件。两者都要求调用方提供看到的任务版本、原负责人和幂等键；无负责人时省略 `--expected-owner`。问答与接管列表使用 `next_cursor` 翻页。
+
+`condition set` 原样发送 `--file` 指定的 JSON 对象，因此文件须自带 `client_request_id`、`expected_version`（最近读取的版本，0 表示尚未定义）和 `conditions`；非对象或无效 JSON 返回用法错误且不发送请求。`condition confirm`、`usage report` 的 `--key` 为幂等键。预算和用量仅作参考，服务端不据此强制执行任何限制。
 
 ## 文档
 

@@ -13,6 +13,7 @@ mod contract;
 mod error;
 mod events;
 mod http;
+mod idempotency;
 mod issues;
 mod labels;
 mod milestones;
@@ -28,7 +29,7 @@ mod text;
 mod users;
 mod wiki;
 
-pub use ai::{Ai, CodeSearchPage, CodeSearchQuery, TreeQuery};
+pub use ai::{Ai, AiListQuery, CodeSearchPage, CodeSearchQuery, PrContextQuery, TreeQuery};
 pub use ci::{Ci, Job, Pipeline, PipelineDetail, Stage, StageWithJobs};
 /// Path-segment encoder for resource routes (`repos/{owner}/{name}`, `orgs/{name}`).
 /// Untrusted segments must never be able to change the route, so every
@@ -39,6 +40,7 @@ pub use contract::USED_PATHS;
 pub use error::Error;
 pub use events::Events;
 pub use http::{Client, ClientBuilder, DEFAULT_BACKOFF, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT};
+pub use idempotency::{IdempotencyKey, InvalidIdempotencyKey};
 pub use issues::{Comment, CreateIssueOptions, Issue, IssueListFilter, Issues, UpdateIssueOptions};
 pub use labels::{Label, LabelOptions, Labels};
 pub use milestones::{Milestone, MilestoneOptions, Milestones};
