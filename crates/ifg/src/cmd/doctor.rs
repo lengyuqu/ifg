@@ -7,11 +7,14 @@
 //! Exit code is 1 when any check **fails** (warnings do not fail the run), so
 //! scripts can gate on it.
 
+use std::path::Path;
+
 use serde_json::{json, Value};
 
 use crate::cli::Cli;
 use crate::cmd::bootstrap;
-use crate::context::{resolve_repo, ResolvedHost};
+use crate::config;
+use crate::context::{self, resolve_repo, ResolvedHost};
 use crate::error::AppError;
 use crate::output;
 
@@ -86,7 +89,7 @@ impl Check {
 }
 
 pub async fn run(cli: &Cli) -> Result<(), AppError> {
-    let mut checks = Vec::new();
+    let mut checks = vec![config_dir_check()];
 
     let ctx = match bootstrap(cli) {
         Ok(ctx) => Some(ctx),
@@ -179,6 +182,85 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
         return Err(AppError::Other(format!("{failed} doctor check(s) failed")));
     }
     Ok(())
+}
+
+/// The directory `hosts.toml` lives in, and whether it accepts new entries.
+/// Judged without creating anything: a probe file would be a write, and an
+/// env-only run must not write. A read-only directory is a warning even then,
+/// because the environment credentials do not need it.
+fn config_dir_check() -> Check {
+    let env_only = context::env_credentials_active();
+    let Some(dir) = config::config_dir() else {
+        return if env_only {
+            Check::ok(
+                "config-dir",
+                "none (env credentials need no config directory)",
+            )
+        } else {
+            Check::warn(
+                "config-dir",
+                "no config directory: HOME, XDG_CONFIG_HOME and IRONFORGE_CONFIG_DIR are unset",
+                "set IRONFORGE_CONFIG_DIR to a writable directory",
+            )
+        };
+    };
+    let origin = if config::config_dir_override().is_some() {
+        "IRONFORGE_CONFIG_DIR"
+    } else if std::env::var_os("XDG_CONFIG_HOME").is_some_and(|value| !value.is_empty()) {
+        "XDG_CONFIG_HOME"
+    } else {
+        "default"
+    };
+    let (exists, writable) = accepts_entries(&dir);
+    let location = format!("{} ({origin})", dir.display());
+    if writable && exists {
+        Check::ok("config-dir", format!("{location}, writable"))
+    } else if writable {
+        Check::ok(
+            "config-dir",
+            format!("{location}, not created yet (created on first write)"),
+        )
+    } else {
+        let hint = if env_only {
+            "env credentials do not need it; `auth login` and `auth logout` do: set IRONFORGE_CONFIG_DIR to a writable directory"
+        } else {
+            "`auth login` and `auth logout` cannot save here: set IRONFORGE_CONFIG_DIR to a writable directory"
+        };
+        Check::warn("config-dir", format!("{location}, not writable"), hint)
+    }
+}
+
+/// `(exists, writable)` for `dir`. A missing directory is judged by its
+/// nearest existing ancestor, the one that would have to accept the new entry.
+fn accepts_entries(dir: &Path) -> (bool, bool) {
+    if dir.exists() {
+        return (true, writable(dir));
+    }
+    let mut ancestor = dir.parent();
+    while let Some(path) = ancestor {
+        if path.exists() {
+            return (false, writable(path));
+        }
+        ancestor = path.parent();
+    }
+    (false, false)
+}
+
+/// Whether the kernel lets this user add entries to `path`. On Unix that is
+/// `test -w` (access(2)), which also sees read-only mounts; elsewhere only the
+/// read-only attribute is available. Nothing is created either way.
+#[cfg(unix)]
+fn writable(path: &Path) -> bool {
+    std::process::Command::new("sh")
+        .args(["-c", "test -w \"$1\"", "ifg-doctor"])
+        .arg(path)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(not(unix))]
+fn writable(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|meta| !meta.permissions().readonly())
 }
 
 fn host_check(cli: &Cli, host: &ResolvedHost) -> Check {
