@@ -103,7 +103,7 @@ impl Search<'_> {
 }
 
 /// Percent-encode everything but RFC 3986 unreserved characters.
-fn urlencode(text: &str) -> String {
+pub(crate) fn urlencode(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         match byte {

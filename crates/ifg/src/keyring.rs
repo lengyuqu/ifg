@@ -9,8 +9,14 @@
 //!
 //! Linux uses `secret-tool` with the token on stdin, which is equally safe.
 //! When no backend answers, callers degrade to the config file with a warning.
+//!
+//! Nothing here runs while `IRONFORGE_CONFIG_DIR` is set: the keychain key is
+//! per host, so a second config directory would read the first one's token.
 
 const SERVICE: &str = "ifg";
+
+/// Refusal for a store while `IRONFORGE_CONFIG_DIR` is set (no keychain use).
+const DISABLED: &str = "the keychain is not used while IRONFORGE_CONFIG_DIR is set";
 
 #[cfg(any(windows, target_os = "macos"))]
 fn native_entry(host_key: &str) -> Result<keyring::Entry, String> {
@@ -20,6 +26,9 @@ fn native_entry(host_key: &str) -> Result<keyring::Entry, String> {
 /// Store (or replace) the token for `host_key`.
 #[cfg(any(windows, target_os = "macos"))]
 pub fn store(host_key: &str, token: &str) -> Result<(), String> {
+    if !crate::config::keyring_allowed() {
+        return Err(DISABLED.into());
+    }
     native_entry(host_key)?
         .set_password(token)
         .map_err(|e| format!("system keychain: {e}"))
@@ -28,6 +37,9 @@ pub fn store(host_key: &str, token: &str) -> Result<(), String> {
 /// Fetch the token for `host_key`.
 #[cfg(any(windows, target_os = "macos"))]
 pub fn load(host_key: &str) -> Option<String> {
+    if !crate::config::keyring_allowed() {
+        return None;
+    }
     native_entry(host_key)
         .ok()?
         .get_password()
@@ -38,6 +50,9 @@ pub fn load(host_key: &str) -> Option<String> {
 /// Remove the token for `host_key` (missing entries are fine).
 #[cfg(any(windows, target_os = "macos"))]
 pub fn delete(host_key: &str) -> Result<(), String> {
+    if !crate::config::keyring_allowed() {
+        return Ok(());
+    }
     match native_entry(host_key)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("system keychain: {e}")),
@@ -56,6 +71,9 @@ fn secret_tool_available() -> bool {
 /// Store (or replace) the token for `host_key`.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn store(host_key: &str, token: &str) -> Result<(), String> {
+    if !crate::config::keyring_allowed() {
+        return Err(DISABLED.into());
+    }
     if !secret_tool_available() {
         return Err("no keychain backend (secret-tool) found".into());
     }
@@ -72,6 +90,9 @@ pub fn store(host_key: &str, token: &str) -> Result<(), String> {
 /// Fetch the token for `host_key`.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn load(host_key: &str) -> Option<String> {
+    if !crate::config::keyring_allowed() {
+        return None;
+    }
     if !secret_tool_available() {
         return None;
     }
@@ -89,6 +110,9 @@ pub fn load(host_key: &str) -> Option<String> {
 /// Remove the token for `host_key` (missing entries are fine).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn delete(host_key: &str) -> Result<(), String> {
+    if !crate::config::keyring_allowed() {
+        return Ok(());
+    }
     if !secret_tool_available() {
         return Ok(());
     }

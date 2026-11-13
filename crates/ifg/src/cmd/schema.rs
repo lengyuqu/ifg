@@ -11,7 +11,7 @@ use clap::{Arg, ArgAction, Command as ClapCommand, CommandFactory};
 use serde_json::{json, Value};
 
 use crate::cli::Cli;
-use crate::cmd::structured_output_supported;
+use crate::cmd::{accepts_idempotency_key, structured_output_supported};
 use crate::error::{AppError, EXIT_AUTH, EXIT_GENERAL, EXIT_NOT_FOUND, EXIT_USAGE};
 
 /// Shape version of the document (`schema_version`). Fields may be added
@@ -81,6 +81,13 @@ const WRITE: &[&str] = &[
     "collab handoff create",
     "collab handoff accept",
     "collab handoff cancel",
+    "collab work-package create",
+    "collab dependency add",
+    "collab dependency remove",
+    "collab decision create",
+    "collab condition set",
+    "collab condition confirm",
+    "collab usage report",
 ];
 
 /// Leaf commands that delete data.
@@ -127,13 +134,15 @@ fn document(root: &ClapCommand, command_path: &[String]) -> Result<Value, AppErr
     }))
 }
 
-/// One command and, recursively, its subcommands. `json_supported` and
-/// `effect` are only meaningful for leaves, so groups carry `null`.
+/// One command and, recursively, its subcommands. `json_supported`, `effect`
+/// and `accepts_idempotency_key` are only meaningful for leaves, so groups
+/// carry `null`.
 fn node<'a>(cmd: &'a ClapCommand, path: Vec<&'a str>, globals: &[&str]) -> Value {
     let children: Vec<&'a ClapCommand> = visible_subcommands(cmd).collect();
     let leaf = children.is_empty();
     let json_supported = leaf.then(|| structured_output_supported(&path));
     let effect = leaf.then(|| effect_of(&path));
+    let accepts_key = leaf.then(|| accepts_idempotency_key(&path));
     let subcommands: Vec<Value> = children
         .into_iter()
         .map(|child| {
@@ -158,6 +167,7 @@ fn node<'a>(cmd: &'a ClapCommand, path: Vec<&'a str>, globals: &[&str]) -> Value
         "subcommands": subcommands,
         "json_supported": json_supported,
         "effect": effect,
+        "accepts_idempotency_key": accepts_key,
     })
 }
 
@@ -269,7 +279,7 @@ fn find<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmd::STRUCTURED_OUTPUT;
+    use crate::cmd::{IDEMPOTENT_WRITES, STRUCTURED_OUTPUT};
     use std::collections::BTreeSet;
 
     fn tree() -> ClapCommand {
@@ -309,6 +319,7 @@ mod tests {
                 .map(|segment| segment.as_str().expect("segment"))
                 .collect();
             assert!(node["json_supported"].is_boolean(), "{path:?}");
+            assert!(node["accepts_idempotency_key"].is_boolean(), "{path:?}");
             assert!(
                 matches!(
                     node["effect"].as_str(),
@@ -320,6 +331,7 @@ mod tests {
         } else {
             assert!(node["json_supported"].is_null(), "{node}");
             assert!(node["effect"].is_null(), "{node}");
+            assert!(node["accepts_idempotency_key"].is_null(), "{node}");
         }
         for child in children {
             document_leaves(child, out);
@@ -357,6 +369,32 @@ mod tests {
             WRITE.len() + DESTRUCTIVE.len(),
             "listed twice"
         );
+    }
+
+    #[test]
+    fn idempotency_table_names_existing_single_write_commands() {
+        let root = tree();
+        let mut leaves = BTreeSet::new();
+        clap_leaves(&root, "", &mut leaves);
+        for name in IDEMPOTENT_WRITES {
+            assert!(
+                leaves.contains(*name),
+                "idempotency table names `{name}`, which is not a leaf command"
+            );
+            assert!(
+                WRITE.contains(name) || DESTRUCTIVE.contains(name),
+                "idempotency table names `{name}`, which is not a write"
+            );
+        }
+        let unique: BTreeSet<&str> = IDEMPOTENT_WRITES.iter().copied().collect();
+        assert_eq!(unique.len(), IDEMPOTENT_WRITES.len(), "listed twice");
+        // Multi-request commands and routes the server does not list stay out.
+        assert!(!accepts_idempotency_key(&["release", "create"]));
+        assert!(!accepts_idempotency_key(&["release", "upload"]));
+        assert!(!accepts_idempotency_key(&["repo", "edit"]));
+        assert!(!accepts_idempotency_key(&["ci", "run"]));
+        assert!(!accepts_idempotency_key(&["issue", "list"]));
+        assert!(accepts_idempotency_key(&["pr", "merge"]));
     }
 
     #[test]
@@ -401,6 +439,13 @@ mod tests {
                 "help": help,
             })
         };
+        // A value-taking flag: `flag` builds boolean switches only.
+        let mut expected_head = flag(
+            "--expected-head",
+            "expected_head",
+            Some("Merge only if the head branch still points at this commit: the full 40-character SHA you reviewed (case-insensitive). The server refuses the merge with REF_ADVANCED when the head has moved; re-read the PR with `ifg pr checks` and retry with the current SHA. Not accepted with --auto"),
+        );
+        expected_head["takes_value"] = json!(true);
         json!([{
             "path": ["pr", "merge"],
             "about": "Merge a pull request",
@@ -419,11 +464,13 @@ mod tests {
                 flag("--merge", "merge", None),
                 flag("--squash", "squash", None),
                 flag("--rebase", "rebase", None),
-                flag("--auto", "auto", Some("Enable auto-merge instead of merging now")),
+                flag("--auto", "auto", Some("Enable auto-merge instead of merging now. The auto-merge endpoint does not take an expected head, so this cannot be combined with --expected-head")),
+                expected_head,
             ],
             "subcommands": [],
             "json_supported": true,
             "effect": "write",
+            "accepts_idempotency_key": true,
         }])
     }
 

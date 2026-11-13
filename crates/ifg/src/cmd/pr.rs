@@ -51,7 +51,17 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
             squash,
             rebase,
             auto,
-        } => merge(&ctx, cli, &repo, *number, *squash, *rebase, *auto).await,
+            expected_head,
+        } => {
+            let args = MergeArgs {
+                number: *number,
+                squash: *squash,
+                rebase: *rebase,
+                auto: *auto,
+                expected_head: expected_head.as_deref(),
+            };
+            merge(&ctx, cli, &repo, &args).await
+        }
         PrCommand::Review {
             number,
             approve,
@@ -70,6 +80,7 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
             .await
         }
         PrCommand::Checkout { number } => checkout(&ctx, &repo, *number).await,
+        PrCommand::Checks { number } => checks(&ctx, cli, &repo, *number).await,
         PrCommand::Edit {
             number,
             title,
@@ -291,6 +302,79 @@ async fn view(
         }
     }
     Ok(())
+}
+
+/// `pr checks`: the combined status of the pull request's head commit. A
+/// pending or failing check is data, not an error, so the exit code is 0
+/// whenever the status was fetched.
+async fn checks(
+    ctx: &super::CommandContext,
+    cli: &Cli,
+    repo: &RepoContext,
+    number: i64,
+) -> Result<(), AppError> {
+    let pr = ctx
+        .client
+        .pulls(&repo.owner, &repo.name)
+        .get(number)
+        .await?;
+    let head_sha = match pr.head_sha.as_deref().map(str::trim) {
+        Some(sha) if !sha.is_empty() => sha.to_string(),
+        _ => {
+            return Err(AppError::Other(format!(
+                "pull request #{number} has no head commit SHA; cannot read its checks"
+            )))
+        }
+    };
+    let status = ctx
+        .client
+        .repos()
+        .combined_status_raw(&repo.owner, &repo.name, &head_sha)
+        .await?;
+
+    if cli.json || cli.template.is_some() {
+        let value = serde_json::json!({
+            "number": number,
+            "head_sha": head_sha,
+            "status": status,
+        });
+        show_value(cli, &value);
+        return Ok(());
+    }
+
+    let short = output::sanitize(&head_sha.chars().take(7).collect::<String>());
+    let state = status["state"].as_str().unwrap_or("unknown");
+    output::line!("PR #{number} @ {short}  state: {}", output::sanitize(state));
+    match status.get("statuses").and_then(Value::as_array) {
+        None => output::line!(
+            "The status response has no per-check list (statuses); use --json to inspect it."
+        ),
+        Some(checks) if checks.is_empty() => output::line!("No checks reported for this commit."),
+        Some(checks) => {
+            let rows: Vec<Vec<String>> = checks
+                .iter()
+                .map(|check| {
+                    vec![
+                        check_text(check, "context"),
+                        check_text(check, "state"),
+                        check_text(check, "description"),
+                        check_text(check, "target_url"),
+                    ]
+                })
+                .collect();
+            output::print_table(&["CHECK", "STATE", "DESCRIPTION", "TARGET URL"], &rows);
+        }
+    }
+    Ok(())
+}
+
+/// A string field of one check, sanitised for the terminal; `—` when absent.
+fn check_text(check: &Value, key: &str) -> String {
+    check
+        .get(key)
+        .and_then(Value::as_str)
+        .map(output::sanitize)
+        .unwrap_or_else(|| "—".into())
 }
 
 async fn diff(
@@ -579,15 +663,29 @@ fn remote_tracking_matches_head(remote: &str, branch: &str) -> bool {
     git_rev_parse(&format!("refs/remotes/{remote}/{branch}")).as_deref() == Some(head.as_str())
 }
 
-async fn merge(
-    ctx: &super::CommandContext,
-    cli: &Cli,
-    repo: &RepoContext,
+/// Parsed `pr merge` flags. `expected_head` is always `None` with `auto`
+/// (clap rejects the combination).
+struct MergeArgs<'a> {
     number: i64,
     squash: bool,
     rebase: bool,
     auto: bool,
+    expected_head: Option<&'a str>,
+}
+
+async fn merge(
+    ctx: &super::CommandContext,
+    cli: &Cli,
+    repo: &RepoContext,
+    args: &MergeArgs<'_>,
 ) -> Result<(), AppError> {
+    let MergeArgs {
+        number,
+        squash,
+        rebase,
+        auto,
+        expected_head,
+    } = *args;
     let strategy = if squash {
         MergeStrategy::Squash
     } else if rebase {
@@ -620,14 +718,29 @@ async fn merge(
         return Ok(());
     }
     if cli.json || cli.template.is_some() {
-        let value = pulls.merge_raw(number, strategy).await?;
+        let value = pulls
+            .merge_with_expected_head_raw(number, strategy, expected_head)
+            .await?;
         match &cli.template {
             Some(template) => output::print_template(std::slice::from_ref(&value), template),
             None => output::print_json(&value),
         }
         return Ok(());
     }
-    let outcome = pulls.merge(number, strategy).await?;
+    let outcome = match pulls
+        .merge_with_expected_head(number, strategy, expected_head)
+        .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            // Human-only pointer. The generic printer runs after this
+            // returns, so this line comes before the `ifg:` line.
+            if error.status() == Some(409) && error.reason() == Some("REF_ADVANCED") {
+                eprintln!("rerun 'ifg pr checks {number}' to read the current head");
+            }
+            return Err(error.into());
+        }
+    };
     match outcome.merge_commit_sha {
         Some(sha) => output::line!(
             "Merged {repo}#{number} ({}): {}",

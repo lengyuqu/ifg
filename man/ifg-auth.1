@@ -8,7 +8,7 @@ ifg\-auth \- Manage credentials for IronForge hosts
 .SH DESCRIPTION
 Manage credentials for IronForge hosts
 .PP
-Tokens are personal access tokens created in the web UI (Settings → Tokens). `auth login` reads one from a no\-echo prompt on a terminal, or from stdin with `\-\-with\-token`/a pipe. `token_store = "keyring"` in the config keeps the token out of the config file. `auth git\-credential` implements the git credential helper protocol so `git clone`/`push` reuse the same token.
+Tokens are personal access tokens created in the web UI (Settings → Tokens). `auth login` reads one from a no\-echo prompt on a terminal, or from stdin with `\-\-with\-token`/a pipe. `token_store = "keyring"` in the config keeps the token out of the config file. `IRONFORGE_CONFIG_DIR` gives an agent its own `hosts.toml` (tokens stay in that file; the keychain is not used). `status` shows which source the credential came from. `auth git\-credential` implements the git credential helper protocol so `git clone`/`push` reuse the same token.
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
@@ -22,7 +22,7 @@ ifg\-auth\-login(1)
 Log in with a personal access token (validates it against /users/me)
 .TP
 ifg\-auth\-status(1)
-List configured hosts, token prefixes and usable scopes
+List configured hosts, token prefixes, usable scopes and the credential source
 .TP
 ifg\-auth\-logout(1)
 Remove local credentials (the token stays valid server\-side)

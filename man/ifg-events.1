@@ -1,0 +1,27 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ifg-events 1  "ifg-events 0.9.0"
+.SH NAME
+ifg\-events \- Read the repository event log by cursor
+.SH SYNOPSIS
+\fBifg events\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Read the repository event log by cursor
+.PP
+`events list` makes one plain read: the events after `\-\-since`, plus `next_cursor` to pass back on the next call. Without `\-\-since` the server returns only the current cursor, which is the starting position and not an empty result. The command never waits for new events.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+ifg\-events\-list(1)
+List the events after a cursor (one read, no waiting)
+.TP
+ifg\-events\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.9.0

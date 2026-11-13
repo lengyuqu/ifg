@@ -1,0 +1,23 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ifg-capabilities 1  "ifg-capabilities 0.9.0"
+.SH NAME
+ifg\-capabilities \- Show the contract, versions and capabilities the server offers
+.SH SYNOPSIS
+\fBifg capabilities\fR [\fB\-\-has\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR]
+.SH DESCRIPTION
+Show the contract, versions and capabilities the server offers
+.PP
+Without `\-R` this reads the instance\-wide endpoint, even inside a git checkout. `\-R OWNER/NAME` reads the repository endpoint instead, which also reports your access to that repository. `\-\-has NAME` prints nothing: it exits 0 when the server lists the capability and 1 when it does not. A server too old to expose capabilities fails with exit code 8 rather than reporting an empty list.
+.SH OPTIONS
+.TP
+\fB\-\-has\fR \fI<NAME>\fR
+Check for one capability by name instead of printing the list
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH VERSION
+v0.9.0
