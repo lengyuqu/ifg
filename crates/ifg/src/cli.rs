@@ -161,6 +161,16 @@ pub enum Command {
         #[command(subcommand)]
         command: CiCommand,
     },
+    /// Read the repository event log by cursor
+    ///
+    /// `events list` makes one plain read: the events after `--since`, plus
+    /// `next_cursor` to pass back on the next call. Without `--since` the
+    /// server returns only the current cursor, which is the starting position
+    /// and not an empty result. The command never waits for new events.
+    Events {
+        #[command(subcommand)]
+        command: EventsCommand,
+    },
     /// Coordinate agent sessions, tasks, messages and handoffs
     Collab {
         /// Private file holding this agent's session credentials
@@ -1159,6 +1169,22 @@ pub enum MilestoneCommand {
         title: String,
         #[arg(short = 'y', long)]
         yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EventsCommand {
+    /// List the events after a cursor (one read, no waiting)
+    List {
+        /// Return events after this cursor; omit for the current cursor only
+        #[arg(long, value_name = "CURSOR", allow_hyphen_values = true)]
+        since: Option<i64>,
+        /// Event name to include; repeat for several
+        #[arg(long = "kind", value_name = "KIND")]
+        kinds: Vec<String>,
+        /// Most events to return (server default 100, at most 200)
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(0..=200))]
+        limit: Option<u64>,
     },
 }
 

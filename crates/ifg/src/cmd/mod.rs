@@ -7,6 +7,7 @@ pub mod capabilities;
 pub mod ci;
 pub mod collab;
 pub mod doctor;
+pub mod events;
 pub mod issue;
 pub mod label;
 pub mod mcp;
@@ -79,6 +80,7 @@ pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
     "ci cancel",
     "ci retry",
     "ci approve",
+    "events list",
     "release list",
     "release view",
     "release create",

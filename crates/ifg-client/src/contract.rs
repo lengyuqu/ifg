@@ -109,6 +109,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("POST", "/repos/{owner}/{name}/collaborators"),
     ("PATCH", "/repos/{owner}/{name}/collaborators/{id}"),
     ("DELETE", "/repos/{owner}/{name}/collaborators/{user_id}"),
+    ("GET", "/repos/{owner}/{name}/events"),
     // issues
     ("GET", "/repos/{owner}/{name}/issues"),
     ("POST", "/repos/{owner}/{name}/issues"),
