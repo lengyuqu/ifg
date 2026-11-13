@@ -74,7 +74,7 @@ pub async fn run(command: &EventsCommand, cli: &Cli) -> Result<(), AppError> {
         return Ok(());
     }
     let rows: Vec<Vec<String>> = events.iter().map(event_row).collect();
-    output::print_table(&["TIME", "KIND", "ACTOR", "SUMMARY"], &rows);
+    output::print_table(&["ID", "TIME", "TYPE", "PAYLOAD"], &rows);
     Ok(())
 }
 
@@ -99,29 +99,27 @@ fn cursor_text(cursor: &Value) -> String {
     }
 }
 
-/// One table row: time, kind, actor and a short summary. The server's event
-/// object is not part of the snapshot, so each column tries a few field names
-/// and falls back to a placeholder. The summary falls back to the compact
-/// JSON of the event so that no content is hidden.
+/// One table row: id, time, type and the payload on one line.
 fn event_row(event: &Value) -> Vec<String> {
-    let summary =
-        text_field(event, &["summary", "message", "title"]).unwrap_or_else(|| event.to_string());
-    vec![
-        output::human_time(text_field(event, &["created_at", "time", "timestamp"]).as_deref()),
-        text_field(event, &["kind", "type", "event"]).unwrap_or_else(|| "-".into()),
-        actor(event),
-        clip(&flatten(&summary), SUMMARY_CHARS),
-    ]
-}
-
-fn actor(event: &Value) -> String {
-    match event.get("actor") {
-        Some(Value::String(name)) if !name.is_empty() => name.clone(),
-        Some(actor @ Value::Object(_)) => {
-            text_field(actor, &["username", "name", "login"]).unwrap_or_else(|| "-".into())
-        }
+    // The server's event is `{id, type, created_at, payload, payload_origin}`;
+    // the payload is whatever the event carried, so it is shown as compact
+    // JSON rather than guessed at field by field.
+    let id = match event.get("id") {
+        Some(Value::Number(id)) => id.to_string(),
+        Some(Value::String(id)) if !id.is_empty() => id.clone(),
         _ => "-".into(),
-    }
+    };
+    let payload = match event.get("payload") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Null) | None => event.to_string(),
+        Some(other) => other.to_string(),
+    };
+    vec![
+        id,
+        output::human_time(text_field(event, &["created_at"]).as_deref()),
+        text_field(event, &["type"]).unwrap_or_else(|| "-".into()),
+        clip(&flatten(&payload), SUMMARY_CHARS),
+    ]
 }
 
 /// First non-empty string among `names`.
@@ -167,21 +165,22 @@ mod tests {
     }
 
     #[test]
-    fn row_uses_available_fields_and_falls_back() {
+    fn row_shows_server_fields_and_falls_back() {
         let row = event_row(&json!({
+            "id": 41,
+            "type": "pull_request",
             "created_at": "2026-11-09T10:00:00Z",
-            "kind": "issue.opened",
-            "actor": {"username": "alice"},
-            "summary": "opened #3"
+            "payload": {"action": "opened", "number": 3},
+            "payload_origin": "user_content"
         }));
-        assert_eq!(row[1], "issue.opened");
-        assert_eq!(row[2], "alice");
-        assert_eq!(row[3], "opened #3");
+        assert_eq!(row[0], "41");
+        assert_eq!(row[2], "pull_request");
+        assert_eq!(row[3], r#"{"action":"opened","number":3}"#);
 
-        let unknown = event_row(&json!({"id": 9}));
-        assert_eq!(unknown[1], "-");
+        let unknown = event_row(&json!({"other": 9}));
+        assert_eq!(unknown[0], "-");
         assert_eq!(unknown[2], "-");
-        assert_eq!(unknown[3], r#"{"id":9}"#);
+        assert_eq!(unknown[3], r#"{"other":9}"#);
     }
 
     #[test]

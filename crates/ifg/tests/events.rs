@@ -26,17 +26,19 @@ fn server_body() -> Value {
     json!({
         "events": [
             {
+                "id": 56,
+                "type": "issues",
                 "created_at": "2026-11-09T10:00:00Z",
-                "kind": "issue.opened",
-                "actor": {"username": "alice"},
-                "summary": "opened #3",
+                "payload": {"action": "opened", "number": 3},
+                "payload_origin": "user_content",
                 "future_field": {"kept": true}
             },
             {
-                "created_at": "2026-11-09T10:05:00Z",
+                "id": 57,
                 "type": "push",
-                "actor": "bob",
-                "message": "pushed main"
+                "created_at": "2026-11-09T10:05:00Z",
+                "payload": {"ref": "refs/heads/main"},
+                "payload_origin": "user_content"
             }
         ],
         "next_cursor": 57,
@@ -155,16 +157,16 @@ async fn human_output_has_one_row_per_event_and_the_cursor_on_stderr() {
 
     let row_one = stdout
         .lines()
-        .find(|line| line.contains("issue.opened"))
+        .find(|line| line.contains("issues"))
         .expect("row for the first event");
-    for field in ["2026-11-09", "alice", "opened #3"] {
+    for field in ["56", "2026-11-09", r#""action":"opened""#] {
         assert!(row_one.contains(field), "{row_one}");
     }
     let row_two = stdout
         .lines()
-        .find(|line| line.contains("pushed main"))
+        .find(|line| line.contains("refs/heads/main"))
         .expect("row for the second event");
-    for field in ["push", "bob"] {
+    for field in ["57", "push"] {
         assert!(row_two.contains(field), "{row_two}");
     }
     assert!(stderr.contains("next cursor: 57"), "{stderr}");
@@ -229,9 +231,9 @@ async fn terminal_control_characters_are_stripped_from_rows() {
         .and(path(events_path()))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "events": [{
-                "kind": "issue\u{1b}[2J.opened",
-                "actor": "al\u{7}ice",
-                "summary": "ok\u{1b}]0;pwned\u{7}\u{1b}[2J line\nbreak \u{202e}done"
+                "id": 9,
+                "type": "issue\u{1b}[2Js\u{7}",
+                "payload": "ok\u{1b}]0;pwned\u{7}\u{1b}[2J line\nbreak \u{202e}done"
             }],
             "next_cursor": 9
         })))
