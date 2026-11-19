@@ -156,6 +156,8 @@ async fn run(mut cli: Cli, matches: &ArgMatches) -> i32 {
         Command::Repo { command } => cmd::repo::run(command, &cli).await,
         Command::Issue { command } => cmd::issue::run(command, &cli).await,
         Command::Pr { command } => cmd::pr::run(command, &cli).await,
+        Command::Commit { command } => cmd::commit::run(command, &cli).await,
+        Command::Branch { command } => cmd::branch::run(command, &cli).await,
         Command::Ci { command } => cmd::ci::run(command, &cli).await,
         Command::Events { command } => cmd::events::run(command, &cli).await,
         Command::Collab {

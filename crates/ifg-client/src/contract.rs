@@ -8,8 +8,20 @@
 
 /// (method, path) pairs used by `ifg-client` and the CLI/e2e flows.
 pub const USED_PATHS: &[(&str, &str)] = &[
-    // Setup for the explicitly selected newer-server fork-mirror E2E only.
+    // Branch deletion: first used by the fork-mirror E2E setup, now also
+    // `ifg branch delete`. Absent from the canonical 7d27c2d snapshot.
     ("DELETE", "/repos/{owner}/{name}/branches/{branch}"),
+    // Commit-writing and PR-readiness routes of newer servers; absent from
+    // the canonical 7d27c2d snapshot (see fixtures/openapi/uncovered.txt).
+    ("POST", "/repos/{owner}/{name}/commits"),
+    ("POST", "/repos/{owner}/{name}/commits/apply-patch"),
+    ("POST", "/repos/{owner}/{name}/commits/{sha}/cherry-pick"),
+    ("POST", "/repos/{owner}/{name}/commits/{sha}/revert"),
+    (
+        "GET",
+        "/repos/{owner}/{name}/pulls/{number}/merge-readiness",
+    ),
+    ("POST", "/repos/{owner}/{name}/pulls/{number}/update-branch"),
     // Wiki: revision-by-id is intentionally not used because the server must
     // verify that the requested revision belongs to the authorized page.
     ("GET", "/repos/{owner}/{name}/wiki"),

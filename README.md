@@ -73,6 +73,12 @@ ifg pr reviews 12                                      # 查看评审及普通�
 ifg pr reviewers add 12 alice                          # 请求评审；也可 list / remove
 ifg pr checks 12                                       # 头提交的组合状态与各项检查；待定或失败时仍返回 0
 ifg pr merge 12 --squash --expected-head <SHA>         # 仅当头提交仍是已审查的完整 SHA 时合并；被推进时返回 409 REF_ADVANCED，不自动重试
+ifg pr readiness 12                                    # 合并前预检：冲突文件、保护规则、缺哪些检查；--json 里的 ready 为 true/false/null，退出码恒为 0
+ifg pr update-branch 12 --expected-head <SHA>          # 把基线分支合入 PR 头分支；头提交移动返回 409 REF_ADVANCED，有冲突返回 409 MERGE_CONFLICTS
+ifg commit create --branch main --expected-sha <SHA> -m '批量改动' --files ops.json   # 无需检出：一次提交多个文件改动（create/update/delete/move）
+git diff | ifg commit apply-patch --branch fix --expected-sha <SHA> --patch-file -   # 把统一 diff 作为一个提交
+ifg commit cherry-pick <SHA> --branch release --expected-sha <TIP> --dry-run          # 只预演；revert 同理
+ifg branch delete feature/old --expected-sha <SHA> --yes                              # 删分支（默认分支、受保护分支、有开放 PR 的分支会被服务端拒绝）
 ifg ci logs 7 --follow                                 # WebSocket 流式日志（断线自动续传；无 WS 时退回轮询）
 ifg ci run --ref refs/heads/main --wait --timeout 600  # 触发并等待；也可传提交 SHA
 ifg ci wait 7 --timeout 600                            # 等待已有流水线
@@ -193,7 +199,7 @@ ifg completions bash > /etc/bash_completion.d/ifg
 
 传入 `--no-input`，或设置 `IFG_NO_INPUT=1`（取值 `1` 或 `true`；命令行参数优先于环境变量），ifg 就不会等待人工输入。凡是需要人回答的地方，都会立即以用法错误退出（退出码 2），并在错误信息里指出应改用的参数：
 
-- 破坏性命令（`repo delete`、`repo collaborators remove`、`wiki delete`、`release delete`、`label delete`、`milestone delete`）没有 `--yes` 时拒绝执行，不删除任何内容。
+- 破坏性命令（`repo delete`、`repo collaborators remove`、`wiki delete`、`release delete`、`label delete`、`milestone delete`、`branch delete`；后者加 `--dry-run` 时不删除，也无需 `--yes`）没有 `--yes` 时拒绝执行，不删除任何内容。
 - `auth login` 不再读取无回显提示或隐式的 stdin；请使用 `auth login --with-token` 并通过管道传入 PAT。
 - `issue create --editor` 与 `pr create --editor` 不再启动 `$EDITOR`；请改用 `-t`/`-b`（以及 `issue create` 的 `--body-file`）。
 - 分页器不启动，输出直接打印。
@@ -207,7 +213,7 @@ ifg completions bash > /etc/bash_completion.d/ifg
 写命令超时后，调用方不知道服务端是否已经执行。给命令加上 `--idempotency-key <KEY>`（或设置 `IRONFORGE_IDEMPOTENCY_KEY`，命令行参数优先），ifg 会把它作为 `Idempotency-Key` 请求头发送。同一个键重跑同一请求时，服务端返回第一次的结果，不会重复创建。
 
 - 键由调用方自己选择，ifg 从不生成。取值为 1 到 255 个字符，只能是 `A-Z`、`a-z`、`0-9`、`.`、`_`、`:`、`-`；格式错误直接以退出码 2 失败，且不发送任何请求。
-- 只有“一次调用只发一个写请求、且路由受服务端支持”的命令接受该参数，例如 `issue create/comment/close/reopen/edit`、`pr create/edit/close/reopen/comment/review/merge/reviewers add|remove`、`label`、`milestone`、`wiki` 的增改删，`release edit/delete` 与 `repo create`。`ifg schema` 中的 `accepts_idempotency_key` 列出了全部命令。
+- 只有“一次调用只发一个写请求、且路由受服务端支持”的命令接受该参数，例如 `issue create/comment/close/reopen/edit`、`pr create/edit/close/reopen/comment/review/merge/update-branch/reviewers add|remove`、`commit create/apply-patch/cherry-pick/revert`、`branch delete`、`label`、`milestone`、`wiki` 的增改删，`release edit/delete` 与 `repo create`。`ifg schema` 中的 `accepts_idempotency_key` 列出了全部命令。
 - 其他命令（包括所有读命令、`release create`、`release upload`、`repo edit`、`ci`、`collab` 等）收到该参数时以退出码 2 拒绝，不发送任何请求。`release create` 会对每个附件各发一次请求，共用同一个键会被服务端以 `IDEMPOTENCY_KEY_REUSED` 拒绝。
 - 带键的写请求在连接中断、HTTP 5xx 和 429 时会用同一个键自动重试（沿用退出前的退避与重试次数设置，并遵守 `Retry-After`）。不带键的写请求从不自动重试。
 - 服务端拒绝时，错误对象的 `reason` 原样输出（例如 `IDEMPOTENCY_NOT_SUPPORTED`、`IDEMPOTENCY_KEY_REUSED`，后者为 409）。
@@ -216,6 +222,17 @@ ifg completions bash > /etc/bash_completion.d/ifg
 ifg --idempotency-key "release-notes-v1" -R alice/demo issue comment 12 -b "shipped"
 IRONFORGE_IDEMPOTENCY_KEY="retry-42" ifg -R alice/demo pr merge 7 --squash
 ```
+
+## 服务端提交与合并预检
+
+`commit` 和 `pr update-branch` 让服务端直接写提交，不需要本地检出。它们要求较新的 IronForge（固定基线 `7d27c2d` 不含这些接口，已验证的版本是 `65428452`）；旧服务端会返回 404。
+
+- 每个写命令都必须带 `--expected-sha`（`pr update-branch` 为 `--expected-head`）：调用方读到的完整 40 位 SHA，不接受缩写。分支已移动时服务端返回 409 `REF_ADVANCED` 且不写入，ifg 不自动重试；重新读取后再用新的 SHA 重试。服务端从不替你创建分支。
+- `--dry-run` 让服务端做完全部检查并返回预览，不写入；预览对象的形状不同于真实结果，`not_evaluated` 列出没有评估的副作用（webhook、CI、通知）。
+- `commit create --files` 接受 JSON 数组（`-` 读 stdin）：`{"operation":"create","path":…,"content":…}`、`{"operation":"update","path":…,"content":…,"sha":<读到的 blob>}`、`{"operation":"delete","path":…,"sha":…}`、`{"operation":"move","from":…,"to":…,"sha":…}`。要么全部落进一个提交，要么分支不动。
+- `commit apply-patch` 接受 `git diff` 形状的统一 diff（至多 1 MiB、500 个路径）；补丁里含密钥时服务端返回 422。
+- 通过 agent 令牌写入的提交以该 agent 署名（`<用户名>@agents.invalid`）。
+- `pr readiness` 与合并走同一套规则，所以预检结论和 `pr merge` 此刻的行为一致。它只回答“现在能不能合并”；合并队列位置、CODEOWNERS 请求和自动合并的效果不在评估范围内（`not_evaluated`）。
 
 ## 多 Agent 协作
 

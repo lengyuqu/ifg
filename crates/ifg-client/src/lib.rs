@@ -9,6 +9,7 @@
 mod ai;
 mod ci;
 mod collab;
+mod commits;
 mod contract;
 mod error;
 mod events;
@@ -36,6 +37,7 @@ pub use ci::{Ci, Job, Pipeline, PipelineDetail, Stage, StageWithJobs};
 /// user-supplied segment goes through the same encoder as collaboration IDs.
 pub(crate) use collab::segment as path_segment;
 pub use collab::{segment as collab_segment, Collaboration, SessionCredentials, StartedSession};
+pub use commits::{Branches, Commits, PickKind, PickRequest};
 pub use contract::USED_PATHS;
 pub use error::Error;
 pub use events::Events;

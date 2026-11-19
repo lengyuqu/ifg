@@ -344,6 +344,54 @@ impl Pulls<'_> {
             .await
     }
 
+    /// `GET …/pulls/{number}/merge-readiness`: what stands between the pull
+    /// request and a merge (conflicts, protection gates, required checks).
+    /// Read-only. `strategy` defaults to `merge` on the server;
+    /// `conflicts_after` continues a cut conflict list after that path.
+    pub async fn merge_readiness_raw(
+        &self,
+        number: i64,
+        strategy: Option<MergeStrategy>,
+        conflicts_after: Option<&str>,
+    ) -> Result<Value, Error> {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if let Some(strategy) = strategy {
+            query.append_pair("strategy", strategy.as_str());
+        }
+        if let Some(path) = conflicts_after {
+            query.append_pair("conflicts_after", path);
+        }
+        let query = query.finish();
+        let mut path = format!("{}/merge-readiness", self.pull_path(number));
+        if !query.is_empty() {
+            path.push('?');
+            path.push_str(&query);
+        }
+        self.client.send(crate::Method::GET, &path, None).await
+    }
+
+    /// `POST …/pulls/{number}/update-branch`: merge the base branch into the
+    /// head branch, built from exactly `expected_head_sha` (409 `REF_ADVANCED`
+    /// when the head moved, `MERGE_CONFLICTS` when the base does not merge).
+    pub async fn update_branch_raw(
+        &self,
+        number: i64,
+        expected_head_sha: &str,
+        dry_run: bool,
+    ) -> Result<Value, Error> {
+        let mut body = serde_json::json!({ "expected_head_sha": expected_head_sha });
+        if dry_run {
+            body["dry_run"] = Value::Bool(true);
+        }
+        self.client
+            .send(
+                crate::Method::POST,
+                &format!("{}/update-branch", self.pull_path(number)),
+                Some(&body),
+            )
+            .await
+    }
+
     /// `PUT …/pulls/{number}/auto-merge` — enable auto-merge for when the
     /// required checks pass.
     pub async fn enable_auto_merge(

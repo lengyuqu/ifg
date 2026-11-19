@@ -62,6 +62,55 @@ pub async fn run(command: &PrCommand, cli: &Cli) -> Result<(), AppError> {
             };
             merge(&ctx, cli, &repo, &args).await
         }
+        PrCommand::Readiness {
+            number,
+            strategy,
+            conflicts_after,
+        } => {
+            let strategy = strategy.as_deref().map(parse_strategy);
+            let value = ctx
+                .client
+                .pulls(&repo.owner, &repo.name)
+                .merge_readiness_raw(*number, strategy, conflicts_after.as_deref())
+                .await?;
+            if cli.json || cli.template.is_some() {
+                show_value(cli, &value);
+            } else {
+                print_readiness(&repo, *number, &value);
+            }
+            Ok(())
+        }
+        PrCommand::UpdateBranch {
+            number,
+            expected_head,
+            dry_run,
+        } => {
+            let value = ctx
+                .client
+                .pulls(&repo.owner, &repo.name)
+                .update_branch_raw(*number, expected_head, *dry_run)
+                .await
+                .inspect_err(|error| {
+                    // Human-only pointers, printed before the generic error line.
+                    if error.status() == Some(409) {
+                        match error.reason() {
+                            Some("REF_ADVANCED") => eprintln!(
+                                "rerun 'ifg pr readiness {number}' to read the current head"
+                            ),
+                            Some("MERGE_CONFLICTS") => eprintln!(
+                                "run 'ifg pr readiness {number}' to see the conflicting files"
+                            ),
+                            _ => {}
+                        }
+                    }
+                })?;
+            if cli.json || cli.template.is_some() {
+                show_value(cli, &value);
+            } else {
+                print_update_branch(&repo, *number, &value);
+            }
+            Ok(())
+        }
         PrCommand::Review {
             number,
             approve,
@@ -750,6 +799,138 @@ async fn merge(
         None => output::line!("Merged {repo}#{number}."),
     }
     Ok(())
+}
+
+fn parse_strategy(name: &str) -> MergeStrategy {
+    match name {
+        "squash" => MergeStrategy::Squash,
+        "rebase" => MergeStrategy::Rebase,
+        _ => MergeStrategy::Merge,
+    }
+}
+
+/// A server string for the terminal: sanitized, `fallback` when absent.
+fn field(value: &Value, key: &str, fallback: &str) -> String {
+    output::sanitize(value[key].as_str().unwrap_or(fallback))
+}
+
+fn short_sha(value: &Value) -> String {
+    match value.as_str() {
+        Some(sha) => output::sanitize(&sha.chars().take(12).collect::<String>()),
+        None => "—".to_string(),
+    }
+}
+
+/// The human view of `merge-readiness`. File content (conflict excerpts) is
+/// deliberately left out: it is user data, and `--json` carries it.
+fn print_readiness(repo: &RepoContext, number: i64, value: &Value) {
+    let verdict = match value["ready"].as_bool() {
+        Some(true) => "READY",
+        Some(false) => "NOT READY",
+        None => "UNKNOWN",
+    };
+    output::line!(
+        "{repo}#{number} ({}): {verdict}",
+        field(value, "strategy", "merge")
+    );
+    let reasons: Vec<String> = value["ready_reason"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(output::sanitize)
+        .collect();
+    if !reasons.is_empty() {
+        output::line!("reasons: {}", reasons.join(", "));
+    }
+    output::line!(
+        "head {} @ {}   base {} @ {}",
+        field(&value["head"], "ref", "?"),
+        short_sha(&value["head"]["sha"]),
+        field(&value["base"], "ref", "?"),
+        short_sha(&value["base"]["sha"]),
+    );
+    let merge = &value["merge"];
+    let conflict_files = merge["conflict_files"].as_u64().unwrap_or(0);
+    if conflict_files > 0 {
+        output::line!("conflicts: {conflict_files} file(s)");
+        for file in merge["conflicts"].as_array().into_iter().flatten() {
+            output::line!(
+                "  {}  {}",
+                field(file, "kind", "?"),
+                field(file, "path", "?")
+            );
+        }
+        if let Some(next) = merge["continue_with"].as_str() {
+            output::line!(
+                "  (list cut; continue with --conflicts-after '{}')",
+                output::sanitize(next)
+            );
+        }
+    }
+    let gates: Vec<&Value> = value["gates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|gate| matches!(gate["result"].as_str(), Some("FAIL" | "WARN" | "UNKNOWN")))
+        .collect();
+    if !gates.is_empty() {
+        output::line!("gates:");
+        for gate in gates {
+            output::line!(
+                "  {}  {}  {}",
+                field(gate, "result", "?"),
+                field(gate, "code", "?"),
+                field(gate, "detail", "")
+            );
+        }
+    }
+    if let Some(checks) = value["required_checks"]["checks"].as_array() {
+        if !checks.is_empty() {
+            output::line!("required checks:");
+            for check in checks {
+                output::line!(
+                    "  {}  {}",
+                    field(check, "result", "?"),
+                    field(check, "name", "?")
+                );
+            }
+        }
+    }
+    for item in value["unavailable"].as_array().into_iter().flatten() {
+        output::line!(
+            "could not judge: {}  {}",
+            field(item, "code", "?"),
+            field(item, "detail", "")
+        );
+    }
+    let actions = value["actions"].as_array().map_or(&[][..], Vec::as_slice);
+    if !actions.is_empty() {
+        output::line!("next:");
+        for action in actions {
+            output::line!(
+                "  {} {}  {}",
+                field(action, "method", "?"),
+                field(action, "path", "?"),
+                field(action, "effect", "")
+            );
+        }
+    }
+}
+
+fn print_update_branch(repo: &RepoContext, number: i64, value: &Value) {
+    if value["outcome"].as_str() == Some("already_up_to_date") {
+        output::line!("{repo}#{number}: the head branch already contains the base branch.");
+    } else if value["dry_run"].as_bool() == Some(true) {
+        output::line!("Dry run: nothing was written. The server would do this:");
+        output::print_json(value);
+    } else {
+        output::line!(
+            "Updated the head branch of {repo}#{number}: {} (was {})",
+            short_sha(&value["head_sha_after"]),
+            short_sha(&value["head_sha_before"])
+        );
+    }
 }
 
 async fn review(

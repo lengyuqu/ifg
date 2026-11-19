@@ -45,9 +45,14 @@ const WRITE: &[&str] = &[
     "pr comment",
     "pr review",
     "pr merge",
+    "pr update-branch",
     "pr checkout",
     "pr reviewers add",
     "pr reviewers remove",
+    "commit create",
+    "commit apply-patch",
+    "commit cherry-pick",
+    "commit revert",
     "ci run",
     "ci cancel",
     "ci retry",
@@ -93,6 +98,7 @@ const WRITE: &[&str] = &[
 /// Leaf commands that delete data.
 const DESTRUCTIVE: &[&str] = &[
     "repo delete",
+    "branch delete",
     "release delete",
     "label delete",
     "milestone delete",

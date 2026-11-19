@@ -4,9 +4,11 @@
 pub mod ai_context;
 pub mod api;
 pub mod auth;
+pub mod branch;
 pub mod capabilities;
 pub mod ci;
 pub mod collab;
+pub mod commit;
 pub mod doctor;
 pub mod events;
 pub mod issue;
@@ -76,6 +78,10 @@ pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
     "pr reviews",
     "pr reviewers",
     "pr checks",
+    "pr readiness",
+    "pr update-branch",
+    "commit",
+    "branch delete",
     "ci run",
     "ci wait",
     "ci runs",
@@ -133,6 +139,7 @@ pub(crate) const IDEMPOTENT_WRITES: &[&str] = &[
     "pr comment",
     "pr review",
     "pr merge",
+    "pr update-branch",
     "pr reviewers add",
     "pr reviewers remove",
     "label create",
@@ -146,6 +153,11 @@ pub(crate) const IDEMPOTENT_WRITES: &[&str] = &[
     "wiki delete",
     "release edit",
     "release delete",
+    "commit create",
+    "commit apply-patch",
+    "commit cherry-pick",
+    "commit revert",
+    "branch delete",
 ];
 
 /// Whether the leaf command at `path` (clap names) accepts an idempotency key.

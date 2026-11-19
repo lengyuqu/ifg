@@ -1,0 +1,36 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ifg-commit 1  "ifg-commit 0.9.0"
+.SH NAME
+ifg\-commit \- Write commits on the server without a local checkout
+.SH SYNOPSIS
+\fBifg commit\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Write commits on the server without a local checkout
+.PP
+Every commit command names the branch and the commit it must still be at (`\-\-expected\-sha`, the full 40\-character SHA you read). If the branch moved, the server refuses with 409 REF_ADVANCED and writes nothing; it never creates the branch. `\-\-dry\-run` runs every check and prints what would happen without writing. Commits made through a token that belongs to an agent are authored as that agent.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+ifg\-commit\-create(1)
+Commit many file changes as one commit
+.TP
+ifg\-commit\-apply\-patch(1)
+Apply a unified diff as one commit
+.TP
+ifg\-commit\-cherry\-pick(1)
+Apply the change an existing commit made, as a new commit
+.TP
+ifg\-commit\-revert(1)
+Apply the inverse of an existing commit\*(Aqs change, as a new commit
+.TP
+ifg\-commit\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.9.0

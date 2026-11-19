@@ -183,6 +183,23 @@ pub enum Command {
         #[command(subcommand)]
         command: PrCommand,
     },
+    /// Write commits on the server without a local checkout
+    ///
+    /// Every commit command names the branch and the commit it must still be
+    /// at (`--expected-sha`, the full 40-character SHA you read). If the branch
+    /// moved, the server refuses with 409 REF_ADVANCED and writes nothing; it
+    /// never creates the branch. `--dry-run` runs every check and prints what
+    /// would happen without writing. Commits made through a token that belongs
+    /// to an agent are authored as that agent.
+    Commit {
+        #[command(subcommand)]
+        command: CommitCommand,
+    },
+    /// Work with repository branches
+    Branch {
+        #[command(subcommand)]
+        command: BranchCommand,
+    },
     /// Work with CI pipelines
     ///
     /// `ci logs --follow` streams the job log over a WebSocket and resumes
@@ -1341,6 +1358,40 @@ pub enum PrCommand {
         #[arg(long, value_name = "SHA", value_parser = parse_full_sha, conflicts_with = "auto")]
         expected_head: Option<String>,
     },
+    /// Show what stands between a pull request and a merge
+    ///
+    /// Prints the verdict (`ready`: true, false, or null when something could
+    /// not be judged), the reason codes, merge conflicts (files and blocks),
+    /// every branch-protection gate and the required checks. Read-only; the
+    /// exit code is 0 whatever the verdict, so read `ready` (use `--json`).
+    /// The rules are the merge's own, so the answer matches what
+    /// `ifg pr merge` would do right now.
+    Readiness {
+        number: i64,
+        /// Merge strategy to evaluate: merge (default), squash or rebase
+        #[arg(long, value_parser = ["merge", "squash", "rebase"])]
+        strategy: Option<String>,
+        /// Continue a cut conflict list after this path (the `continue_with`
+        /// value of the previous answer)
+        #[arg(long, value_name = "PATH")]
+        conflicts_after: Option<String>,
+    },
+    /// Merge the base branch into the pull request's head branch
+    ///
+    /// Built from exactly `--expected-head`; if the head moved the server
+    /// refuses with 409 REF_ADVANCED, and if the base does not merge cleanly
+    /// with 409 MERGE_CONFLICTS (see `ifg pr readiness` for the files). PRs
+    /// from forks are refused with FORK_PR_UNSUPPORTED.
+    UpdateBranch {
+        number: i64,
+        /// The head commit you looked at: the full 40-character SHA
+        /// (case-insensitive), e.g. from `ifg pr readiness --json`
+        #[arg(long, value_name = "SHA", value_parser = parse_full_sha)]
+        expected_head: String,
+        /// Check everything and print what would happen without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Review a pull request
     Review {
         number: i64,
@@ -1355,6 +1406,106 @@ pub enum PrCommand {
     Checkout { number: i64 },
     /// Show the commit status checks of the PR's head commit
     Checks { number: i64 },
+}
+
+/// Where a commit goes: the branch and the commit it must still be at.
+#[derive(Debug, clap::Args)]
+pub struct CommitTarget {
+    /// Branch to commit on (it must already exist)
+    #[arg(long)]
+    pub branch: String,
+    /// The commit the branch must still be at: the full 40-character SHA
+    /// (case-insensitive). A moved branch is refused with REF_ADVANCED.
+    #[arg(long, value_name = "SHA", value_parser = parse_full_sha)]
+    pub expected_sha: String,
+    /// Check everything and print what would happen without writing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CommitCommand {
+    /// Commit many file changes as one commit
+    ///
+    /// `--files` is a JSON array of operations: `{"operation":"create",
+    /// "path":…,"content":…}`, `{"operation":"update","path":…,"content":…,
+    /// "sha":<blob you read>}`, `{"operation":"delete","path":…,"sha":…}` and
+    /// `{"operation":"move","from":…,"to":…,"sha":…}`. Either every change
+    /// lands in one commit or the branch does not move.
+    Create {
+        #[command(flatten)]
+        target: CommitTarget,
+        /// Commit message
+        #[arg(short = 'm', long)]
+        message: String,
+        /// JSON file with the operations; `-` reads stdin
+        #[arg(long, value_name = "FILE")]
+        files: String,
+    },
+    /// Apply a unified diff as one commit
+    ///
+    /// The patch is `git diff` shaped (`a/…`, `b/…`, `/dev/null`), at most
+    /// 1 MiB and 500 paths. Either the whole patch applies or the branch does
+    /// not move (409 if it does not apply).
+    ApplyPatch {
+        #[command(flatten)]
+        target: CommitTarget,
+        /// Commit message; omitted, the server generates one
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+        /// File with the unified diff; `-` reads stdin
+        #[arg(long, value_name = "FILE")]
+        patch_file: String,
+    },
+    /// Apply the change an existing commit made, as a new commit
+    CherryPick {
+        /// The commit to pick
+        sha: String,
+        #[command(flatten)]
+        target: CommitTarget,
+        /// Parent number to treat as the mainline (required for a merge commit)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        mainline: Option<u32>,
+        /// Replace the generated message (the standard trailer is still added)
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+    },
+    /// Apply the inverse of an existing commit's change, as a new commit
+    Revert {
+        /// The commit to revert
+        sha: String,
+        #[command(flatten)]
+        target: CommitTarget,
+        /// Parent number to treat as the mainline (required for a merge commit)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        mainline: Option<u32>,
+        /// Replace the generated message (the standard trailer is still added)
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BranchCommand {
+    /// Delete a branch (asks for confirmation unless --yes)
+    ///
+    /// The server refuses the default branch, a protected branch and a branch
+    /// an open pull request uses. Merged and closed pull requests keep their
+    /// `refs/pull/<n>/head`, so they survive the branch. `--dry-run` writes
+    /// nothing and needs no confirmation.
+    Delete {
+        /// Branch name (may contain slashes)
+        name: String,
+        /// Delete only while the branch is still at this commit: the full
+        /// 40-character SHA. A moved branch is refused with REF_ADVANCED.
+        #[arg(long, value_name = "SHA", value_parser = parse_full_sha)]
+        expected_sha: Option<String>,
+        /// Check everything and print what would be deleted without deleting
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
