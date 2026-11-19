@@ -273,10 +273,11 @@ pub enum Command {
         #[arg(long)]
         limit: Option<u64>,
     },
-    /// Read AI-oriented project context: summary, tree, code search, PR
+    /// Read AI-oriented project context: summary, tree, map, symbols, code search, PR
     ///
-    /// Each subcommand is one read-only request to IronForge's AI aggregate
-    /// endpoints, so an agent gets a repository's context in a single call.
+    /// Each subcommand is one request to IronForge's AI aggregate endpoints,
+    /// so an agent gets a repository's context in a single call. All are
+    /// reads except `index`, which rebuilds the code search and symbol index.
     /// `--json` prints the server's object unchanged; `--template` renders
     /// the same object; without either, a compact Markdown-style view is
     /// printed. Code search covers the default branch only.
@@ -398,6 +399,55 @@ pub enum ContextCommand {
         /// Approximate answer size in tokens (default 6000, 500 to 50000)
         #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(500..=50000))]
         budget: Option<u32>,
+    },
+    /// Ranked map of the repository's source files and their declarations
+    ///
+    /// The server trims the map to a token budget (default 4000); `--budget`
+    /// asks for another size between 64 and 32000. Files the map left out
+    /// are named under `skipped` with the reason.
+    Map {
+        /// Subdirectory to map (default: the root)
+        path: Option<String>,
+        /// Branch, tag or commit SHA (default: the default branch)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Approximate answer size in tokens (default 4000, 64 to 32000)
+        #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(64..=32000))]
+        budget: Option<u32>,
+    },
+    /// Find where a symbol is defined, or list a file's declarations
+    ///
+    /// Give a NAME, `--path`, or both. Exact name matches come first, then
+    /// prefix matches; every row says which it is. The answer comes from the
+    /// symbol index of one commit: a commit that was never indexed is an
+    /// error (run `ifg context index` first), and a missing row is not proof
+    /// the symbol does not exist (see `limitations` in `--json`).
+    Symbols {
+        /// Symbol name
+        #[arg(required_unless_present = "path")]
+        name: Option<String>,
+        /// Repository-relative file path whose declarations to list
+        #[arg(long)]
+        path: Option<String>,
+        /// Branch, tag or commit SHA (default: the default branch)
+        #[arg(long = "ref", value_name = "REF", conflicts_with = "commit")]
+        git_ref: Option<String>,
+        /// Explicit commit SHA (takes precedence over `--ref` on the server)
+        #[arg(long, value_name = "SHA")]
+        commit: Option<String>,
+        /// Max rows (default 50, max 200)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=200))]
+        limit: Option<u32>,
+    },
+    /// Rebuild the code search and symbol index of a commit
+    ///
+    /// Needs write access. Without `--commit` the default branch is indexed.
+    /// Code search and `context symbols` only see indexed commits; the
+    /// report counts the files and definitions written.
+    Index {
+        /// Commit or ref to index (default: the default branch)
+        #[arg(long, value_name = "REV")]
+        commit: Option<String>,
     },
     /// List issue summaries for AI use
     ///

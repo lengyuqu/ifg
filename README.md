@@ -96,6 +96,10 @@ ifg search "登录 超时" --type issue                      # 全局搜索（re
 ifg context repo                                       # AI 上下文：仓库摘要（--json 原样输出服务端对象）
 ifg context tree src --ref main                        # 文件树单页；带 --cursor 续页
 ifg context search "重试" --limit 10                    # 代码搜索（仅默认分支）
+ifg context map src --budget 2000                        # 仓库代码地图：按重要性排序的文件与声明（预算 64–32000 token，默认 4000）
+ifg context symbols Greeter                              # 符号定义查找（精确匹配在前，前缀候选标 [name_match]）
+ifg context symbols --path src/lib.rs                    # 列出某文件的全部声明
+ifg context index                                        # 重建默认分支的代码搜索与符号索引（需写权限）；--commit 指定提交或分支
 ifg context pr 12                                      # PR 上下文聚合对象（服务端默认预算）
 ifg context pr 12 --budget 2000                        # 指定服务端预算（token，500–50000）；不带则用服务端默认
 ifg context issues --state closed --limit 10           # AI 上下文：Issue 摘要列表（--state open|closed）

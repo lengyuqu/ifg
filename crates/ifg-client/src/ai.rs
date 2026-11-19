@@ -66,6 +66,35 @@ pub struct PrContextQuery {
     pub budget: Option<u32>,
 }
 
+/// Query for `ai/repos/{owner}/{name}/map`. Unset fields are left out so the
+/// server defaults apply.
+#[derive(Debug, Clone, Default)]
+pub struct MapQuery {
+    /// Branch, tag or SHA (default: the default branch).
+    pub git_ref: Option<String>,
+    /// Subdirectory to map (default: the root).
+    pub path: Option<String>,
+    /// Token budget (server default 4000, range 64 to 32000). Callers
+    /// validate the range; the server answers 400 `INVALID_BUDGET` otherwise.
+    pub budget: Option<u32>,
+}
+
+/// Query for `ai/repos/{owner}/{name}/symbols`. The server needs `name`,
+/// `path`, or both.
+#[derive(Debug, Clone, Default)]
+pub struct SymbolsQuery {
+    /// Symbol name: exact matches first, then prefix matches.
+    pub name: Option<String>,
+    /// Repository-relative file path: that file's declarations.
+    pub path: Option<String>,
+    /// Branch, tag or SHA (default: the default branch).
+    pub git_ref: Option<String>,
+    /// Explicit commit; the server prefers it over `git_ref`.
+    pub commit_sha: Option<String>,
+    /// Max rows (server default 50, max 200).
+    pub limit: Option<u32>,
+}
+
 /// Accessor for the AI aggregate endpoints.
 pub struct Ai<'a> {
     client: &'a Client,
@@ -159,6 +188,58 @@ impl Ai<'_> {
             &[("budget", query.budget.map(|v| v.to_string()))],
         );
         self.client.send(crate::Method::GET, &path, None).await
+    }
+
+    /// `GET ai/repos/{owner}/{name}/map`: a budget-trimmed repository map.
+    pub async fn map(&self, owner: &str, name: &str, query: &MapQuery) -> Result<Value, Error> {
+        let path = with_query(
+            format!("ai/repos/{}/{}/map", seg(owner), seg(name)),
+            &[
+                ("ref", query.git_ref.clone()),
+                ("path", query.path.clone()),
+                ("budget", query.budget.map(|v| v.to_string())),
+            ],
+        );
+        self.client.send(crate::Method::GET, &path, None).await
+    }
+
+    /// `GET ai/repos/{owner}/{name}/symbols`: definitions of one commit.
+    pub async fn symbols(
+        &self,
+        owner: &str,
+        name: &str,
+        query: &SymbolsQuery,
+    ) -> Result<Value, Error> {
+        let path = with_query(
+            format!("ai/repos/{}/{}/symbols", seg(owner), seg(name)),
+            &[
+                ("name", query.name.clone()),
+                ("path", query.path.clone()),
+                ("ref", query.git_ref.clone()),
+                ("commit_sha", query.commit_sha.clone()),
+                ("limit", query.limit.map(|v| v.to_string())),
+            ],
+        );
+        self.client.send(crate::Method::GET, &path, None).await
+    }
+
+    /// `POST ai/repos/{owner}/{name}/index`: rebuild the full-text and symbol
+    /// index of `commit` (a commit or ref; default: the default branch).
+    /// Needs write access. The report counts what was written and pruned.
+    pub async fn index(
+        &self,
+        owner: &str,
+        name: &str,
+        commit: Option<&str>,
+    ) -> Result<Value, Error> {
+        let path = format!("ai/repos/{}/{}/index", seg(owner), seg(name));
+        let body = match commit {
+            Some(commit) => serde_json::json!({ "commit_sha": commit }),
+            None => serde_json::json!({}),
+        };
+        self.client
+            .send(crate::Method::POST, &path, Some(&body))
+            .await
     }
 
     /// `GET ai/repos/{owner}/{name}/issues`: the server's array of issue summaries.

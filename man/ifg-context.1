@@ -2,13 +2,13 @@
 .el .ds Aq '
 .TH ifg-context 1  "ifg-context 0.9.0"
 .SH NAME
-ifg\-context \- Read AI\-oriented project context: summary, tree, code search, PR
+ifg\-context \- Read AI\-oriented project context: summary, tree, map, symbols, code search, PR
 .SH SYNOPSIS
 \fBifg context\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
-Read AI\-oriented project context: summary, tree, code search, PR
+Read AI\-oriented project context: summary, tree, map, symbols, code search, PR
 .PP
-Each subcommand is one read\-only request to IronForge\*(Aqs AI aggregate endpoints, so an agent gets a repository\*(Aqs context in a single call. `\-\-json` prints the server\*(Aqs object unchanged; `\-\-template` renders the same object; without either, a compact Markdown\-style view is printed. Code search covers the default branch only.
+Each subcommand is one request to IronForge\*(Aqs AI aggregate endpoints, so an agent gets a repository\*(Aqs context in a single call. All are reads except `index`, which rebuilds the code search and symbol index. `\-\-json` prints the server\*(Aqs object unchanged; `\-\-template` renders the same object; without either, a compact Markdown\-style view is printed. Code search covers the default branch only.
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
@@ -29,6 +29,15 @@ Search file contents on the default branch
 .TP
 ifg\-context\-pr(1)
 Pull request context: the PR and what it touches, in one object
+.TP
+ifg\-context\-map(1)
+Ranked map of the repository\*(Aqs source files and their declarations
+.TP
+ifg\-context\-symbols(1)
+Find where a symbol is defined, or list a file\*(Aqs declarations
+.TP
+ifg\-context\-index(1)
+Rebuild the code search and symbol index of a commit
 .TP
 ifg\-context\-issues(1)
 List issue summaries for AI use

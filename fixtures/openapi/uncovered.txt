@@ -12,3 +12,5 @@ POST /repos/{owner}/{name}/commits/{sha}/cherry-pick
 POST /repos/{owner}/{name}/commits/{sha}/revert
 GET /repos/{owner}/{name}/pulls/{number}/merge-readiness
 POST /repos/{owner}/{name}/pulls/{number}/update-branch
+GET /api/v1/ai/repos/{owner}/{name}/map
+GET /api/v1/ai/repos/{owner}/{name}/symbols

@@ -209,5 +209,9 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("GET", "/api/v1/ai/repos/{owner}/{name}/summary"),
     ("GET", "/api/v1/ai/repos/{owner}/{name}/tree"),
     ("GET", "/api/v1/ai/repos/{owner}/{name}/search/code"),
+    ("POST", "/api/v1/ai/repos/{owner}/{name}/index"),
+    // `map` and `symbols` are newer than the snapshot; see uncovered.txt.
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/map"),
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/symbols"),
     ("GET", "/ai/repos/{owner}/{name}/pulls/{number}/context"),
 ];

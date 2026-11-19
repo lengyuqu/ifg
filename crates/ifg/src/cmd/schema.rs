@@ -24,6 +24,7 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// because they write local files or branches.
 const WRITE: &[&str] = &[
     "api",
+    "context index",
     "auth login",
     "auth logout",
     "auth git-credential",

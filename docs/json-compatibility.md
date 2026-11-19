@@ -23,7 +23,7 @@
 | `pr update-branch` | `POST …/pulls/{number}/update-branch` 的响应对象，原样保留（`outcome`、`head_sha_before`、`head_sha_after` 等；`--dry-run` 为预览对象）。头提交已移动返回 409 `REF_ADVANCED`，基线合入有冲突返回 409 `MERGE_CONFLICTS`，均不自动重试。 |
 | `commit create`、`commit apply-patch`、`commit cherry-pick`、`commit revert`、`branch delete` | 对应写接口的响应对象，原样保留；`--dry-run` 时为服务端的预览对象（含 `dry_run: true`、`would`、`not_evaluated`），形状不同于真实结果。`expected_sha` 对不上返回 409 `REF_ADVANCED`，不自动重试。 |
 | `events list` | 服务端事件接口的响应对象，原样保留：`events` 数组（每项含 `id`、`type`、`created_at`、`payload` 等服务端字段）与 `next_cursor`，以及服务端附带的其他字段。不带 `--since` 时 `events` 为空，`next_cursor` 是起始位置。 |
-| `context repo`、`context tree`、`context search`、`context pr`、`context issues`、`context prs` | 对应 `/ai/repos/...` 接口的响应，原样保留；`context search`、`context issues`、`context prs` 为数组，其余为对象。`context pr --budget` 只增加服务端 `budget` 查询参数，不改变响应形状；不带 `--budget` 时不发送该参数。 |
+| `context repo`、`context tree`、`context map`、`context symbols`、`context index`、`context search`、`context pr`、`context issues`、`context prs` | 对应 `/ai/repos/...` 接口的响应，原样保留；`context search`、`context issues`、`context prs` 为数组，其余为对象（`context symbols` 的行在 `items` 里，`partial` 与 `limitations` 一并保留）。`context map`、`context symbols` 需要服务端 `65428452` 或更新；旧服务端返回 404。`context pr --budget` 只增加服务端 `budget` 查询参数，不改变响应形状；不带 `--budget` 时不发送该参数。 |
 | `capabilities` | 服务端 capabilities 响应对象，原样保留；带 `-R` 时为仓库级响应。`--has` 不产生 stdout 输出，只用退出码表示结果。 |
 | `notifications count` | 对象含非负整数 `unread_count`。 |
 | `search` | 以首个响应对象为基础，`results` 替换为跨页合并并按 `--limit` 截断的数组；如果首个响应有 `total`，使用最后取得页面的 `total`（非数字时为 0）；其余首屏字段保留，因此 `page` 等元数据仍描述首屏。 |
