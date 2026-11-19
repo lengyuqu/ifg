@@ -1,0 +1,36 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ifg-draft 1  "ifg-draft 0.9.0"
+.SH NAME
+ifg\-draft \- Reserve and manage agent draft branch namespaces
+.SH SYNOPSIS
+\fBifg draft\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Reserve and manage agent draft branch namespaces
+.PP
+A namespace reserves a branch directory such as `agent/<id>/`. Pushes under it trigger CI but send no webhooks or mail, and the server deletes the branches after the namespace expires and its grace period ends. Durations take `s`, `m`, `h` or `d` (`90m`, `7d`); a bare number is seconds.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+ifg\-draft\-list(1)
+List the repository\*(Aqs draft namespaces
+.TP
+ifg\-draft\-create(1)
+Reserve a branch directory for a limited time
+.TP
+ifg\-draft\-extend(1)
+Push the deadline back
+.TP
+ifg\-draft\-close(1)
+Close a namespace now; its branches are deleted after the grace period
+.TP
+ifg\-draft\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.9.0

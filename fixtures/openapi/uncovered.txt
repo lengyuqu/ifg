@@ -14,3 +14,16 @@ GET /repos/{owner}/{name}/pulls/{number}/merge-readiness
 POST /repos/{owner}/{name}/pulls/{number}/update-branch
 GET /api/v1/ai/repos/{owner}/{name}/map
 GET /api/v1/ai/repos/{owner}/{name}/symbols
+GET /agents
+POST /agents
+GET /agents/{username}
+PATCH /agents/{username}
+GET /agents/{username}/tokens
+POST /agents/{username}/tokens
+DELETE /agents/{username}/tokens/{id}
+GET /repos/{owner}/{name}/agent-drafts
+POST /repos/{owner}/{name}/agent-drafts
+PATCH /repos/{owner}/{name}/agent-drafts/{id}
+DELETE /repos/{owner}/{name}/agent-drafts/{id}
+GET /user/notification-preferences
+PUT /user/notification-preferences

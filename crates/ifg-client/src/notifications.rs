@@ -82,6 +82,27 @@ impl Notifications<'_> {
         crate::error::json_or_null(&bytes)
     }
 
+    /// `GET /user/notification-preferences`: the effective preferences, the
+    /// catalogue defaults expanded plus the caller's explicit overrides.
+    pub async fn preferences_raw(&self) -> Result<Value, Error> {
+        self.client
+            .send(crate::Method::GET, "user/notification-preferences", None)
+            .await
+    }
+
+    /// `PUT /user/notification-preferences`: store `overrides`, a bare array of
+    /// `{repo_id, event_type, channel, enabled}` (`repo_id: null` changes the
+    /// global default). The answer is the new effective preferences.
+    pub async fn set_preferences_raw(&self, overrides: &Value) -> Result<Value, Error> {
+        self.client
+            .send(
+                crate::Method::PUT,
+                "user/notification-preferences",
+                Some(overrides),
+            )
+            .await
+    }
+
     /// `DELETE /notifications/{id}`.
     pub async fn delete(&self, id: i64) -> Result<Value, Error> {
         let bytes = self

@@ -26,6 +26,8 @@
 | `context repo`、`context tree`、`context map`、`context symbols`、`context index`、`context search`、`context pr`、`context issues`、`context prs` | 对应 `/ai/repos/...` 接口的响应，原样保留；`context search`、`context issues`、`context prs` 为数组，其余为对象（`context symbols` 的行在 `items` 里，`partial` 与 `limitations` 一并保留）。`context map`、`context symbols` 需要服务端 `65428452` 或更新；旧服务端返回 404。`context pr --budget` 只增加服务端 `budget` 查询参数，不改变响应形状；不带 `--budget` 时不发送该参数。 |
 | `capabilities` | 服务端 capabilities 响应对象，原样保留；带 `-R` 时为仓库级响应。`--has` 不产生 stdout 输出，只用退出码表示结果。 |
 | `notifications count` | 对象含非负整数 `unread_count`。 |
+| `agent list`、`agent create`、`agent view`、`agent edit`、`agent token list`、`draft list`、`draft create`、`draft extend`、`draft close`、`notifications prefs list`、`notifications prefs set` | 对应接口的响应，原样保留（`agent list`、`agent token list`、`draft list` 为数组，其余为对象；`prefs` 为含 `default_enabled` 与 `preferences` 的对象）。`agent token revoke` 的响应为 `null`（服务端 204）。 |
+| `agent token create` | 服务端响应去掉 `token`（密钥只写入 `--token-file`，不出现在任何输出里），并增加 `token_file`（写入路径）；其余字段原样保留。 |
 | `search` | 以首个响应对象为基础，`results` 替换为跨页合并并按 `--limit` 截断的数组；如果首个响应有 `total`，使用最后取得页面的 `total`（非数字时为 0）；其余首屏字段保留，因此 `page` 等元数据仍描述首屏。 |
 | `doctor` | 检查结果数组，每项含字符串 `check`、`status`、`detail` 和字符串或 `null` 的 `hint`；检查集合可随环境或版本增加。 |
 | `mcp doctor` | 与 `doctor` 相同形状的检查结果数组（`check`、`status`、`detail`、`hint`）；检查项名称和数量可随版本增加。检查失败时可输出 JSON 并返回非零。 |

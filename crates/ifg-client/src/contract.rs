@@ -203,6 +203,21 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("DELETE", "/orgs/{name}/members/{user_id}"),
     // search
     ("GET", "/search"),
+    // Agent accounts, draft namespaces and notification preferences: newer
+    // than the 7d27c2d snapshot (see fixtures/openapi/uncovered.txt).
+    ("GET", "/agents"),
+    ("POST", "/agents"),
+    ("GET", "/agents/{username}"),
+    ("PATCH", "/agents/{username}"),
+    ("GET", "/agents/{username}/tokens"),
+    ("POST", "/agents/{username}/tokens"),
+    ("DELETE", "/agents/{username}/tokens/{id}"),
+    ("GET", "/repos/{owner}/{name}/agent-drafts"),
+    ("POST", "/repos/{owner}/{name}/agent-drafts"),
+    ("PATCH", "/repos/{owner}/{name}/agent-drafts/{id}"),
+    ("DELETE", "/repos/{owner}/{name}/agent-drafts/{id}"),
+    ("GET", "/user/notification-preferences"),
+    ("PUT", "/user/notification-preferences"),
     // AI aggregates. The snapshot keys the first three routes with the
     // `/api/v1` prefix and the PR context route without it, so these entries
     // are spelled exactly as the snapshot has them.

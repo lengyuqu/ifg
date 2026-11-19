@@ -72,6 +72,12 @@ const WRITE: &[&str] = &[
     "org add-member",
     "org remove-member",
     "notifications read",
+    "notifications prefs set",
+    "agent create",
+    "agent edit",
+    "agent token create",
+    "draft create",
+    "draft extend",
     "collab session start",
     "collab session heartbeat",
     "collab session end",
@@ -105,6 +111,8 @@ const DESTRUCTIVE: &[&str] = &[
     "milestone delete",
     "wiki delete",
     "notifications delete",
+    "agent token revoke",
+    "draft close",
 ];
 
 /// Print the document for `command_path` (empty: every command) to stdout.

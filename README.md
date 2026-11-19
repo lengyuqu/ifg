@@ -105,6 +105,11 @@ ifg context pr 12 --budget 2000                        # 指定服务端预算�
 ifg context issues --state closed --limit 10           # AI 上下文：Issue 摘要列表（--state open|closed）
 ifg context prs --state merged                         # AI 上下文：PR 摘要列表（--state open|closed|merged）
 ifg notifications                                      # 通知列表；notifications count 只看未读
+ifg notifications prefs list                           # 通知偏好：默认值加上你显式设置的覆盖
+ifg notifications prefs set --event push --channel email --off   # 全局关闭；加 -R OWNER/NAME 只针对该仓库（--on 重新打开）
+ifg agent create bot --description "CI 助手"           # 创建名下的 agent 账号（<你>-agent-bot）
+ifg agent token create <你>-agent-bot --name ci --allow-repo me/demo --allow-ref 'agent/*' --token-file ./bot.token   # 令牌只写入新文件（0600），不打印
+ifg draft create agent/42/ --ttl 2h                    # 预留草稿分支目录：推送不触发 webhook/邮件，到期后自动清理
 ifg org list                                           # 组织；org members / add-member / remove-member
 ifg org create acme -d "Acme 团队"                      # 建组织，成员用 --role 指定
 ifg issue create --editor                              # 用 $EDITOR 写标题与正文
@@ -237,6 +242,16 @@ IRONFORGE_IDEMPOTENCY_KEY="retry-42" ifg -R alice/demo pr merge 7 --squash
 - `commit apply-patch` 接受 `git diff` 形状的统一 diff（至多 1 MiB、500 个路径）；补丁里含密钥时服务端返回 422。
 - 通过 agent 令牌写入的提交以该 agent 署名（`<用户名>@agents.invalid`）。
 - `pr readiness` 与合并走同一套规则，所以预检结论和 `pr merge` 此刻的行为一致。它只回答“现在能不能合并”；合并队列位置、CODEOWNERS 请求和自动合并的效果不在评估范围内（`not_evaluated`）。
+
+## Agent 账号与草稿分支
+
+这些命令要求较新的 IronForge（已验证 `65428452`；固定基线 `7d27c2d` 不含这些接口，旧服务端返回 404）。
+
+- `ifg agent …` 管理你名下的 agent 账号（`list`、`create`、`view`、`edit`、`token list|create|revoke`）。必须用你本人的登录：agent 自己的令牌管不了 agent，另一人的 agent 与不存在的 agent 一样返回 404。停用（`edit --deactivate`）后其令牌立刻失效，`--activate` 可恢复；服务端没有删除 agent 的接口。
+- `agent token create` 的令牌只有创建时可见：ifg 把它写入 `--token-file`（新建、权限 0600，已存在的文件绝不覆盖），不会打印到终端或日志，`--json` 里也没有 `token` 字段而是 `token_file`。令牌只能带仓库类 scope，默认 `repo:write`；`--allow-repo` 限定仓库，`--allow-ref` 进一步限定可写分支（需要 `--allow-repo`）。服务端拒绝请求时不会留下空文件。令牌已创建但写文件失败时，错误信息给出撤销命令。
+- `ifg draft …` 管理仓库的草稿命名空间：`create PREFIX --ttl 2h`（前缀形如 `agent/<id>/`，段必须是你自己或你名下 agent；时长 1 分钟到 30 天，支持 `90s`、`30m`、`12h`、`7d`）、`extend ID --by 1d`（只能延长，上限为创建时 TTL 的 4 倍）、`close ID`（立即停止接收推送，宽限期后删除分支，需确认）、`list`。
+- `notifications prefs set` 默认改全局设置；只有显式传 `-R OWNER/NAME` 才作用于该仓库（不会从 git remote 推断，避免全局改动变成仓库级）。事件名先对照服务端目录检查，拼错会列出可用的名字而不是悄悄存一条无效设置。
+- 这些写命令不支持 `--idempotency-key`（服务端没把对应路由列为支持幂等键）。`agent token revoke` 与 `draft close` 登记为破坏性命令，需 `--yes` 或交互确认。
 
 ## 多 Agent 协作
 

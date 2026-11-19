@@ -200,6 +200,28 @@ pub enum Command {
         #[command(subcommand)]
         command: BranchCommand,
     },
+    /// Manage the agent accounts you own and their tokens
+    ///
+    /// An agent is an account that belongs to you, named
+    /// `<your username>-agent-<name>`, for tools that act on your behalf.
+    /// These commands need your own login: an agent's token cannot manage
+    /// agents. Its commits and API writes are attributed to the agent, and the
+    /// audit log records you as the person it acted for.
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
+    /// Reserve and manage agent draft branch namespaces
+    ///
+    /// A namespace reserves a branch directory such as `agent/<id>/`. Pushes
+    /// under it trigger CI but send no webhooks or mail, and the server
+    /// deletes the branches after the namespace expires and its grace period
+    /// ends. Durations take `s`, `m`, `h` or `d` (`90m`, `7d`); a bare
+    /// number is seconds.
+    Draft {
+        #[command(subcommand)]
+        command: DraftCommand,
+    },
     /// Work with CI pipelines
     ///
     /// `ci logs --follow` streams the job log over a WebSocket and resumes
@@ -1767,6 +1789,164 @@ pub enum EventsCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum AgentCommand {
+    /// List your agents
+    List,
+    /// Create an agent
+    Create {
+        /// Short name (the account becomes `<you>-agent-<name>`)
+        name: String,
+        /// What the agent is for (at most 500 characters)
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Show one agent
+    View {
+        /// The agent's full username
+        username: String,
+    },
+    /// Change an agent's description or switch it on or off
+    ///
+    /// A deactivated agent's tokens are refused and the sessions already
+    /// started from them stop working; `--activate` reverses it. An empty
+    /// `--description ""` clears the description.
+    #[command(group(clap::ArgGroup::new("change").required(true).multiple(true).args(["description", "activate", "deactivate"])))]
+    Edit {
+        username: String,
+        #[arg(long)]
+        description: Option<String>,
+        /// Reactivate the agent
+        #[arg(long, conflicts_with = "deactivate")]
+        activate: bool,
+        /// Deactivate the agent
+        #[arg(long)]
+        deactivate: bool,
+    },
+    /// Manage an agent's tokens
+    Token {
+        #[command(subcommand)]
+        command: AgentTokenCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentTokenCommand {
+    /// List an agent's tokens (metadata only, never the secrets)
+    List { username: String },
+    /// Issue a token and save the secret to a new private file
+    ///
+    /// The server shows the secret once. It is written to `--token-file`
+    /// (created with mode 600; an existing file is never overwritten) and is
+    /// never printed. A token carries repository scopes only and defaults to
+    /// `repo:write`; `--allow-repo` and `--allow-ref` limit it further.
+    Create {
+        username: String,
+        /// Token name
+        #[arg(long)]
+        name: String,
+        /// Scopes, space or comma separated (default repo:write)
+        #[arg(long)]
+        scopes: Option<String>,
+        /// Limit the token to this repository (OWNER/NAME); repeatable
+        #[arg(long = "allow-repo", value_name = "OWNER/NAME")]
+        allow_repo: Vec<String>,
+        /// Limit the branches it may write, e.g. `agent/*`; repeatable; needs --allow-repo
+        #[arg(long = "allow-ref", value_name = "PATTERN", requires = "allow_repo")]
+        allow_ref: Vec<String>,
+        /// RFC 3339 expiry time
+        #[arg(long, value_name = "TIME")]
+        expires_at: Option<String>,
+        /// File that receives the secret
+        #[arg(long, value_name = "FILE")]
+        token_file: String,
+    },
+    /// Revoke a token
+    Revoke {
+        username: String,
+        /// Token id from `agent token list`
+        id: i64,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DraftCommand {
+    /// List the repository's draft namespaces
+    List,
+    /// Reserve a branch directory for a limited time
+    ///
+    /// PREFIX is a concrete directory that starts with `agent/`, names an
+    /// agent segment you own (your own id or username, or one of your
+    /// agents) and ends with `/`, such as `agent/42/`.
+    Create {
+        prefix: String,
+        /// Lifetime, 1 minute to 30 days (`90m`, `7d`)
+        #[arg(long, value_parser = parse_ttl)]
+        ttl: i64,
+        /// How long the branches survive after expiry (server default 1 day)
+        #[arg(long, value_parser = parse_grace)]
+        grace: Option<i64>,
+    },
+    /// Push the deadline back
+    ///
+    /// The server never shortens a namespace and caps the deadline at four
+    /// times its original lifetime after creation. An expired namespace that
+    /// is not yet cleaned up is reopened.
+    Extend {
+        /// Namespace id from `draft list`
+        id: i64,
+        /// Time to add (`2h`, `1d`)
+        #[arg(long, value_parser = parse_ttl)]
+        by: i64,
+    },
+    /// Close a namespace now; its branches are deleted after the grace period
+    Close {
+        id: i64,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+/// Parse `90`, `90s`, `30m`, `12h` or `7d` into seconds.
+fn parse_duration(raw: &str) -> Result<i64, String> {
+    let raw = raw.trim();
+    let (digits, unit) = match raw.char_indices().last() {
+        Some((index, c)) if c.is_ascii_alphabetic() => (&raw[..index], c),
+        _ => (raw, 's'),
+    };
+    let amount: i64 = digits
+        .parse()
+        .map_err(|_| format!("'{raw}' is not a duration; use 90s, 30m, 12h or 7d"))?;
+    let factor = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        'd' => 86_400,
+        other => return Err(format!("unknown duration unit '{other}'; use s, m, h or d")),
+    };
+    amount
+        .checked_mul(factor)
+        .filter(|seconds| *seconds >= 0)
+        .ok_or_else(|| format!("'{raw}' is out of range"))
+}
+
+/// A lifetime the server accepts: 60 seconds to 30 days.
+fn parse_ttl(raw: &str) -> Result<i64, String> {
+    let seconds = parse_duration(raw)?;
+    if !(60..=30 * 86_400).contains(&seconds) {
+        return Err("must be between 1 minute and 30 days".into());
+    }
+    Ok(seconds)
+}
+
+fn parse_grace(raw: &str) -> Result<i64, String> {
+    parse_duration(raw)
+}
+
+#[derive(Debug, Subcommand)]
 pub enum NotificationsCommand {
     /// List notifications (default when no subcommand is given)
     List {
@@ -1788,6 +1968,39 @@ pub enum NotificationsCommand {
     Delete { id: i64 },
     /// Print the unread count
     Count,
+    /// Read or change which notifications you receive
+    ///
+    /// A missing setting means "on". Settings are per event type and channel
+    /// (`in_app` or `email`), globally or for one repository: pass `-R
+    /// OWNER/NAME` to scope a change to that repository (the repository is
+    /// never inferred from the git remote here, so a global change cannot
+    /// become a repository one by accident).
+    Prefs {
+        #[command(subcommand)]
+        command: PrefsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PrefsCommand {
+    /// Show the effective settings: defaults plus your explicit overrides
+    List,
+    /// Turn one event type on or off for one channel
+    #[command(group(clap::ArgGroup::new("state").required(true).args(["on", "off"])))]
+    Set {
+        /// Event type, as listed by `notifications prefs list`
+        #[arg(long)]
+        event: String,
+        /// Delivery channel
+        #[arg(long, value_parser = ["in_app", "email"])]
+        channel: String,
+        /// Turn it on (stores an explicit "on", e.g. to undo a global mute for one repository)
+        #[arg(long)]
+        on: bool,
+        /// Turn it off
+        #[arg(long)]
+        off: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
