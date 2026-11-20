@@ -7,9 +7,12 @@ use clap::{ArgAction, Parser, Subcommand};
 /// from the terminal.
 ///
 /// `ifg` talks to the IronForge REST API with a personal access token. The
-/// token is validated by `auth login`, stored in
-/// `$XDG_CONFIG_HOME/ironforge/hosts.toml` (or the system keychain when
-/// `token_store = "keyring"`), and reused by every command.
+/// token is validated by `auth login`, stored in `hosts.toml` (in
+/// `IRONFORGE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/ironforge`, else the
+/// platform default), and reused by every command. `token_store = "keyring"`
+/// moves it to the system keychain, but never while `IRONFORGE_CONFIG_DIR` is
+/// set. With both `IRONFORGE_URL` and `IRONFORGE_PAT` set, the stored config
+/// is not read at all.
 ///
 /// Machine-readable output: `--json` prints the server's own field names,
 /// `-q/--template` renders a small template per result
@@ -19,6 +22,11 @@ use clap::{ArgAction, Parser, Subcommand};
 ///
 /// Long-tail API surface (wiki, webhooks, packages, secrets, …) is reachable
 /// through `ifg api <path>`.
+///
+/// Scripts and AI agents should pass `--no-input` (or set `IFG_NO_INPUT=1`).
+/// Anything that would ask a person a question then fails at once with exit
+/// code 2 and names the flag to pass instead. `--no-input` is not `--yes`: a
+/// destructive command still needs `--yes` to run.
 #[derive(Debug, Parser)]
 #[command(
     name = "ifg",
@@ -31,6 +39,12 @@ use clap::{ArgAction, Parser, Subcommand};
   ifg ci logs 7 --follow                           stream a job log
   ifg pr list -q '{{.number}} {{.title}}'           script-friendly output
   ifg api users/me                                 raw API passthrough
+  ifg --no-input repo delete -R alice/demo --yes   never prompt; --yes still needed
+
+ENVIRONMENT:
+  IRONFORGE_URL, IRONFORGE_PAT   host and token; with both set, no stored config is read
+  IRONFORGE_CONFIG_DIR           directory holding hosts.toml; beats XDG_CONFIG_HOME and HOME
+  IFG_NO_INPUT                   same as --no-input
 
 Run `ifg help <command>` for the full description of one command,
 or `man ifg` / `man ifg-<command>` when the man pages are installed."
@@ -40,7 +54,8 @@ pub struct Cli {
     ///
     /// Resolution order: this flag, `IRONFORGE_URL`, the repository's git
     /// remote (when run inside a checkout), then `default_host` from the
-    /// config file.
+    /// config file. A NAME needs the stored config, so with both
+    /// `IRONFORGE_URL` and `IRONFORGE_PAT` set, pass a URL instead.
     #[arg(long, global = true, value_name = "NAME|URL")]
     pub host: Option<String>,
 
@@ -81,6 +96,36 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_color: bool,
 
+    /// Never prompt: fail with exit code 2 where a person would be asked
+    ///
+    /// Use in scripts and by AI agents. A confirmation then refuses and names
+    /// `--yes`, `auth login` needs `--with-token`, `--editor` is refused (use
+    /// `-t`/`-b`), the pager is skipped and git subprocesses do not prompt.
+    /// This is NOT `--yes`: nothing destructive runs unless `--yes` is also
+    /// given. Also enabled by `IFG_NO_INPUT=1` (`1` or `true`); the flag wins.
+    #[arg(long, global = true)]
+    pub no_input: bool,
+
+    /// Caller-chosen key that makes a write safe to repeat after a timeout
+    ///
+    /// The server replays the first response for the same key. Only single-write commands on routes that support keys accept it (see
+    /// `ifg schema`, field `accepts_idempotency_key`); any other command exits
+    /// with code 2 before sending anything. The key is sent as the
+    /// `Idempotency-Key` header on that command's write request, and a keyed
+    /// write is retried with the same key after connection errors, 429 and
+    /// 5xx. Use a key you chose: ifg never generates one. Allowed characters:
+    /// A-Z, a-z, 0-9, `.`, `_`, `:`, `-` (1 to 255). When absent, the
+    /// environment variable IRONFORGE_IDEMPOTENCY_KEY is used; this flag wins.
+    #[arg(long, global = true, value_name = "KEY")]
+    pub idempotency_key: Option<String>,
+
+    /// The validated key for this invocation, filled in by `main` after the
+    /// command is known. Never accepted from the command line.
+    #[arg(skip)]
+    // Read by `bootstrap`; the `gen_man` example only walks clap metadata.
+    #[allow(dead_code)]
+    pub idempotency: Option<ifg_client::IdempotencyKey>,
+
     /// Verbosity: -v logs each request, -vv also logs headers
     #[arg(short = 'v', long = "verbose", action = ArgAction::Count, global = true, default_value_t = 0)]
     pub verbose: u8,
@@ -97,6 +142,9 @@ pub enum Command {
     /// (Settings → Tokens). `auth login` reads one from a no-echo prompt on a
     /// terminal, or from stdin with `--with-token`/a pipe. `token_store =
     /// "keyring"` in the config keeps the token out of the config file.
+    /// `IRONFORGE_CONFIG_DIR` gives an agent its own `hosts.toml` (tokens stay
+    /// in that file; the keychain is not used). `status` shows which source
+    /// the credential came from.
     /// `auth git-credential` implements the git credential helper protocol so
     /// `git clone`/`push` reuse the same token.
     Auth {
@@ -135,6 +183,45 @@ pub enum Command {
         #[command(subcommand)]
         command: PrCommand,
     },
+    /// Write commits on the server without a local checkout
+    ///
+    /// Every commit command names the branch and the commit it must still be
+    /// at (`--expected-sha`, the full 40-character SHA you read). If the branch
+    /// moved, the server refuses with 409 REF_ADVANCED and writes nothing; it
+    /// never creates the branch. `--dry-run` runs every check and prints what
+    /// would happen without writing. Commits made through a token that belongs
+    /// to an agent are authored as that agent.
+    Commit {
+        #[command(subcommand)]
+        command: CommitCommand,
+    },
+    /// Work with repository branches
+    Branch {
+        #[command(subcommand)]
+        command: BranchCommand,
+    },
+    /// Manage the agent accounts you own and their tokens
+    ///
+    /// An agent is an account that belongs to you, named
+    /// `<your username>-agent-<name>`, for tools that act on your behalf.
+    /// These commands need your own login: an agent's token cannot manage
+    /// agents. Its commits and API writes are attributed to the agent, and the
+    /// audit log records you as the person it acted for.
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
+    /// Reserve and manage agent draft branch namespaces
+    ///
+    /// A namespace reserves a branch directory such as `agent/<id>/`. Pushes
+    /// under it trigger CI but send no webhooks or mail, and the server
+    /// deletes the branches after the namespace expires and its grace period
+    /// ends. Durations take `s`, `m`, `h` or `d` (`90m`, `7d`); a bare
+    /// number is seconds.
+    Draft {
+        #[command(subcommand)]
+        command: DraftCommand,
+    },
     /// Work with CI pipelines
     ///
     /// `ci logs --follow` streams the job log over a WebSocket and resumes
@@ -144,6 +231,16 @@ pub enum Command {
     Ci {
         #[command(subcommand)]
         command: CiCommand,
+    },
+    /// Read the repository event log by cursor
+    ///
+    /// `events list` makes one plain read: the events after `--since`, plus
+    /// `next_cursor` to pass back on the next call. Without `--since` the
+    /// server returns only the current cursor, which is the starting position
+    /// and not an empty result. The command never waits for new events.
+    Events {
+        #[command(subcommand)]
+        command: EventsCommand,
     },
     /// Coordinate agent sessions, tasks, messages and handoffs
     Collab {
@@ -198,6 +295,18 @@ pub enum Command {
         #[arg(long)]
         limit: Option<u64>,
     },
+    /// Read AI-oriented project context: summary, tree, map, symbols, code search, PR
+    ///
+    /// Each subcommand is one request to IronForge's AI aggregate endpoints,
+    /// so an agent gets a repository's context in a single call. All are
+    /// reads except `index`, which rebuilds the code search and symbol index.
+    /// `--json` prints the server's object unchanged; `--template` renders
+    /// the same object; without either, a compact Markdown-style view is
+    /// printed. Code search covers the default branch only.
+    Context {
+        #[command(subcommand)]
+        command: ContextCommand,
+    },
     /// Work with organizations
     ///
     /// Members are addressed by username: `org add-member` resolves the name
@@ -213,6 +322,17 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<NotificationsCommand>,
     },
+    /// Print an MCP client config for IronForge's stdio MCP server
+    ///
+    /// Prints a JSON snippet (`mcpServers`) that starts `ironforge-mcp` with
+    /// the resolved host. The token is never printed: the snippet refers to
+    /// `${IRONFORGE_PAT}`, which you export in the environment the client
+    /// starts from (for example `export IRONFORGE_PAT="$(ifg auth token)"`).
+    /// Nothing is written to disk and no request is made to the server.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
     /// Check the whole setup: host, token, scopes, server version, streaming
     ///
     /// Answers "why does this command fail" without a debugging session, and
@@ -220,10 +340,159 @@ pub enum Command {
     Doctor,
     /// Print the client version and (when reachable) the server version
     Version,
+    /// Show the contract, versions and capabilities the server offers
+    ///
+    /// Without `-R` this reads the instance-wide endpoint, even inside a git
+    /// checkout. `-R OWNER/NAME` reads the repository endpoint instead, which
+    /// also reports your access to that repository. `--has NAME` prints
+    /// nothing: it exits 0 when the server lists the capability and 1 when it
+    /// does not. A server too old to expose capabilities fails with exit
+    /// code 8 rather than reporting an empty list.
+    Capabilities {
+        /// Check for one capability by name instead of printing the list
+        #[arg(long, value_name = "NAME")]
+        has: Option<String>,
+    },
+    /// Describe the commands as JSON for agents (no network or login needed)
+    ///
+    /// Lists every command with its arguments, whether `--json` is accepted,
+    /// and whether it reads, writes or deletes. Give a command path to print
+    /// only that subtree, e.g. `ifg schema pr merge`.
+    Schema {
+        /// Command path to narrow the output to (default: every command)
+        #[arg(value_name = "COMMAND")]
+        command_path: Vec<String>,
+    },
     /// Print a shell completion script (bash / zsh / fish / powershell)
     Completions {
         /// Target shell
         shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ContextCommand {
+    /// Repository summary: default branch, description, counts, dates
+    Repo,
+    /// List one page of the repository file tree
+    ///
+    /// Without `--ref` the default branch is used. When the output says
+    /// more entries exist, pass its cursor back with `--cursor`.
+    Tree {
+        /// Subdirectory to list (default: the root)
+        path: Option<String>,
+        /// Branch, tag or commit SHA (default: the default branch)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Directory levels to descend (default 1, max 8)
+        #[arg(long)]
+        depth: Option<u32>,
+        /// Entries per page (default 200, max 1000)
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Cursor from the previous page
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    /// Search file contents on the default branch
+    ///
+    /// The server rejects any other `--ref` with an error, and a repository
+    /// that has not been indexed yet cannot be searched.
+    Search {
+        /// Query text
+        query: String,
+        /// Must be the default branch if given
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Max results (default 20, max 100)
+        #[arg(long)]
+        limit: Option<u64>,
+        /// Results to skip (default 0)
+        #[arg(long)]
+        offset: Option<u64>,
+    },
+    /// Pull request context: the PR and what it touches, in one object
+    ///
+    /// The server cuts the answer to a token budget (default 6000);
+    /// `--budget` asks for another size between 500 and 50000.
+    Pr {
+        /// Pull request number
+        number: i64,
+        /// Approximate answer size in tokens (default 6000, 500 to 50000)
+        #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(500..=50000))]
+        budget: Option<u32>,
+    },
+    /// Ranked map of the repository's source files and their declarations
+    ///
+    /// The server trims the map to a token budget (default 4000); `--budget`
+    /// asks for another size between 64 and 32000. Files the map left out
+    /// are named under `skipped` with the reason.
+    Map {
+        /// Subdirectory to map (default: the root)
+        path: Option<String>,
+        /// Branch, tag or commit SHA (default: the default branch)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Approximate answer size in tokens (default 4000, 64 to 32000)
+        #[arg(long, value_name = "TOKENS", value_parser = clap::value_parser!(u32).range(64..=32000))]
+        budget: Option<u32>,
+    },
+    /// Find where a symbol is defined, or list a file's declarations
+    ///
+    /// Give a NAME, `--path`, or both. Exact name matches come first, then
+    /// prefix matches; every row says which it is. The answer comes from the
+    /// symbol index of one commit: a commit that was never indexed is an
+    /// error (run `ifg context index` first), and a missing row is not proof
+    /// the symbol does not exist (see `limitations` in `--json`).
+    Symbols {
+        /// Symbol name
+        #[arg(required_unless_present = "path")]
+        name: Option<String>,
+        /// Repository-relative file path whose declarations to list
+        #[arg(long)]
+        path: Option<String>,
+        /// Branch, tag or commit SHA (default: the default branch)
+        #[arg(long = "ref", value_name = "REF", conflicts_with = "commit")]
+        git_ref: Option<String>,
+        /// Explicit commit SHA (takes precedence over `--ref` on the server)
+        #[arg(long, value_name = "SHA")]
+        commit: Option<String>,
+        /// Max rows (default 50, max 200)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=200))]
+        limit: Option<u32>,
+    },
+    /// Rebuild the code search and symbol index of a commit
+    ///
+    /// Needs write access. Without `--commit` the default branch is indexed.
+    /// Code search and `context symbols` only see indexed commits; the
+    /// report counts the files and definitions written.
+    Index {
+        /// Commit or ref to index (default: the default branch)
+        #[arg(long, value_name = "REV")]
+        commit: Option<String>,
+    },
+    /// List issue summaries for AI use
+    ///
+    /// Each item carries the number, title, state, author and creation time.
+    Issues {
+        /// open / closed (default open)
+        #[arg(long, value_parser = ["open", "closed"])]
+        state: Option<String>,
+        /// Max results (default 20)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// List pull request summaries for AI use
+    ///
+    /// Each item carries the number, title, state, branches, author and
+    /// creation time.
+    Prs {
+        /// open / closed / merged (default open)
+        #[arg(long, value_parser = ["open", "closed", "merged"])]
+        state: Option<String>,
+        /// Max results (default 20)
+        #[arg(long)]
+        limit: Option<u64>,
     },
 }
 
@@ -293,6 +562,21 @@ pub enum CollabCommand {
         #[command(subcommand)]
         command: CollabQuestionCommand,
     },
+    /// Record, list and view work packages reported on a task
+    WorkPackage {
+        #[command(subcommand)]
+        command: CollabWorkPackageCommand,
+    },
+    /// Add, list or remove the dependencies of a task
+    Dependency {
+        #[command(subcommand)]
+        command: CollabDependencyCommand,
+    },
+    /// Record, list and view decisions on a task
+    Decision {
+        #[command(subcommand)]
+        command: CollabDecisionCommand,
+    },
     /// List the session's or user's inbox
     Inbox {
         /// Read the account inbox instead of a session inbox
@@ -302,6 +586,109 @@ pub enum CollabCommand {
         since: Option<String>,
         #[arg(long)]
         limit: Option<u64>,
+    },
+    /// Read, replace or confirm a task's completion conditions
+    Condition {
+        #[command(subcommand)]
+        command: CollabConditionCommand,
+    },
+    /// Show a task's budgets against reported usage (informational only)
+    Budget {
+        #[command(subcommand)]
+        command: CollabBudgetCommand,
+    },
+    /// List or report a task's usage records
+    Usage {
+        #[command(subcommand)]
+        command: CollabUsageCommand,
+    },
+    /// Show the rule files that govern a path at a ref
+    Rules {
+        /// Branch, tag or commit (default HEAD)
+        #[arg(long = "ref", value_name = "REF")]
+        git_ref: Option<String>,
+        /// Repository-relative file or directory (default the repository root)
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Show the collaboration overview sections for this user
+    Overview {
+        /// Comma-separated subset of awaiting_me, blocked_waiting, pending_handoffs, in_progress
+        #[arg(long)]
+        sections: Option<String>,
+        /// Items per section, 1 to 100 (server default 50)
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabConditionCommand {
+    /// List a task's completion conditions and their version (0 = none defined)
+    List { task_id: String },
+    /// Replace a task's completion conditions from a JSON object file
+    ///
+    /// The file is sent unchanged, so it must contain `client_request_id`,
+    /// `expected_version` (the version last read) and `conditions`. `--file -`
+    /// reads stdin.
+    Set {
+        task_id: String,
+        /// JSON object file ("-" for stdin)
+        #[arg(long = "file", value_name = "PATH|-")]
+        source: String,
+    },
+    /// Confirm a manual_confirmation condition against the current branch head
+    Confirm {
+        task_id: String,
+        condition_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabBudgetCommand {
+    /// Show budgets with matched usage; informational, nothing is enforced
+    View { task_id: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabUsageCommand {
+    /// List usage records, newest reported first
+    List {
+        task_id: String,
+        /// Exact unit filter
+        #[arg(long)]
+        unit: Option<String>,
+        /// Exact source filter
+        #[arg(long)]
+        source: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Report usage consumed during a period (a delta, not a running total)
+    Report {
+        task_id: String,
+        /// Idempotency key, unique per reporting session or user
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        unit: String,
+        #[arg(long)]
+        source: String,
+        /// Non-negative decimal, sent as a JSON string
+        #[arg(long)]
+        amount: String,
+        /// RFC 3339 date-time
+        #[arg(long)]
+        period_start: String,
+        /// RFC 3339 date-time
+        #[arg(long)]
+        period_end: String,
     },
 }
 
@@ -391,6 +778,8 @@ pub enum CollabTaskCommand {
         #[arg(long, conflicts_with = "pr")]
         clear_pr: bool,
     },
+    /// Show each completion condition as satisfied, unsatisfied, stale or unknown
+    Status { id: String },
     /// Claim an unowned or abandoned task as this session
     Claim {
         id: String,
@@ -487,6 +876,103 @@ pub enum CollabQuestionCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum CollabWorkPackageCommand {
+    /// List a task's work package revisions, newest first
+    List {
+        task_id: String,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Record a new work package revision with a caller-supplied idempotency key
+    Create {
+        task_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        goal: Option<String>,
+        #[arg(long)]
+        scope: Option<String>,
+        #[arg(long)]
+        commit: Option<String>,
+        /// Must equal the task's current version when given
+        #[arg(long)]
+        expected_task_version: Option<i64>,
+        #[arg(long)]
+        artifact: Vec<String>,
+        #[arg(long)]
+        completed: Vec<String>,
+        #[arg(long)]
+        next_step: Vec<String>,
+        #[arg(long)]
+        open_item: Vec<String>,
+    },
+    /// View a work package and its pipeline evidence resolution
+    View { id: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabDependencyCommand {
+    /// List a task's direct dependencies and the graph version to pass to add or remove
+    List { task_id: String },
+    /// Make a task wait for another task; pass the graph version from `dependency list`
+    Add {
+        task_id: String,
+        depends_on_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        expected_graph_version: i64,
+    },
+    /// Remove a dependency; removed=false when the edge did not exist
+    Remove {
+        task_id: String,
+        depends_on_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        expected_graph_version: i64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollabDecisionCommand {
+    /// List a task's decisions by creation time
+    List {
+        task_id: String,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+    /// Record an immutable decision with a caller-supplied idempotency key
+    Create {
+        task_id: String,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        title: String,
+        /// The writer's own account of why; not verified by the server
+        #[arg(long)]
+        rationale: String,
+        #[arg(long)]
+        question_id: Option<String>,
+        #[arg(long)]
+        answer_id: Option<String>,
+        /// Must equal the task's current version when given
+        #[arg(long)]
+        task_version: Option<i64>,
+        #[arg(long)]
+        base_sha: Option<String>,
+        #[arg(long)]
+        head_sha: Option<String>,
+    },
+    /// View a decision with its change, status and context freshness
+    View { id: String },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum CollabMessageCommand {
     /// List task messages after a sequence number
     List {
@@ -565,6 +1051,44 @@ pub enum CollabHandoffCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum McpCommand {
+    /// Print an MCP client config snippet for the resolved host (stdout)
+    Config {
+        /// Client whose config format to print
+        #[arg(long, value_enum, default_value_t = McpClient::Generic)]
+        client: McpClient,
+        /// Name of the server entry in the snippet
+        #[arg(long, default_value = "ironforge", value_name = "NAME")]
+        name: String,
+        /// Executable the client runs to start the MCP server
+        #[arg(long = "command", default_value = "ironforge-mcp", value_name = "PATH")]
+        server_command: String,
+    },
+    /// Check whether the MCP server can be used from this machine
+    ///
+    /// Reads the server's MCP declaration from its capabilities, then checks
+    /// the host and token, that the server declares stdio and how many tools
+    /// it names, that the server binary can be found (it is never run), and
+    /// that `IRONFORGE_PAT` is set in this environment. Prints the same check
+    /// items as `ifg doctor` and exits 1 when a check fails (warnings do not).
+    /// The token is never printed.
+    Doctor {
+        /// Server binary to look for (default: the name the server declares,
+        /// else `ironforge-mcp`)
+        #[arg(long = "command", value_name = "PATH")]
+        server_command: Option<String>,
+    },
+}
+
+/// MCP clients `ifg mcp config` can emit a snippet for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum McpClient {
+    ClaudeCode,
+    Cursor,
+    Generic,
+}
+
+#[derive(Debug, Subcommand)]
 pub enum AuthCommand {
     /// Log in with a personal access token (validates it against /users/me)
     Login {
@@ -572,7 +1096,11 @@ pub enum AuthCommand {
         #[arg(long)]
         with_token: bool,
     },
-    /// List configured hosts, token prefixes and usable scopes
+    /// List configured hosts, token prefixes, usable scopes and the credential source
+    ///
+    /// `source` is `env` (IRONFORGE_URL and IRONFORGE_PAT), `config-dir`
+    /// (IRONFORGE_CONFIG_DIR) or `default` (XDG_CONFIG_HOME or HOME). The
+    /// token is never printed; only its redacted form is.
     Status,
     /// Remove local credentials (the token stays valid server-side)
     Logout,
@@ -798,6 +1326,19 @@ pub enum PrReviewersCommand {
     Remove { number: i64, username: String },
 }
 
+/// Value parser for `--expected-head`: exactly 40 hex digits, lower-cased.
+/// Abbreviations are refused, not resolved, so the server compares the full
+/// commit SHA the caller reviewed.
+fn parse_full_sha(raw: &str) -> Result<String, String> {
+    if raw.len() == 40 && raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(raw.to_ascii_lowercase())
+    } else {
+        Err(format!(
+            "expected a full 40-character commit SHA, got {raw:?}"
+        ))
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum PrCommand {
     /// List pull requests
@@ -876,9 +1417,52 @@ pub enum PrCommand {
         squash: bool,
         #[arg(long, group = "strategy")]
         rebase: bool,
-        /// Enable auto-merge instead of merging now
+        /// Enable auto-merge instead of merging now. The auto-merge endpoint
+        /// does not take an expected head, so this cannot be combined with
+        /// --expected-head.
         #[arg(long)]
         auto: bool,
+        /// Merge only if the head branch still points at this commit: the
+        /// full 40-character SHA you reviewed (case-insensitive). The server
+        /// refuses the merge with REF_ADVANCED when the head has moved; re-read
+        /// the PR with `ifg pr checks` and retry with the current SHA. Not
+        /// accepted with --auto.
+        #[arg(long, value_name = "SHA", value_parser = parse_full_sha, conflicts_with = "auto")]
+        expected_head: Option<String>,
+    },
+    /// Show what stands between a pull request and a merge
+    ///
+    /// Prints the verdict (`ready`: true, false, or null when something could
+    /// not be judged), the reason codes, merge conflicts (files and blocks),
+    /// every branch-protection gate and the required checks. Read-only; the
+    /// exit code is 0 whatever the verdict, so read `ready` (use `--json`).
+    /// The rules are the merge's own, so the answer matches what
+    /// `ifg pr merge` would do right now.
+    Readiness {
+        number: i64,
+        /// Merge strategy to evaluate: merge (default), squash or rebase
+        #[arg(long, value_parser = ["merge", "squash", "rebase"])]
+        strategy: Option<String>,
+        /// Continue a cut conflict list after this path (the `continue_with`
+        /// value of the previous answer)
+        #[arg(long, value_name = "PATH")]
+        conflicts_after: Option<String>,
+    },
+    /// Merge the base branch into the pull request's head branch
+    ///
+    /// Built from exactly `--expected-head`; if the head moved the server
+    /// refuses with 409 REF_ADVANCED, and if the base does not merge cleanly
+    /// with 409 MERGE_CONFLICTS (see `ifg pr readiness` for the files). PRs
+    /// from forks are refused with FORK_PR_UNSUPPORTED.
+    UpdateBranch {
+        number: i64,
+        /// The head commit you looked at: the full 40-character SHA
+        /// (case-insensitive), e.g. from `ifg pr readiness --json`
+        #[arg(long, value_name = "SHA", value_parser = parse_full_sha)]
+        expected_head: String,
+        /// Check everything and print what would happen without writing
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Review a pull request
     Review {
@@ -892,6 +1476,108 @@ pub enum PrCommand {
     },
     /// Fetch the PR head branch and check it out as pr-<number>
     Checkout { number: i64 },
+    /// Show the commit status checks of the PR's head commit
+    Checks { number: i64 },
+}
+
+/// Where a commit goes: the branch and the commit it must still be at.
+#[derive(Debug, clap::Args)]
+pub struct CommitTarget {
+    /// Branch to commit on (it must already exist)
+    #[arg(long)]
+    pub branch: String,
+    /// The commit the branch must still be at: the full 40-character SHA
+    /// (case-insensitive). A moved branch is refused with REF_ADVANCED.
+    #[arg(long, value_name = "SHA", value_parser = parse_full_sha)]
+    pub expected_sha: String,
+    /// Check everything and print what would happen without writing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CommitCommand {
+    /// Commit many file changes as one commit
+    ///
+    /// `--files` is a JSON array of operations: `{"operation":"create",
+    /// "path":…,"content":…}`, `{"operation":"update","path":…,"content":…,
+    /// "sha":<blob you read>}`, `{"operation":"delete","path":…,"sha":…}` and
+    /// `{"operation":"move","from":…,"to":…,"sha":…}`. Either every change
+    /// lands in one commit or the branch does not move.
+    Create {
+        #[command(flatten)]
+        target: CommitTarget,
+        /// Commit message
+        #[arg(short = 'm', long)]
+        message: String,
+        /// JSON file with the operations; `-` reads stdin
+        #[arg(long, value_name = "FILE")]
+        files: String,
+    },
+    /// Apply a unified diff as one commit
+    ///
+    /// The patch is `git diff` shaped (`a/…`, `b/…`, `/dev/null`), at most
+    /// 1 MiB and 500 paths. Either the whole patch applies or the branch does
+    /// not move (409 if it does not apply).
+    ApplyPatch {
+        #[command(flatten)]
+        target: CommitTarget,
+        /// Commit message; omitted, the server generates one
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+        /// File with the unified diff; `-` reads stdin
+        #[arg(long, value_name = "FILE")]
+        patch_file: String,
+    },
+    /// Apply the change an existing commit made, as a new commit
+    CherryPick {
+        /// The commit to pick
+        sha: String,
+        #[command(flatten)]
+        target: CommitTarget,
+        /// Parent number to treat as the mainline (required for a merge commit)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        mainline: Option<u32>,
+        /// Replace the generated message (the standard trailer is still added)
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+    },
+    /// Apply the inverse of an existing commit's change, as a new commit
+    Revert {
+        /// The commit to revert
+        sha: String,
+        #[command(flatten)]
+        target: CommitTarget,
+        /// Parent number to treat as the mainline (required for a merge commit)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        mainline: Option<u32>,
+        /// Replace the generated message (the standard trailer is still added)
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BranchCommand {
+    /// Delete a branch (asks for confirmation unless --yes)
+    ///
+    /// The server refuses the default branch, a protected branch and a branch
+    /// an open pull request uses. Merged and closed pull requests keep their
+    /// `refs/pull/<n>/head`, so they survive the branch. `--dry-run` writes
+    /// nothing and needs no confirmation.
+    Delete {
+        /// Branch name (may contain slashes)
+        name: String,
+        /// Delete only while the branch is still at this commit: the full
+        /// 40-character SHA. A moved branch is refused with REF_ADVANCED.
+        #[arg(long, value_name = "SHA", value_parser = parse_full_sha)]
+        expected_sha: Option<String>,
+        /// Check everything and print what would be deleted without deleting
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1087,6 +1773,180 @@ pub enum MilestoneCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum EventsCommand {
+    /// List the events after a cursor (one read, no waiting)
+    List {
+        /// Return events after this cursor; omit for the current cursor only
+        #[arg(long, value_name = "CURSOR", allow_hyphen_values = true)]
+        since: Option<i64>,
+        /// Event name to include; repeat for several
+        #[arg(long = "kind", value_name = "KIND")]
+        kinds: Vec<String>,
+        /// Most events to return (server default 100, at most 200)
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(0..=200))]
+        limit: Option<u64>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentCommand {
+    /// List your agents
+    List,
+    /// Create an agent
+    Create {
+        /// Short name (the account becomes `<you>-agent-<name>`)
+        name: String,
+        /// What the agent is for (at most 500 characters)
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Show one agent
+    View {
+        /// The agent's full username
+        username: String,
+    },
+    /// Change an agent's description or switch it on or off
+    ///
+    /// A deactivated agent's tokens are refused and the sessions already
+    /// started from them stop working; `--activate` reverses it. An empty
+    /// `--description ""` clears the description.
+    #[command(group(clap::ArgGroup::new("change").required(true).multiple(true).args(["description", "activate", "deactivate"])))]
+    Edit {
+        username: String,
+        #[arg(long)]
+        description: Option<String>,
+        /// Reactivate the agent
+        #[arg(long, conflicts_with = "deactivate")]
+        activate: bool,
+        /// Deactivate the agent
+        #[arg(long)]
+        deactivate: bool,
+    },
+    /// Manage an agent's tokens
+    Token {
+        #[command(subcommand)]
+        command: AgentTokenCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentTokenCommand {
+    /// List an agent's tokens (metadata only, never the secrets)
+    List { username: String },
+    /// Issue a token and save the secret to a new private file
+    ///
+    /// The server shows the secret once. It is written to `--token-file`
+    /// (created with mode 600; an existing file is never overwritten) and is
+    /// never printed. A token carries repository scopes only and defaults to
+    /// `repo:write`; `--allow-repo` and `--allow-ref` limit it further.
+    Create {
+        username: String,
+        /// Token name
+        #[arg(long)]
+        name: String,
+        /// Scopes, space or comma separated (default repo:write)
+        #[arg(long)]
+        scopes: Option<String>,
+        /// Limit the token to this repository (OWNER/NAME); repeatable
+        #[arg(long = "allow-repo", value_name = "OWNER/NAME")]
+        allow_repo: Vec<String>,
+        /// Limit the branches it may write, e.g. `agent/*`; repeatable; needs --allow-repo
+        #[arg(long = "allow-ref", value_name = "PATTERN", requires = "allow_repo")]
+        allow_ref: Vec<String>,
+        /// RFC 3339 expiry time
+        #[arg(long, value_name = "TIME")]
+        expires_at: Option<String>,
+        /// File that receives the secret
+        #[arg(long, value_name = "FILE")]
+        token_file: String,
+    },
+    /// Revoke a token
+    Revoke {
+        username: String,
+        /// Token id from `agent token list`
+        id: i64,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DraftCommand {
+    /// List the repository's draft namespaces
+    List,
+    /// Reserve a branch directory for a limited time
+    ///
+    /// PREFIX is a concrete directory that starts with `agent/`, names an
+    /// agent segment you own (your own id or username, or one of your
+    /// agents) and ends with `/`, such as `agent/42/`.
+    Create {
+        prefix: String,
+        /// Lifetime, 1 minute to 30 days (`90m`, `7d`)
+        #[arg(long, value_parser = parse_ttl)]
+        ttl: i64,
+        /// How long the branches survive after expiry (server default 1 day)
+        #[arg(long, value_parser = parse_grace)]
+        grace: Option<i64>,
+    },
+    /// Push the deadline back
+    ///
+    /// The server never shortens a namespace and caps the deadline at four
+    /// times its original lifetime after creation. An expired namespace that
+    /// is not yet cleaned up is reopened.
+    Extend {
+        /// Namespace id from `draft list`
+        id: i64,
+        /// Time to add (`2h`, `1d`)
+        #[arg(long, value_parser = parse_ttl)]
+        by: i64,
+    },
+    /// Close a namespace now; its branches are deleted after the grace period
+    Close {
+        id: i64,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+/// Parse `90`, `90s`, `30m`, `12h` or `7d` into seconds.
+fn parse_duration(raw: &str) -> Result<i64, String> {
+    let raw = raw.trim();
+    let (digits, unit) = match raw.char_indices().last() {
+        Some((index, c)) if c.is_ascii_alphabetic() => (&raw[..index], c),
+        _ => (raw, 's'),
+    };
+    let amount: i64 = digits
+        .parse()
+        .map_err(|_| format!("'{raw}' is not a duration; use 90s, 30m, 12h or 7d"))?;
+    let factor = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        'd' => 86_400,
+        other => return Err(format!("unknown duration unit '{other}'; use s, m, h or d")),
+    };
+    amount
+        .checked_mul(factor)
+        .filter(|seconds| *seconds >= 0)
+        .ok_or_else(|| format!("'{raw}' is out of range"))
+}
+
+/// A lifetime the server accepts: 60 seconds to 30 days.
+fn parse_ttl(raw: &str) -> Result<i64, String> {
+    let seconds = parse_duration(raw)?;
+    if !(60..=30 * 86_400).contains(&seconds) {
+        return Err("must be between 1 minute and 30 days".into());
+    }
+    Ok(seconds)
+}
+
+fn parse_grace(raw: &str) -> Result<i64, String> {
+    parse_duration(raw)
+}
+
+#[derive(Debug, Subcommand)]
 pub enum NotificationsCommand {
     /// List notifications (default when no subcommand is given)
     List {
@@ -1108,6 +1968,39 @@ pub enum NotificationsCommand {
     Delete { id: i64 },
     /// Print the unread count
     Count,
+    /// Read or change which notifications you receive
+    ///
+    /// A missing setting means "on". Settings are per event type and channel
+    /// (`in_app` or `email`), globally or for one repository: pass `-R
+    /// OWNER/NAME` to scope a change to that repository (the repository is
+    /// never inferred from the git remote here, so a global change cannot
+    /// become a repository one by accident).
+    Prefs {
+        #[command(subcommand)]
+        command: PrefsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PrefsCommand {
+    /// Show the effective settings: defaults plus your explicit overrides
+    List,
+    /// Turn one event type on or off for one channel
+    #[command(group(clap::ArgGroup::new("state").required(true).args(["on", "off"])))]
+    Set {
+        /// Event type, as listed by `notifications prefs list`
+        #[arg(long)]
+        event: String,
+        /// Delivery channel
+        #[arg(long, value_parser = ["in_app", "email"])]
+        channel: String,
+        /// Turn it on (stores an explicit "on", e.g. to undo a global mute for one repository)
+        #[arg(long)]
+        on: bool,
+        /// Turn it off
+        #[arg(long)]
+        off: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

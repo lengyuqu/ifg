@@ -41,6 +41,54 @@ fn version_prints_crate_version() {
     assert_eq!(stdout.trim(), concat!("ifg ", env!("CARGO_PKG_VERSION")));
 }
 
+#[tokio::test]
+async fn pr_view_json_comments_combines_raw_responses() {
+    let server = MockServer::start().await;
+    let home = TempDir::new().unwrap();
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/pulls/12"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "number": 12, "extra_server_field": "kept", "comments": "overwritten"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/repos/alice/demo/pulls/12/comments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": 7, "body": "review", "extra_comment_field": true}
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = ifg()
+        .args([
+            "--json",
+            "-R",
+            "alice/demo",
+            "pr",
+            "view",
+            "12",
+            "--comments",
+        ])
+        .env("IRONFORGE_URL", server.uri())
+        .env("IRONFORGE_PAT", "ifp_test")
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let actual: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(
+        actual,
+        json!({
+            "number": 12, "extra_server_field": "kept",
+            "comments": [{"id": 7, "body": "review", "extra_comment_field": true}]
+        })
+    );
+}
+
 #[test]
 fn no_arguments_shows_help_with_usage_exit_code() {
     let out = ifg().assert().code(2);

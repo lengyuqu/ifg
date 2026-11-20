@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::cli::{
-    Cli, CollabCommand, CollabHandoffCommand, CollabMessageCommand, CollabQuestionCommand,
-    CollabSessionCommand, CollabTaskCommand,
+    Cli, CollabBudgetCommand, CollabCommand, CollabConditionCommand, CollabDecisionCommand,
+    CollabDependencyCommand, CollabHandoffCommand, CollabMessageCommand, CollabQuestionCommand,
+    CollabSessionCommand, CollabTaskCommand, CollabUsageCommand, CollabWorkPackageCommand,
 };
 use crate::context::resolve_repo;
 use crate::error::AppError;
@@ -130,6 +131,31 @@ fn query(path: &str, params: &[(&str, Option<String>)]) -> String {
     }
 }
 
+/// Read the body for `condition set`. The file is sent as-is, so the only
+/// check is that it parses as a JSON object; anything else is a usage error
+/// (exit 2) raised before any request.
+fn read_conditions_body(source: &str) -> Result<Value, AppError> {
+    let text = if source == "-" {
+        use std::io::Read;
+        let mut buffer = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buffer)
+            .map_err(|e| AppError::Io(format!("cannot read stdin: {e}")))?;
+        buffer
+    } else {
+        std::fs::read_to_string(source)
+            .map_err(|e| AppError::Io(format!("cannot read {source}: {e}")))?
+    };
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|e| AppError::Usage(format!("condition file is not valid JSON: {e}")))?;
+    if !value.is_object() {
+        return Err(AppError::Usage(
+            "condition file must contain a JSON object".into(),
+        ));
+    }
+    Ok(value)
+}
+
 fn show(cli: &Cli, value: &Value) {
     if let Some(template) = &cli.template {
         if let Some(items) = value.get("items").and_then(Value::as_array) {
@@ -200,6 +226,16 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
             command: CollabHandoffCommand::Create { .. }
                 | CollabHandoffCommand::Accept { .. }
                 | CollabHandoffCommand::Cancel { .. }
+        } | CollabCommand::WorkPackage {
+            command: CollabWorkPackageCommand::Create { .. }
+        } | CollabCommand::Dependency {
+            command: CollabDependencyCommand::Add { .. } | CollabDependencyCommand::Remove { .. }
+        } | CollabCommand::Decision {
+            command: CollabDecisionCommand::Create { .. }
+        } | CollabCommand::Condition {
+            command: CollabConditionCommand::Set { .. } | CollabConditionCommand::Confirm { .. }
+        } | CollabCommand::Usage {
+            command: CollabUsageCommand::Report { .. }
         } | CollabCommand::Inbox { user: false, .. }
     );
     let optional_session = matches!(
@@ -280,6 +316,11 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
                 None,
             ),
             CollabTaskCommand::View { id } => (Method::GET, format!("tasks/{}", encoded(id)), None),
+            CollabTaskCommand::Status { id } => (
+                Method::GET,
+                format!("tasks/{}/completion-status", encoded(id)),
+                None,
+            ),
             CollabTaskCommand::Create {
                 title,
                 description,
@@ -545,12 +586,261 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
                 ),
             }
         }
+        CollabCommand::WorkPackage { command } => match command {
+            CollabWorkPackageCommand::List {
+                task_id,
+                cursor,
+                limit,
+            } => (
+                Method::GET,
+                query(
+                    &format!("tasks/{}/work-packages", encoded(task_id)),
+                    &[
+                        ("cursor", cursor.clone()),
+                        ("limit", limit.map(|n| n.to_string())),
+                    ],
+                ),
+                None,
+            ),
+            CollabWorkPackageCommand::Create {
+                task_id,
+                key,
+                goal,
+                scope,
+                commit,
+                expected_task_version,
+                artifact,
+                completed,
+                next_step,
+                open_item,
+            } => {
+                // Optional scalars are omitted rather than sent as null: the
+                // schema types goal and scope as plain strings.
+                let mut body = json!({
+                    "client_package_id": key,
+                    "artifacts": artifact,
+                    "completed": completed,
+                    "next_steps": next_step,
+                    "open_items": open_item,
+                });
+                if let Some(goal) = goal {
+                    body["goal"] = json!(goal);
+                }
+                if let Some(scope) = scope {
+                    body["scope"] = json!(scope);
+                }
+                if let Some(commit) = commit {
+                    body["commit_sha"] = json!(commit);
+                }
+                if let Some(version) = expected_task_version {
+                    body["expected_task_version"] = json!(version);
+                }
+                (
+                    Method::POST,
+                    format!("tasks/{}/work-packages", encoded(task_id)),
+                    Some(body),
+                )
+            }
+            CollabWorkPackageCommand::View { id } => {
+                (Method::GET, format!("work-packages/{}", encoded(id)), None)
+            }
+        },
+        CollabCommand::Dependency { command } => match command {
+            CollabDependencyCommand::List { task_id } => (
+                Method::GET,
+                format!("tasks/{}/dependencies", encoded(task_id)),
+                None,
+            ),
+            CollabDependencyCommand::Add {
+                task_id,
+                depends_on_id,
+                key,
+                expected_graph_version,
+            } => (
+                Method::POST,
+                format!("tasks/{}/dependencies", encoded(task_id)),
+                Some(json!({
+                    "client_request_id": key,
+                    "depends_on_task_id": depends_on_id,
+                    "expected_graph_version": expected_graph_version,
+                })),
+            ),
+            CollabDependencyCommand::Remove {
+                task_id,
+                depends_on_id,
+                key,
+                expected_graph_version,
+            } => (
+                Method::DELETE,
+                format!(
+                    "tasks/{}/dependencies/{}",
+                    encoded(task_id),
+                    encoded(depends_on_id)
+                ),
+                Some(json!({
+                    "client_request_id": key,
+                    "expected_graph_version": expected_graph_version,
+                })),
+            ),
+        },
+        CollabCommand::Decision { command } => match command {
+            CollabDecisionCommand::List {
+                task_id,
+                cursor,
+                limit,
+            } => (
+                Method::GET,
+                query(
+                    &format!("tasks/{}/decisions", encoded(task_id)),
+                    &[
+                        ("cursor", cursor.clone()),
+                        ("limit", limit.map(|n| n.to_string())),
+                    ],
+                ),
+                None,
+            ),
+            CollabDecisionCommand::Create {
+                task_id,
+                key,
+                title,
+                rationale,
+                question_id,
+                answer_id,
+                task_version,
+                base_sha,
+                head_sha,
+            } => {
+                let mut body = json!({
+                    "client_decision_id": key,
+                    "title": title,
+                    "rationale": rationale,
+                });
+                if let Some(question_id) = question_id {
+                    body["question_id"] = json!(question_id);
+                }
+                if let Some(answer_id) = answer_id {
+                    body["answer_id"] = json!(answer_id);
+                }
+                // `context` is optional and nullable; send it only when one of its fields is set.
+                if task_version.is_some() || base_sha.is_some() || head_sha.is_some() {
+                    body["context"] = json!({
+                        "task_version": task_version,
+                        "base_sha": base_sha,
+                        "head_sha": head_sha,
+                    });
+                }
+                (
+                    Method::POST,
+                    format!("tasks/{}/decisions", encoded(task_id)),
+                    Some(body),
+                )
+            }
+            CollabDecisionCommand::View { id } => {
+                (Method::GET, format!("decisions/{}", encoded(id)), None)
+            }
+        },
         CollabCommand::Inbox { user, since, limit } => (
             Method::GET,
             query(
                 if *user { "inbox/user" } else { "inbox" },
                 &[
                     ("since", since.clone()),
+                    ("limit", limit.map(|n| n.to_string())),
+                ],
+            ),
+            None,
+        ),
+        CollabCommand::Condition { command } => match command {
+            CollabConditionCommand::List { task_id } => (
+                Method::GET,
+                format!("tasks/{}/completion-conditions", encoded(task_id)),
+                None,
+            ),
+            CollabConditionCommand::Set { task_id, source } => (
+                Method::PUT,
+                format!("tasks/{}/completion-conditions", encoded(task_id)),
+                Some(read_conditions_body(source)?),
+            ),
+            CollabConditionCommand::Confirm {
+                task_id,
+                condition_id,
+                key,
+                note,
+            } => {
+                let mut body = json!({"client_request_id": key});
+                if let Some(note) = note {
+                    body["note"] = json!(note);
+                }
+                (
+                    Method::POST,
+                    format!(
+                        "tasks/{}/completion-conditions/{}/confirmations",
+                        encoded(task_id),
+                        encoded(condition_id)
+                    ),
+                    Some(body),
+                )
+            }
+        },
+        CollabCommand::Budget { command } => match command {
+            CollabBudgetCommand::View { task_id } => (
+                Method::GET,
+                format!("tasks/{}/budget", encoded(task_id)),
+                None,
+            ),
+        },
+        CollabCommand::Usage { command } => match command {
+            CollabUsageCommand::List {
+                task_id,
+                unit,
+                source,
+                cursor,
+                limit,
+            } => (
+                Method::GET,
+                query(
+                    &format!("tasks/{}/usage", encoded(task_id)),
+                    &[
+                        ("unit", unit.clone()),
+                        ("source", source.clone()),
+                        ("cursor", cursor.clone()),
+                        ("limit", limit.map(|n| n.to_string())),
+                    ],
+                ),
+                None,
+            ),
+            CollabUsageCommand::Report {
+                task_id,
+                key,
+                unit,
+                source,
+                amount,
+                period_start,
+                period_end,
+            } => (
+                Method::POST,
+                format!("tasks/{}/usage", encoded(task_id)),
+                Some(json!({
+                    "client_usage_id": key,
+                    "unit": unit,
+                    "source": source,
+                    "amount": amount,
+                    "period_start": period_start,
+                    "period_end": period_end,
+                })),
+            ),
+        },
+        CollabCommand::Rules { git_ref, path } => (
+            Method::GET,
+            query("rules", &[("ref", git_ref.clone()), ("path", path.clone())]),
+            None,
+        ),
+        CollabCommand::Overview { sections, limit } => (
+            Method::GET,
+            query(
+                "overview",
+                &[
+                    ("sections", sections.clone()),
                     ("limit", limit.map(|n| n.to_string())),
                 ],
             ),

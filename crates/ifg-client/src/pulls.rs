@@ -296,20 +296,98 @@ impl Pulls<'_> {
 
     /// `POST …/pulls/{number}/merge`.
     pub async fn merge(&self, number: i64, strategy: MergeStrategy) -> Result<MergeOutcome, Error> {
-        let value: Value = self.merge_raw(number, strategy).await?;
+        self.merge_with_expected_head(number, strategy, None).await
+    }
+
+    /// Raw JSON twin of [`Pulls::merge`].
+    pub async fn merge_raw(&self, number: i64, strategy: MergeStrategy) -> Result<Value, Error> {
+        self.merge_with_expected_head_raw(number, strategy, None)
+            .await
+    }
+
+    /// `POST …/pulls/{number}/merge` guarded by `expected_head_sha`. The
+    /// server merges nothing and answers 409 `REF_ADVANCED` when the head
+    /// branch no longer points at that commit. `None` sends the same body as
+    /// [`Pulls::merge`]. The SHA must be the full, lower-case commit SHA.
+    pub async fn merge_with_expected_head(
+        &self,
+        number: i64,
+        strategy: MergeStrategy,
+        expected_head_sha: Option<&str>,
+    ) -> Result<MergeOutcome, Error> {
+        let value: Value = self
+            .merge_with_expected_head_raw(number, strategy, expected_head_sha)
+            .await?;
         serde_json::from_value(value).map_err(|source| Error::Decode {
             body_snippet: "merge response".to_string(),
             source,
         })
     }
 
-    /// Raw JSON twin of [`Pulls::merge`].
-    pub async fn merge_raw(&self, number: i64, strategy: MergeStrategy) -> Result<Value, Error> {
+    /// Raw JSON twin of [`Pulls::merge_with_expected_head`].
+    pub async fn merge_with_expected_head_raw(
+        &self,
+        number: i64,
+        strategy: MergeStrategy,
+        expected_head_sha: Option<&str>,
+    ) -> Result<Value, Error> {
+        let mut body = serde_json::json!({ "strategy": strategy.as_str() });
+        if let Some(sha) = expected_head_sha {
+            body["expected_head_sha"] = Value::String(sha.to_string());
+        }
         self.client
             .send(
                 crate::Method::POST,
                 &format!("{}/merge", self.pull_path(number)),
-                Some(&serde_json::json!({ "strategy": strategy.as_str() })),
+                Some(&body),
+            )
+            .await
+    }
+
+    /// `GET …/pulls/{number}/merge-readiness`: what stands between the pull
+    /// request and a merge (conflicts, protection gates, required checks).
+    /// Read-only. `strategy` defaults to `merge` on the server;
+    /// `conflicts_after` continues a cut conflict list after that path.
+    pub async fn merge_readiness_raw(
+        &self,
+        number: i64,
+        strategy: Option<MergeStrategy>,
+        conflicts_after: Option<&str>,
+    ) -> Result<Value, Error> {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if let Some(strategy) = strategy {
+            query.append_pair("strategy", strategy.as_str());
+        }
+        if let Some(path) = conflicts_after {
+            query.append_pair("conflicts_after", path);
+        }
+        let query = query.finish();
+        let mut path = format!("{}/merge-readiness", self.pull_path(number));
+        if !query.is_empty() {
+            path.push('?');
+            path.push_str(&query);
+        }
+        self.client.send(crate::Method::GET, &path, None).await
+    }
+
+    /// `POST …/pulls/{number}/update-branch`: merge the base branch into the
+    /// head branch, built from exactly `expected_head_sha` (409 `REF_ADVANCED`
+    /// when the head moved, `MERGE_CONFLICTS` when the base does not merge).
+    pub async fn update_branch_raw(
+        &self,
+        number: i64,
+        expected_head_sha: &str,
+        dry_run: bool,
+    ) -> Result<Value, Error> {
+        let mut body = serde_json::json!({ "expected_head_sha": expected_head_sha });
+        if dry_run {
+            body["dry_run"] = Value::Bool(true);
+        }
+        self.client
+            .send(
+                crate::Method::POST,
+                &format!("{}/update-branch", self.pull_path(number)),
+                Some(&body),
             )
             .await
     }

@@ -1,9 +1,12 @@
 //! HTTP layer: request building, bearer auth, retries and error-body parsing
 //! (design doc §4.4).
 //!
-//! Retries happen only for idempotent methods (`GET`/`HEAD`), on connection
-//! errors and on `429`/`502`/`503`/`504`, at most three times with
-//! exponential backoff plus jitter. A `Retry-After` response header wins
+//! Retries happen for idempotent methods (`GET`/`HEAD`) on connection errors
+//! and on `429`/`502`/`503`/`504`. A write request is retried only when it
+//! carries an [`IdempotencyKey`] (see `ClientBuilder::idempotency_key`): the
+//! same key then makes a repeat safe, so it is also retried on dropped
+//! connections and on any `5xx` or `429`. Retries are at most three times
+//! with exponential backoff plus jitter. A `Retry-After` response header wins
 //! over the computed backoff.
 //!
 //! Timeouts: ordinary API calls get a total per-request timeout. Release
@@ -19,6 +22,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::error::{self, Error};
+use crate::idempotency::IdempotencyKey;
 use crate::Secret;
 
 /// Default request timeout (design doc §4.1).
@@ -47,6 +51,10 @@ pub struct Client {
     token: Option<Secret>,
     retry: RetryPolicy,
     timeout: Duration,
+    /// Sent as `Idempotency-Key` on write requests of the regular API
+    /// transfer. Never on reads, streamed uploads or downloads, or collab
+    /// calls: those routes are not covered by the server's key support.
+    idempotency_key: Option<IdempotencyKey>,
 }
 
 /// How a request is bounded in time (see the module docs).
@@ -123,6 +131,7 @@ pub struct ClientBuilder {
     user_agent: Option<String>,
     timeout: Option<Duration>,
     retry: RetryPolicy,
+    idempotency_key: Option<IdempotencyKey>,
 }
 
 impl ClientBuilder {
@@ -135,6 +144,7 @@ impl ClientBuilder {
             user_agent: None,
             timeout: None,
             retry: RetryPolicy::default(),
+            idempotency_key: None,
         }
     }
 
@@ -167,6 +177,14 @@ impl ClientBuilder {
     /// First backoff between retries. Tests shrink it to keep suites fast.
     pub fn initial_backoff(mut self, initial_backoff: Duration) -> Self {
         self.retry.initial_backoff = initial_backoff;
+        self
+    }
+
+    /// Send this key as `Idempotency-Key` on every write request of the
+    /// regular API transfer (POST, PUT, PATCH, DELETE), and retry those
+    /// writes with the same key. The key is never generated here.
+    pub fn idempotency_key(mut self, key: IdempotencyKey) -> Self {
+        self.idempotency_key = Some(key);
         self
     }
 
@@ -206,6 +224,7 @@ impl ClientBuilder {
             token: self.token,
             retry: self.retry,
             timeout,
+            idempotency_key: self.idempotency_key,
         })
     }
 }
@@ -280,6 +299,16 @@ impl Client {
     pub async fn capabilities(&self) -> Result<Value, Error> {
         self.send(reqwest::Method::GET, "collaboration/capabilities", None)
             .await
+    }
+
+    /// `GET /repos/{owner}/{name}/collaboration/capabilities`: the same
+    /// contract plus the caller's access to that repository.
+    pub async fn repo_capabilities(&self, owner: &str, name: &str) -> Result<Value, Error> {
+        let path = format!(
+            "{}/collaboration/capabilities",
+            crate::repos::repo_path(owner, name)
+        );
+        self.send(reqwest::Method::GET, &path, None).await
     }
 
     /// `GET /health` — outside `/api/v1/`. Returns the parsed JSON body
@@ -391,6 +420,11 @@ impl Client {
     ) -> Result<reqwest::Response, Error> {
         let url = join_path(&self.base, path);
         let idempotent = matches!(method, reqwest::Method::GET | reqwest::Method::HEAD);
+        // Only regular API writes carry the key; see `ClientBuilder::idempotency_key`.
+        let keyed = match (&self.idempotency_key, transfer) {
+            (Some(key), Transfer::Api) if is_write(&method) => Some(key),
+            _ => None,
+        };
         let mut attempt: u32 = 0;
 
         loop {
@@ -414,6 +448,9 @@ impl Client {
                     .header("X-Ironforge-Session", &session.id)
                     .header("X-Ironforge-Session-Secret", session.secret.expose());
             }
+            if let Some(key) = keyed {
+                request = request.header("Idempotency-Key", key.as_str());
+            }
             if let Some(body) = body {
                 request = request.json(body);
             }
@@ -429,7 +466,12 @@ impl Client {
                         elapsed = ?started.elapsed(),
                         "request"
                     );
-                    if is_retryable(status) && idempotent && attempt < self.retry.max_retries {
+                    let retry_status = if keyed.is_some() {
+                        is_retryable_write(status)
+                    } else {
+                        idempotent && is_retryable(status)
+                    };
+                    if retry_status && attempt < self.retry.max_retries {
                         let headers = response.headers().clone();
                         let delay = self.retry.delay(attempt, headers.get("Retry-After"));
                         tracing::info!(
@@ -480,7 +522,16 @@ impl Client {
                     return Ok(response);
                 }
                 Err(e) => {
-                    if idempotent && e.is_connect() && attempt < self.retry.max_retries {
+                    // A keyed write whose connection dropped may or may not
+                    // have been applied; the same key makes the repeat safe.
+                    // Timeouts are not retried: the whole exchange already
+                    // used its budget.
+                    let retry_connection = if keyed.is_some() {
+                        !e.is_timeout() && (e.is_connect() || e.is_request())
+                    } else {
+                        idempotent && e.is_connect()
+                    };
+                    if retry_connection && attempt < self.retry.max_retries {
                         let delay = self.retry.delay(attempt, None);
                         tracing::info!(
                             error = %e,
@@ -503,6 +554,7 @@ impl Client {
     /// cloned, so there is no retry: a failure surfaces and the caller
     /// retries explicitly. Only the connect timeout applies: the upload plus
     /// the server's processing of a large file has no meaningful upper bound.
+    /// The idempotency key is never sent here.
     pub(crate) async fn raw_with_stream_body(
         &self,
         method: reqwest::Method,
@@ -542,6 +594,23 @@ impl Client {
 
 fn is_retryable(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 429 | 502 | 503 | 504)
+}
+
+/// Retry rule for a keyed write: any server error and rate limiting. The key
+/// makes the repeat safe whichever status the first attempt produced.
+fn is_retryable_write(status: reqwest::StatusCode) -> bool {
+    status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+/// Methods that change server state.
+fn is_write(method: &reqwest::Method) -> bool {
+    matches!(
+        *method,
+        reqwest::Method::POST
+            | reqwest::Method::PUT
+            | reqwest::Method::PATCH
+            | reqwest::Method::DELETE
+    )
 }
 
 /// Header map with the `Authorization` value reduced to `Bearer <prefix>…`,

@@ -1,113 +1,233 @@
 //! Subcommand implementations (M1: `auth`, `api`; M2: `repo`, `issue`, `pr`;
 //! M3: `ci`, `release`; M5: `label`, `milestone`, `status`).
 
+pub mod agent;
+pub mod ai_context;
 pub mod api;
 pub mod auth;
+pub mod branch;
+pub mod capabilities;
 pub mod ci;
 pub mod collab;
+pub mod commit;
 pub mod doctor;
+pub mod draft;
+pub mod events;
 pub mod issue;
 pub mod label;
+pub mod mcp;
 pub mod milestone;
 pub mod notifications;
 pub mod org;
 pub mod pr;
 pub mod release;
 pub mod repo;
+pub mod schema;
 pub mod search;
 pub mod status;
 pub mod version;
 pub mod wiki;
 
-use ifg_client::Client;
+use clap::ArgMatches;
+use ifg_client::{Client, IdempotencyKey};
 
 use crate::cli::Cli;
 use crate::config::Config;
 use crate::context::{self, ResolvedHost};
 use crate::error::AppError;
 
+/// Leaf commands that accept `--json` / `--template`, by clap command path.
+/// A group path covers every leaf under it. `view` commands also accept the
+/// flags, except with `--web`, which `validate_output` checks on its own.
+///
+/// This table is the one place that decides structured-output support:
+/// `validate_output` enforces it and `ifg schema` reports it.
+pub(crate) const STRUCTURED_OUTPUT: &[&str] = &[
+    "api",
+    "mcp config",
+    "mcp doctor",
+    "status",
+    "search",
+    "context",
+    "doctor",
+    "capabilities",
+    "collab",
+    "wiki",
+    "org",
+    "notifications",
+    "agent",
+    "draft",
+    "auth status",
+    "repo collaborators",
+    "repo list",
+    "repo view",
+    "repo edit",
+    "repo create",
+    "issue list",
+    "issue view",
+    "issue create",
+    "issue comment",
+    "issue close",
+    "issue reopen",
+    "issue edit",
+    "pr list",
+    "pr view",
+    "pr create",
+    "pr merge",
+    "pr review",
+    "pr edit",
+    "pr close",
+    "pr reopen",
+    "pr comment",
+    "pr reviews",
+    "pr reviewers",
+    "pr checks",
+    "pr readiness",
+    "pr update-branch",
+    "commit",
+    "branch delete",
+    "ci run",
+    "ci wait",
+    "ci runs",
+    "ci view",
+    "ci cancel",
+    "ci retry",
+    "ci approve",
+    "events list",
+    "release list",
+    "release view",
+    "release create",
+    "release edit",
+    "label list",
+    "label create",
+    "label edit",
+    "milestone list",
+    "milestone create",
+    "milestone edit",
+];
+
+/// Whether the leaf or group at `path` (clap names, outermost first) accepts
+/// structured output. Does not consider `--web`; see `STRUCTURED_OUTPUT`.
+pub(crate) fn structured_output_supported(path: &[&str]) -> bool {
+    STRUCTURED_OUTPUT.iter().any(|entry| {
+        let entry: Vec<&str> = entry.split(' ').collect();
+        path.starts_with(&entry)
+    })
+}
+
+/// Environment variable that supplies the idempotency key when the flag is
+/// absent. An empty value counts as unset.
+pub(crate) const IDEMPOTENCY_ENV: &str = "IRONFORGE_IDEMPOTENCY_KEY";
+
+/// Leaf commands that accept `--idempotency-key`, by clap path. Each one makes
+/// exactly one write request, on a route the server lists as supporting keys.
+/// Every other command refuses the key before it sends anything (exit 2), so
+/// `ifg schema` reports `accepts_idempotency_key` from this table alone.
+///
+/// Deliberately absent: `release create` and `release upload`, which send one
+/// request per asset under the same key (the server would answer the second
+/// one with `IDEMPOTENCY_KEY_REUSED`), and every route the server does not
+/// list: `repo edit`, `repo delete`, collaborators, `ci`, `collab`,
+/// `notifications`, `org`, `auth`, `api` and the rest.
+pub(crate) const IDEMPOTENT_WRITES: &[&str] = &[
+    "repo create",
+    "issue create",
+    "issue comment",
+    "issue close",
+    "issue reopen",
+    "issue edit",
+    "pr create",
+    "pr edit",
+    "pr close",
+    "pr reopen",
+    "pr comment",
+    "pr review",
+    "pr merge",
+    "pr update-branch",
+    "pr reviewers add",
+    "pr reviewers remove",
+    "label create",
+    "label edit",
+    "label delete",
+    "milestone create",
+    "milestone edit",
+    "milestone delete",
+    "wiki create",
+    "wiki edit",
+    "wiki delete",
+    "release edit",
+    "release delete",
+    "commit create",
+    "commit apply-patch",
+    "commit cherry-pick",
+    "commit revert",
+    "branch delete",
+];
+
+/// Whether the leaf command at `path` (clap names) accepts an idempotency key.
+pub(crate) fn accepts_idempotency_key(path: &[&str]) -> bool {
+    IDEMPOTENT_WRITES.contains(&path.join(" ").as_str())
+}
+
+/// Clap names from the top command down to the leaf, and the leaf's matches.
+fn leaf_of(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
+    let mut path = Vec::new();
+    let mut leaf = matches;
+    while let Some((name, sub)) = leaf.subcommand() {
+        path.push(name);
+        leaf = sub;
+    }
+    (path, leaf)
+}
+
+/// Decide the idempotency key for this invocation: the flag, else the
+/// environment variable. A malformed key, or a key given to a command that does
+/// not accept one, is a usage error raised before any request. Nothing is ever
+/// generated here.
+pub(crate) fn validate_idempotency(
+    cli: &Cli,
+    matches: &ArgMatches,
+) -> Result<Option<IdempotencyKey>, AppError> {
+    let (raw, source) = match cli.idempotency_key.as_deref() {
+        Some(flag) => (flag.to_owned(), "--idempotency-key"),
+        None => match std::env::var(IDEMPOTENCY_ENV) {
+            Ok(value) if !value.is_empty() => (value, IDEMPOTENCY_ENV),
+            _ => return Ok(None),
+        },
+    };
+    let key = IdempotencyKey::parse(&raw)
+        .map_err(|error| AppError::Usage(format!("{source} {error}")))?;
+    let (path, _) = leaf_of(matches);
+    if accepts_idempotency_key(&path) {
+        return Ok(Some(key));
+    }
+    Err(AppError::Usage(format!(
+        "`ifg {}` does not accept an idempotency key, but {source} is set: run it without {source}. \
+         `ifg schema` lists the commands that accept one (accepts_idempotency_key)",
+        path.join(" ")
+    )))
+}
+
 /// Commands that produce documents, invoke git, or open a browser cannot
 /// silently accept structured-output flags. Validate before any side effect.
-pub(crate) fn validate_output(cli: &Cli) -> Result<(), AppError> {
-    use crate::cli::{
-        AuthCommand, CiCommand, Command, IssueCommand, LabelCommand, MilestoneCommand, PrCommand,
-        ReleaseCommand, RepoCommand,
-    };
+/// `matches` is the parse result behind `cli`; it gives the leaf command path.
+pub(crate) fn validate_output(cli: &Cli, matches: &ArgMatches) -> Result<(), AppError> {
     if !cli.json && cli.template.is_none() {
         return Ok(());
     }
-    let supported = match &cli.command {
-        Command::Api { .. }
-        | Command::Status
-        | Command::Search { .. }
-        | Command::Doctor
-        | Command::Collab { .. }
-        | Command::Wiki { .. }
-        | Command::Org { .. }
-        | Command::Notifications { .. } => true,
-        Command::Auth { command } => matches!(command, AuthCommand::Status),
-        Command::Repo { command } => matches!(
-            command,
-            RepoCommand::Collaborators { .. }
-                | RepoCommand::List { .. }
-                | RepoCommand::View { web: false, .. }
-                | RepoCommand::Edit { .. }
-                | RepoCommand::Create { .. }
-        ),
-        Command::Issue { command } => matches!(
-            command,
-            IssueCommand::List { .. }
-                | IssueCommand::View { web: false, .. }
-                | IssueCommand::Create { .. }
-                | IssueCommand::Comment { .. }
-                | IssueCommand::Close { .. }
-                | IssueCommand::Reopen { .. }
-                | IssueCommand::Edit { .. }
-        ),
-        Command::Pr { command } => matches!(
-            command,
-            PrCommand::List { .. }
-                | PrCommand::View { web: false, .. }
-                | PrCommand::Create { .. }
-                | PrCommand::Merge { .. }
-                | PrCommand::Review { .. }
-                | PrCommand::Edit { .. }
-                | PrCommand::Close { .. }
-                | PrCommand::Reopen { .. }
-                | PrCommand::Comment { .. }
-                | PrCommand::Reviews { .. }
-                | PrCommand::Reviewers { .. }
-        ),
-        Command::Ci { command } => matches!(
-            command,
-            CiCommand::Run { .. }
-                | CiCommand::Wait { .. }
-                | CiCommand::Runs { .. }
-                | CiCommand::View { .. }
-                | CiCommand::Cancel { .. }
-                | CiCommand::Retry { .. }
-                | CiCommand::Approve { .. }
-        ),
-        Command::Release { command } => matches!(
-            command,
-            ReleaseCommand::List { .. }
-                | ReleaseCommand::View { web: false, .. }
-                | ReleaseCommand::Create { .. }
-                | ReleaseCommand::Edit { .. }
-        ),
-        Command::Label { command } => matches!(
-            command,
-            LabelCommand::List | LabelCommand::Create { .. } | LabelCommand::Edit { .. }
-        ),
-        Command::Milestone { command } => matches!(
-            command,
-            MilestoneCommand::List
-                | MilestoneCommand::Create { .. }
-                | MilestoneCommand::Edit { .. }
-        ),
-        _ => false,
-    };
-    if supported {
+    let (path, leaf) = leaf_of(matches);
+    // `--web` opens a browser page instead of printing a result.
+    let web = leaf
+        .try_get_one::<bool>("web")
+        .ok()
+        .flatten()
+        .copied()
+        .unwrap_or(false);
+    // `mcp config` prints a snippet that is already JSON; a template would
+    // only reshape it, so `--json` is accepted and `--template` is not.
+    // `mcp doctor` prints check items like `doctor`, so it takes both.
+    let template_refused = path.starts_with(&["mcp", "config"]) && cli.template.is_some();
+    if !web && !template_refused && structured_output_supported(&path) {
         Ok(())
     } else {
         Err(AppError::Usage(
@@ -151,6 +271,9 @@ pub(crate) fn bootstrap(cli: &Cli) -> Result<CommandContext, AppError> {
     if let Some(token) = &host.token {
         builder = builder.token(token.clone());
     }
+    if let Some(key) = &cli.idempotency {
+        builder = builder.idempotency_key(key.clone());
+    }
     let client = builder.build()?;
     Ok(CommandContext {
         config,
@@ -163,6 +286,13 @@ pub(crate) fn bootstrap(cli: &Cli) -> Result<CommandContext, AppError> {
 /// refuse rather than assume.
 pub(crate) fn confirm(question: &str) -> Result<bool, AppError> {
     use std::io::{IsTerminal, Write};
+    // --no-input refuses outright, even on a terminal: it never answers "yes"
+    // for the user, so only the command's own --yes can proceed.
+    if crate::input::enabled() {
+        return Err(AppError::Usage(format!(
+            "{question} (--no-input forbids prompting; pass --yes to confirm)"
+        )));
+    }
     if !std::io::stdin().is_terminal() {
         return Err(AppError::Usage(format!(
             "{question} — rerun with --yes to confirm non-interactively"
@@ -187,6 +317,12 @@ pub(crate) fn compose_in_editor(
     initial_title: &str,
     initial_body: &str,
 ) -> Result<(String, String), AppError> {
+    if crate::input::enabled() {
+        return Err(AppError::Usage(
+            "--editor opens $EDITOR, which --no-input forbids; pass -t/--title and -b/--body instead"
+                .into(),
+        ));
+    }
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .map_err(|_| AppError::Usage("--editor needs $EDITOR (or $VISUAL) to be set".into()))?;
@@ -299,6 +435,53 @@ fn parse_editor(input: &str) -> Result<Vec<String>, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::EXIT_USAGE;
+    use clap::{CommandFactory, FromArgMatches};
+
+    fn parsed(args: &[&str]) -> (Cli, ArgMatches) {
+        let matches = Cli::command().try_get_matches_from(args).unwrap();
+        let cli = Cli::from_arg_matches(&matches).unwrap();
+        (cli, matches)
+    }
+
+    #[test]
+    fn flag_key_is_accepted_only_on_commands_in_the_table() {
+        let (cli, matches) = parsed(&["ifg", "--idempotency-key", "k-1", "pr", "merge", "7"]);
+        let key = validate_idempotency(&cli, &matches).unwrap().unwrap();
+        assert_eq!(key.as_str(), "k-1");
+
+        for args in [
+            &["ifg", "--idempotency-key", "k-1", "issue", "list"][..],
+            &["ifg", "--idempotency-key", "k-1", "release", "create", "v1"][..],
+            &["ifg", "--idempotency-key", "k-1", "ci", "cancel", "7"][..],
+        ] {
+            let (cli, matches) = parsed(args);
+            let err = validate_idempotency(&cli, &matches).unwrap_err();
+            assert_eq!(err.exit_code(), EXIT_USAGE, "{args:?}");
+            assert!(
+                err.to_string()
+                    .contains("does not accept an idempotency key"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_key_is_a_usage_error_and_never_echoes_the_value() {
+        let (cli, matches) = parsed(&["ifg", "--idempotency-key", "bad key!", "pr", "merge", "7"]);
+        let err = validate_idempotency(&cli, &matches).unwrap_err();
+        assert_eq!(err.exit_code(), EXIT_USAGE);
+        let message = err.to_string();
+        assert!(message.starts_with("--idempotency-key "), "{message}");
+        assert!(!message.contains("bad key"), "{message}");
+    }
+
+    #[test]
+    fn accepts_idempotency_key_reads_the_table() {
+        assert!(accepts_idempotency_key(&["issue", "create"]));
+        assert!(!accepts_idempotency_key(&["issue"]));
+        assert!(!accepts_idempotency_key(&["release", "upload"]));
+    }
 
     #[test]
     fn editor_arguments_handle_quotes_escapes_and_windows_paths() {

@@ -8,8 +8,20 @@
 
 /// (method, path) pairs used by `ifg-client` and the CLI/e2e flows.
 pub const USED_PATHS: &[(&str, &str)] = &[
-    // Setup for the explicitly selected newer-server fork-mirror E2E only.
+    // Branch deletion: first used by the fork-mirror E2E setup, now also
+    // `ifg branch delete`. Absent from the canonical 7d27c2d snapshot.
     ("DELETE", "/repos/{owner}/{name}/branches/{branch}"),
+    // Commit-writing and PR-readiness routes of newer servers; absent from
+    // the canonical 7d27c2d snapshot (see fixtures/openapi/uncovered.txt).
+    ("POST", "/repos/{owner}/{name}/commits"),
+    ("POST", "/repos/{owner}/{name}/commits/apply-patch"),
+    ("POST", "/repos/{owner}/{name}/commits/{sha}/cherry-pick"),
+    ("POST", "/repos/{owner}/{name}/commits/{sha}/revert"),
+    (
+        "GET",
+        "/repos/{owner}/{name}/pulls/{number}/merge-readiness",
+    ),
+    ("POST", "/repos/{owner}/{name}/pulls/{number}/update-branch"),
     // Wiki: revision-by-id is intentionally not used because the server must
     // verify that the requested revision belongs to the authorized page.
     ("GET", "/repos/{owner}/{name}/wiki"),
@@ -109,6 +121,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("POST", "/repos/{owner}/{name}/collaborators"),
     ("PATCH", "/repos/{owner}/{name}/collaborators/{id}"),
     ("DELETE", "/repos/{owner}/{name}/collaborators/{user_id}"),
+    ("GET", "/repos/{owner}/{name}/events"),
     // issues
     ("GET", "/repos/{owner}/{name}/issues"),
     ("POST", "/repos/{owner}/{name}/issues"),
@@ -132,6 +145,7 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("PUT", "/repos/{owner}/{name}/pulls/{number}/auto-merge"),
     ("GET", "/repos/{owner}/{name}/pulls/{number}/reviews"),
     ("POST", "/repos/{owner}/{name}/pulls/{number}/reviews"),
+    ("GET", "/repos/{owner}/{name}/commits/{sha}/status"),
     // ci (M3)
     ("GET", "/repos/{owner}/{name}/pipelines"),
     ("POST", "/repos/{owner}/{name}/pipelines"),
@@ -189,4 +203,30 @@ pub const USED_PATHS: &[(&str, &str)] = &[
     ("DELETE", "/orgs/{name}/members/{user_id}"),
     // search
     ("GET", "/search"),
+    // Agent accounts, draft namespaces and notification preferences: newer
+    // than the 7d27c2d snapshot (see fixtures/openapi/uncovered.txt).
+    ("GET", "/agents"),
+    ("POST", "/agents"),
+    ("GET", "/agents/{username}"),
+    ("PATCH", "/agents/{username}"),
+    ("GET", "/agents/{username}/tokens"),
+    ("POST", "/agents/{username}/tokens"),
+    ("DELETE", "/agents/{username}/tokens/{id}"),
+    ("GET", "/repos/{owner}/{name}/agent-drafts"),
+    ("POST", "/repos/{owner}/{name}/agent-drafts"),
+    ("PATCH", "/repos/{owner}/{name}/agent-drafts/{id}"),
+    ("DELETE", "/repos/{owner}/{name}/agent-drafts/{id}"),
+    ("GET", "/user/notification-preferences"),
+    ("PUT", "/user/notification-preferences"),
+    // AI aggregates. The snapshot keys the first three routes with the
+    // `/api/v1` prefix and the PR context route without it, so these entries
+    // are spelled exactly as the snapshot has them.
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/summary"),
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/tree"),
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/search/code"),
+    ("POST", "/api/v1/ai/repos/{owner}/{name}/index"),
+    // `map` and `symbols` are newer than the snapshot; see uncovered.txt.
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/map"),
+    ("GET", "/api/v1/ai/repos/{owner}/{name}/symbols"),
+    ("GET", "/ai/repos/{owner}/{name}/pulls/{number}/context"),
 ];

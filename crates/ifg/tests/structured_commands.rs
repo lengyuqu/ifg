@@ -205,7 +205,11 @@ async fn notification_count_and_empty_auth_status_support_machine_formats() {
         .assert()
         .success();
     assert_eq!(result.get_output().stdout, b"5\n");
+    // No hosts at all: the env credentials that `command` sets would be listed
+    // as their own source, so this call runs without them.
     let result = command(&server, &home)
+        .env_remove("IRONFORGE_URL")
+        .env_remove("IRONFORGE_PAT")
         .args(["auth", "status", "--json"])
         .assert()
         .success();

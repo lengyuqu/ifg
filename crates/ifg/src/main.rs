@@ -11,6 +11,7 @@ mod config;
 mod context;
 mod error;
 mod git;
+mod input;
 mod keyring;
 mod output;
 mod template;
@@ -18,26 +19,102 @@ mod time;
 mod version;
 mod web;
 
-use clap::{CommandFactory, Parser};
+use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use cli::{Cli, Command, RepoCommand};
 
+/// Stack for the thread that runs the CLI. Building the full command tree
+/// (`completions`, `schema`) needs more than the 1 MiB Windows gives the main
+/// thread, which overflowed in debug builds.
+const MAIN_STACK_BYTES: usize = 16 * 1024 * 1024;
+
 fn main() -> std::process::ExitCode {
-    let cli = Cli::parse();
+    // Named "main" so panic messages read as before.
+    let spawned = std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(MAIN_STACK_BYTES)
+        .spawn(real_main);
+    match spawned {
+        Ok(handle) => match handle.join() {
+            Ok(code) => code,
+            Err(panic) => std::panic::resume_unwind(panic),
+        },
+        // Could not reserve the larger stack: run on the process main thread.
+        Err(_) => real_main(),
+    }
+}
+
+fn real_main() -> std::process::ExitCode {
+    // Parse through `ArgMatches` so the leaf command path stays available to
+    // `validate_output`; this is what `Cli::parse()` does internally, except
+    // that a refusal goes through `parse_failure` instead of exiting here.
+    let matches = match Cli::command().try_get_matches() {
+        Ok(matches) => matches,
+        Err(error) => return parse_failure(error),
+    };
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => return parse_failure(error.format(&mut Cli::command())),
+    };
+    let json = cli.json;
+    input::set(input::resolve(
+        cli.no_input,
+        std::env::var(input::ENV_VAR).ok().as_deref(),
+    ));
     output::init(cli.no_color);
     init_tracing(cli.verbose);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("failed to build the tokio runtime");
-    let mut code = runtime.block_on(run(cli));
+    let mut code = runtime.block_on(run(cli, &matches));
     if let Err(error) = output::finish() {
         eprintln!("ifg: could not write stdout: {error}");
+        if json {
+            let error = error::AppError::Io(format!("could not write stdout: {error}"));
+            eprintln!("{}", error.json_report());
+        }
         if code == 0 {
             code = error::EXIT_GENERAL;
         }
     }
     let code = u8::try_from(code.max(0)).unwrap_or(1);
     std::process::ExitCode::from(code)
+}
+
+/// A command line clap refused (or `--help`/`--version`). Output and exit
+/// code match `Cli::parse()`; under `--json` a failure also ends with the
+/// error object on stderr.
+fn parse_failure(error: clap::Error) -> std::process::ExitCode {
+    let _ = error.print();
+    if error.use_stderr() && json_requested() {
+        let report = error::AppError::Usage(error.to_string().trim_end().to_owned());
+        eprintln!("{}", report.json_report());
+    }
+    let code = u8::try_from(error.exit_code().max(0)).unwrap_or(error::EXIT_USAGE as u8);
+    std::process::ExitCode::from(code)
+}
+
+/// Whether `--json` appears before any `--`. Clap has not produced a `Cli`
+/// yet, so this is a textual check; it only decides whether an extra line is
+/// printed, never which exit code is used.
+fn json_requested() -> bool {
+    std::env::args_os()
+        .skip(1)
+        .take_while(|arg| arg != "--")
+        .any(|arg| arg == "--json")
+}
+
+/// Print a failure for the user. The `ifg:` line and the optional `hint:`
+/// line are the human output; under `--json` the error object follows as the
+/// last stderr line.
+fn report_error(error: &error::AppError, json: bool) {
+    eprintln!("ifg: {error}");
+    if let Some(hint) = error.hint() {
+        eprintln!("hint: {hint}");
+    }
+    if json {
+        eprintln!("{}", error.json_report());
+    }
 }
 
 /// The repository target a `repo` subcommand received as a positional
@@ -56,10 +133,30 @@ fn positional_target(command: &Command) -> Option<String> {
     }
 }
 
-async fn run(mut cli: Cli) -> i32 {
-    if let Err(error) = cmd::validate_output(&cli) {
-        eprintln!("ifg: {error}");
+async fn run(mut cli: Cli, matches: &ArgMatches) -> i32 {
+    let json = cli.json;
+    // The schema describes this binary only: no config, token or network.
+    if let Command::Schema { command_path } = &cli.command {
+        return match cmd::schema::run(command_path) {
+            Ok(()) => 0,
+            Err(error) => {
+                report_error(&error, json);
+                error.exit_code()
+            }
+        };
+    }
+    if let Err(error) = cmd::validate_output(&cli, matches) {
+        report_error(&error, json);
         return error.exit_code();
+    }
+    // An idempotency key is refused here, before any request, when the command
+    // cannot use it.
+    match cmd::validate_idempotency(&cli, matches) {
+        Ok(key) => cli.idempotency = key,
+        Err(error) => {
+            report_error(&error, json);
+            return error.exit_code();
+        }
     }
     // A full URL in a positional target (`repo view <URL>`) must decide the
     // instance before `bootstrap` picks a host, so hand it to the resolver.
@@ -80,7 +177,10 @@ async fn run(mut cli: Cli) -> i32 {
         Command::Repo { command } => cmd::repo::run(command, &cli).await,
         Command::Issue { command } => cmd::issue::run(command, &cli).await,
         Command::Pr { command } => cmd::pr::run(command, &cli).await,
+        Command::Commit { command } => cmd::commit::run(command, &cli).await,
+        Command::Branch { command } => cmd::branch::run(command, &cli).await,
         Command::Ci { command } => cmd::ci::run(command, &cli).await,
+        Command::Events { command } => cmd::events::run(command, &cli).await,
         Command::Collab {
             command,
             session_file,
@@ -95,16 +195,22 @@ async fn run(mut cli: Cli) -> i32 {
             search_type,
             limit,
         } => cmd::search::run(&cli, query, search_type, *limit).await,
+        Command::Context { command } => cmd::ai_context::run(command, &cli).await,
+        Command::Agent { command } => cmd::agent::run(command, &cli).await,
+        Command::Draft { command } => cmd::draft::run(command, &cli).await,
         Command::Notifications { command } => cmd::notifications::run(command, &cli).await,
         Command::Org { command } => cmd::org::run(command, &cli).await,
         Command::Version => cmd::version::run(&cli).await,
+        Command::Capabilities { has } => cmd::capabilities::run(has.as_deref(), &cli).await,
+        Command::Mcp { command } => cmd::mcp::run(command, &cli).await,
         Command::Doctor => cmd::doctor::run(&cli).await,
         Command::Completions { .. } => unreachable!("handled before dispatch"),
+        Command::Schema { .. } => unreachable!("handled before dispatch"),
     };
     match result {
         Ok(()) => 0,
         Err(err) => {
-            eprintln!("ifg: {err}");
+            report_error(&err, json);
             err.exit_code()
         }
     }

@@ -1,0 +1,23 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ifg-schema 1  "ifg-schema 0.9.0"
+.SH NAME
+ifg\-schema \- Describe the commands as JSON for agents (no network or login needed)
+.SH SYNOPSIS
+\fBifg schema\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fICOMMAND\fR]
+.SH DESCRIPTION
+Describe the commands as JSON for agents (no network or login needed)
+.PP
+Lists every command with its arguments, whether `\-\-json` is accepted, and whether it reads, writes or deletes. Give a command path to print only that subtree, e.g. `ifg schema pr merge`.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+[\fICOMMAND\fR]
+Command path to narrow the output to (default: every command)
+.SH VERSION
+v0.9.0

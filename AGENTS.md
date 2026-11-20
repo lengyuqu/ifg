@@ -1,6 +1,6 @@
 # 仓库协作约定
 
-- `cnb`（`zdzso/ifg`）是开发阶段的主要上游。日常开发、代码同步和开发阶段的 CI 优先使用 CNB。
-- `origin`（git233）是自建私人仓库。在 CNB 上完成开发和验证后，再同步到 git233。
-- `github` 是发布仓库。仅在准备发布时推送到 GitHub，并运行发布前 CI；日常开发不自动推送 GitHub。
-- 多仓库同步时先确认目标分支和提交，使用非强制推送；保留现有未提交改动。
+- `github`（`lengyuqu/ifg`）是主要上游。日常开发、代码同步和 CI 优先使用 GitHub（`.github/workflows/ci.yml` 在 push 到 `main` 和 pull request 时触发）。
+- `cnb`（`zdzso/ifg`）不再是主要上游，仅作备用；是否继续同步由用户决定，不要自动推送。
+- git233 的 `zdzso/ifg` 是 CNB 仓库的镜像，通过镜像机制同步，无需手动推送或配置 git233 远端。
+- 推送时先确认目标分支和提交，使用非强制推送；保留现有未提交改动。

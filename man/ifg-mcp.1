@@ -1,0 +1,30 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH ifg-mcp 1  "ifg-mcp 0.9.0"
+.SH NAME
+ifg\-mcp \- Print an MCP client config for IronForge\*(Aqs stdio MCP server
+.SH SYNOPSIS
+\fBifg mcp\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Print an MCP client config for IronForge\*(Aqs stdio MCP server
+.PP
+Prints a JSON snippet (`mcpServers`) that starts `ironforge\-mcp` with the resolved host. The token is never printed: the snippet refers to `${IRONFORGE_PAT}`, which you export in the environment the client starts from (for example `export IRONFORGE_PAT="$(ifg auth token)"`). Nothing is written to disk and no request is made to the server.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+ifg\-mcp\-config(1)
+Print an MCP client config snippet for the resolved host (stdout)
+.TP
+ifg\-mcp\-doctor(1)
+Check whether the MCP server can be used from this machine
+.TP
+ifg\-mcp\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.9.0

@@ -6,11 +6,17 @@
 //! `*_raw` JSON twins for `--json` (D5). DTOs are hand-written and only
 //! declare fields the client uses; unknown fields are ignored (D4).
 
+mod agents;
+mod ai;
 mod ci;
 mod collab;
+mod commits;
 mod contract;
+mod drafts;
 mod error;
+mod events;
 mod http;
+mod idempotency;
 mod issues;
 mod labels;
 mod milestones;
@@ -26,15 +32,24 @@ mod text;
 mod users;
 mod wiki;
 
+pub use agents::{AgentTokenRequest, Agents};
+pub use ai::{
+    Ai, AiListQuery, CodeSearchPage, CodeSearchQuery, MapQuery, PrContextQuery, SymbolsQuery,
+    TreeQuery,
+};
 pub use ci::{Ci, Job, Pipeline, PipelineDetail, Stage, StageWithJobs};
 /// Path-segment encoder for resource routes (`repos/{owner}/{name}`, `orgs/{name}`).
 /// Untrusted segments must never be able to change the route, so every
 /// user-supplied segment goes through the same encoder as collaboration IDs.
 pub(crate) use collab::segment as path_segment;
 pub use collab::{segment as collab_segment, Collaboration, SessionCredentials, StartedSession};
+pub use commits::{Branches, Commits, PickKind, PickRequest};
 pub use contract::USED_PATHS;
+pub use drafts::Drafts;
 pub use error::Error;
+pub use events::Events;
 pub use http::{Client, ClientBuilder, DEFAULT_BACKOFF, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT};
+pub use idempotency::{IdempotencyKey, InvalidIdempotencyKey};
 pub use issues::{Comment, CreateIssueOptions, Issue, IssueListFilter, Issues, UpdateIssueOptions};
 pub use labels::{Label, LabelOptions, Labels};
 pub use milestones::{Milestone, MilestoneOptions, Milestones};

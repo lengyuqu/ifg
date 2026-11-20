@@ -26,6 +26,13 @@ pub async fn run(command: &AuthCommand, cli: &Cli) -> Result<(), AppError> {
 /// Read the PAT: all of stdin with `--with-token` (pipes), a no-echo prompt
 /// on a terminal, or stdin when it is redirected without the flag.
 fn read_token(with_token: bool) -> Result<String, AppError> {
+    // Without --with-token the token comes from a no-echo prompt or from an
+    // implicit read of stdin; --no-input forbids both, so the flag is required.
+    if !with_token && crate::input::enabled() {
+        return Err(AppError::Usage(
+            "auth login reads the token from a prompt or from stdin unless --with-token is given; --no-input forbids the prompt, so pass --with-token and pipe the token on stdin".into(),
+        ));
+    }
     if with_token {
         use std::io::Read;
         let mut buffer = String::new();
@@ -52,7 +59,7 @@ fn read_token(with_token: bool) -> Result<String, AppError> {
 }
 
 async fn login(cli: &Cli, with_token: bool) -> Result<(), AppError> {
-    let config = config::load()?;
+    let config = config::load_stored()?;
     let (key, url) = login_host(&cli.host, &config)?;
 
     let token = read_token(with_token)?;
@@ -110,6 +117,12 @@ async fn login(cli: &Cli, with_token: bool) -> Result<(), AppError> {
     output::line!("Logged in to {url} as {}", me.username);
     if stored_in_keyring {
         output::line!("Token stored in the system keychain (token_store = \"keyring\").");
+    }
+    if let Some(dir) = config::config_dir_override() {
+        output::line!(
+            "Token stored in {} (IRONFORGE_CONFIG_DIR is set; the system keychain is not used).",
+            dir.join("hosts.toml").display()
+        );
     }
     Ok(())
 }
@@ -173,9 +186,47 @@ impl Scope {
     }
 }
 
-async fn status(cli: &Cli) -> Result<(), AppError> {
+/// One host row for `auth status`, from the environment or the stored config.
+struct ListedHost {
+    name: String,
+    url: String,
+    user: Option<String>,
+    token: Option<String>,
+}
+
+/// The hosts `auth status` lists. With env-only credentials that is the one
+/// environment host; the stored config is not read.
+fn listed_hosts() -> Result<Vec<ListedHost>, AppError> {
+    if context::env_credentials_active() {
+        let url = context::env_url()
+            .unwrap_or_default()
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+        let name = config::host_key_for_url(&url).unwrap_or_else(|| url.clone());
+        return Ok(vec![ListedHost {
+            name,
+            url,
+            user: None,
+            token: context::env_pat(),
+        }]);
+    }
     let config = config::load()?;
-    if config.hosts.is_empty() {
+    Ok(config
+        .hosts
+        .iter()
+        .map(|(name, entry)| ListedHost {
+            name: name.clone(),
+            url: entry.url.clone(),
+            user: entry.user.clone(),
+            token: entry.token.clone(),
+        })
+        .collect())
+}
+
+async fn status(cli: &Cli) -> Result<(), AppError> {
+    let hosts = listed_hosts()?;
+    if hosts.is_empty() {
         if cli.json || cli.template.is_some() {
             super::show(cli, &json!([]));
             return Ok(());
@@ -183,16 +234,18 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
         eprintln!("No hosts configured. Run `ifg auth login --host <url>`.");
         return Ok(());
     }
+    let (source, dir) = context::credential_source();
+    let dir_text = dir.as_ref().map(|dir| dir.display().to_string());
 
     let mut rows = Vec::new();
     let mut json_rows = Vec::new();
-    for (name, entry) in &config.hosts {
-        // Build a client with the configured token (env PAT only applies to
-        // the resolved host, which status does not know about).
-        let mut builder = Client::builder(&entry.url)
+    for host in &hosts {
+        // Build a client with the host's token. A PAT in the environment has
+        // already been chosen as this host's token by `listed_hosts`.
+        let mut builder = Client::builder(&host.url)
             .user_agent(super::user_agent())
             .max_retries(0);
-        if let Some(token) = &entry.token {
+        if let Some(token) = &host.token {
             builder = builder.token(Secret::new(token.clone()));
         }
         let client = builder.build()?;
@@ -214,9 +267,9 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
 
         let live_username = user_probe.ok().map(|me| me.username);
         let username = live_username
-            .or_else(|| entry.user.clone())
+            .or_else(|| host.user.clone())
             .unwrap_or_else(|| "?".into());
-        let token_display = entry
+        let token_display = host
             .token
             .as_ref()
             .map(|token| Secret::new(token.clone()).redacted())
@@ -224,22 +277,25 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
 
         let server = super::version::server_label(&client).await;
         rows.push(vec![
-            name.clone(),
-            entry.url.clone(),
+            host.name.clone(),
+            host.url.clone(),
             username.clone(),
             token_display.clone(),
             repo_scope.glyph().to_string(),
             user_scope.glyph().to_string(),
             server.clone(),
+            source.to_string(),
         ]);
         json_rows.push(json!({
-            "host": name,
-            "url": entry.url,
+            "host": host.name,
+            "url": host.url,
             "user": username,
-            "token": if entry.token.is_some() { Some(token_display) } else { None },
+            "token": if host.token.is_some() { Some(token_display) } else { None },
             "repo_scope": repo_scope.label(),
             "user_scope": user_scope.label(),
             "server_version": server,
+            "source": source,
+            "config_dir": dir_text,
         }));
     }
 
@@ -255,10 +311,15 @@ async fn status(cli: &Cli) -> Result<(), AppError> {
                 "REPO",
                 "USER-SCOPE",
                 "SERVER",
+                "SOURCE",
             ],
             &rows,
         );
         eprintln!("(✓ scope works, ✗ scope denied, ? host unreachable)");
+        match &dir {
+            Some(dir) => eprintln!("credentials: {source} ({})", dir.display()),
+            None => eprintln!("credentials: {source}"),
+        }
     }
     Ok(())
 }
@@ -272,7 +333,7 @@ fn probe(result: Result<Vec<u8>, ifg_client::Error>) -> Scope {
 }
 
 fn logout(cli: &Cli) -> Result<(), AppError> {
-    let config = config::load()?;
+    let config = config::load_stored()?;
     let target = logout_host(&cli.host, &config)?;
 
     let remove = target.clone();
