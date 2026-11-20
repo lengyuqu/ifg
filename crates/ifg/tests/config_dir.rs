@@ -125,6 +125,8 @@ fn check<'a>(checks: &'a [Value], name: &str) -> Option<&'a Value> {
 
 /// Make `dir` unwritable for the test and restore it on drop, so the temporary
 /// directory can still be removed.
+// The path is only restored on drop under unix; elsewhere the guard is a no-op.
+#[cfg_attr(not(unix), allow(dead_code))]
 struct ReadOnly(PathBuf);
 
 impl ReadOnly {

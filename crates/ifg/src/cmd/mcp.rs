@@ -272,9 +272,21 @@ fn token_env_check() -> Check {
         Check::warn(
             TOKEN_ENV,
             "not set in this environment; the MCP server reads its token from IRONFORGE_PAT",
-            "export IRONFORGE_PAT=\"$(ifg auth token)\"",
+            set_token_hint(),
         )
     }
+}
+
+/// Shell command that puts the stored token into `IRONFORGE_PAT`, in the
+/// syntax of the platform's default shell (PowerShell on Windows).
+#[cfg(windows)]
+fn set_token_hint() -> &'static str {
+    "$env:IRONFORGE_PAT = (ifg auth token)"
+}
+
+#[cfg(not(windows))]
+fn set_token_hint() -> &'static str {
+    "export IRONFORGE_PAT=\"$(ifg auth token)\""
 }
 
 enum Lookup {

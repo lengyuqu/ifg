@@ -392,7 +392,11 @@ async fn unset_pat_warns_with_the_export_hint() {
     let items = items(assert.get_output());
     let pat = find(&items, "IRONFORGE_PAT").unwrap();
     assert_eq!(pat["status"], "warn");
-    assert_eq!(pat["hint"], "export IRONFORGE_PAT=\"$(ifg auth token)\"");
+    #[cfg(windows)]
+    let expected = "$env:IRONFORGE_PAT = (ifg auth token)";
+    #[cfg(not(windows))]
+    let expected = "export IRONFORGE_PAT=\"$(ifg auth token)\"";
+    assert_eq!(pat["hint"], expected);
 }
 
 #[tokio::test]
