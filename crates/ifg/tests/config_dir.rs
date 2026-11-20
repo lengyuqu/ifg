@@ -140,11 +140,15 @@ impl ReadOnly {
 
 impl Drop for ReadOnly {
     fn drop(&mut self) {
+        // Read on every platform so the field is not dead code off unix.
+        let dir = &self.0;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755));
         }
+        #[cfg(not(unix))]
+        let _ = dir;
     }
 }
 
