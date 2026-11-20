@@ -22,7 +22,28 @@ mod web;
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use cli::{Cli, Command, RepoCommand};
 
+/// Stack for the thread that runs the CLI. Building the full command tree
+/// (`completions`, `schema`) needs more than the 1 MiB Windows gives the main
+/// thread, which overflowed in debug builds.
+const MAIN_STACK_BYTES: usize = 16 * 1024 * 1024;
+
 fn main() -> std::process::ExitCode {
+    // Named "main" so panic messages read as before.
+    let spawned = std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(MAIN_STACK_BYTES)
+        .spawn(real_main);
+    match spawned {
+        Ok(handle) => match handle.join() {
+            Ok(code) => code,
+            Err(panic) => std::panic::resume_unwind(panic),
+        },
+        // Could not reserve the larger stack: run on the process main thread.
+        Err(_) => real_main(),
+    }
+}
+
+fn real_main() -> std::process::ExitCode {
     // Parse through `ArgMatches` so the leaf command path stays available to
     // `validate_output`; this is what `Cli::parse()` does internally, except
     // that a refusal goes through `parse_failure` instead of exiting here.

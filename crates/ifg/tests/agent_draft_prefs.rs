@@ -137,6 +137,47 @@ async fn agent_edit_sends_only_what_was_asked_and_needs_a_change() {
     assert_eq!(server.received_requests().await.unwrap().len(), 3);
 }
 
+/// Without owner-only file permissions (non-unix) the secret is never written
+/// anywhere: the command refuses before any request, so no token is created.
+#[cfg(not(unix))]
+#[tokio::test]
+async fn token_create_is_refused_where_private_files_are_unsupported() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/api/v1/agents/alice-agent-bot/tokens",
+        201,
+        token_reply(),
+    )
+    .await;
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("tok");
+    let result = run(
+        &server,
+        &[
+            "agent",
+            "token",
+            "create",
+            "alice-agent-bot",
+            "--name",
+            "ci",
+            "--token-file",
+            file.to_str().unwrap(),
+        ],
+    );
+    assert_ne!(result.code, 0);
+    assert!(
+        result.stderr.contains("not yet supported on this platform"),
+        "{}",
+        result.stderr
+    );
+    assert!(!result.stdout.contains(SECRET) && !result.stderr.contains(SECRET));
+    assert!(!file.exists());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn token_create_saves_the_secret_privately_and_never_prints_it() {
     let server = MockServer::start().await;
