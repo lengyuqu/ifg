@@ -17,7 +17,7 @@
 | Git | Git for Windows（仅 V8 需要 bash） |
 
 ```powershell
-git clone https://cnb.cool/zdzso/ifg.git
+git clone https://github.com/lengyuqu/ifg.git
 cd ifg
 cargo build --locked
 ```
