@@ -51,4 +51,4 @@ CI 不执行 `docker compose up`，不替换已有部署，不复用个人 PAT�
 gh variable set IFG_E2E_ENABLED --body false
 ```
 
-GitHub 仅用于发布准备和发布 CI；日常开发门禁优先在 CNB 运行。
+GitHub Actions 执行日常开发检查和发布验证。候选提交的 CI、固定基线 E2E 和新版服务端兼容性结果记录在 [发布验收清单](release-checklist.md)。

@@ -1,30 +1,64 @@
 # 发布验收清单
 
-发布前为每次发布记录版本、候选提交 SHA、服务端镜像 ID 和对应日志链接。只有实际完成并核对的项目才能标记为通过；失败、跳过与未运行必须分别记录。
+发布以 GitHub [`lengyuqu/ifg`](https://github.com/lengyuqu/ifg) 为准。记录工作区版本、候选提交 SHA、服务端构建提交和镜像 ID，以及对应的 GitHub Actions 日志。按实际结果标记通过、失败、跳过或未运行。
 
 ## 1. 开发基线
 
-- [ ] 确认工作区干净、版本与 tag 一致，CNB `main` 包含候选 SHA；记录 CNB push 和 PR 的 CI 链接，确认工具链、格式、Clippy、man、测试、依赖边界及 cargo-audit 均通过。
-- [ ] 在候选 SHA 的干净检出执行 `bash scripts/e2e-docker.sh`，记录镜像 ID、服务端版本及所有端到端结果；确认契约快照对应同一镜像。镜像无源码来源标签时记录该限制。
+- [ ] 从 GitHub `main` 选定候选 SHA，确认本地验收使用该提交的干净检出。记录该 SHA 的 GitHub Actions `ci` 运行，确认 Linux `check`、`windows` 和 `e2e` 的实际结果。
+- [ ] 用 `bash scripts/e2e-docker.sh` 验证固定服务端基线。GitHub `e2e` 未运行时，在干净检出本地执行。记录构建提交、镜像 ID 和测试结果，确认契约快照对应基线。镜像元数据缺失时记录来源及限制。
+- [ ] 按本轮变更在隔离容器中验证固定基线尚未提供的新版接口。从可核对的提交构建或选用镜像，用 `IFG_E2E_IMAGE` 显式指定镜像，并记录新增命令的验收结果。涉及 fork 恢复时执行 [fork 镜像专项](ci-e2e-runner.md#3-较新服务端的-fork-镜像专项)。
 - [ ] 按 [JSON 兼容契约](json-compatibility.md) 检查机器输出回归测试与服务端版本边界；1.x 不得无迁移方案引入列出的破坏性变更。
-- [ ] 确认 git233 镜像已从 CNB 同步候选提交，并核对目标分支 SHA；无需手动推送。
 
-## 2. 发布仓库与构建
+## 2. 候选打包与验收
 
-- [ ] 准备发布时，将已验证的候选提交非强制推送至 GitHub 的目标分支；核对远端 SHA 与候选 SHA 一致。
-- [ ] 确认 GitHub Actions 的 Linux 和 Windows CI 均针对该 SHA 成功；未运行 Windows 或真实服务 E2E 不得标为已验证。
-- [ ] 核对发布 tag 指向候选 SHA。推送 `v*` tag 会触发 [release workflow](../.github/workflows/release.yml) 并发布 Release；只有实际准备发布时执行。
-- [ ] 确认发布流水线成功，核对四个 macOS/Linux tar.gz、Windows zip 和合并的 SHA256SUMS 均已上传且版本、文件名正确。
+- [ ] 在 GitHub 手动运行 [release workflow](../.github/workflows/release.yml)，例如 `gh workflow run release.yml -R lengyuqu/ifg --ref main`。确认 `headSha` 与候选 SHA 一致，`unix`、`windows`、`checksums` 成功，`publish` 为 `skipped`。
+- [ ] 下载 `candidate-<完整 SHA>`，核对 macOS 和 Linux 各两种架构的 tar.gz、Windows x86_64 ZIP 及合并的 `SHA256SUMS`。确认文件名与工作区版本一致，逐个校验哈希。
+- [ ] 解包并运行 `ifg --version`，检查 man 页和基本命令。记录平台、架构、测试环境和结果。Windows 实机交互按 [Windows 验证清单](windows-verification.md) 逐项记录。
 
-## 3. 产物验证与交付
+## 3. 正式发布与交付
 
-- [ ] 从 Release 下载产物和 SHA256SUMS，分别验证每个目标平台的哈希；校验失败即停止安装。
-- [ ] 在干净的各目标平台上安装并运行 `ifg --version` 和基本命令；记录平台、架构、版本及结果。未具备的平台标记为未验证。
-- [ ] 更新 Homebrew tap 后检查下载、校验和安装；检查发布说明与已知限制。
+- [ ] 确认版本与拟发布的 `v*` tag 一致，tag 指向已验收的候选 SHA。若版本调整产生新提交，对新 SHA 重跑 CI 与候选验收。
+- [ ] 正式发布时向 GitHub 推送 tag，核对触发的 `release` 运行及 `publish` 结果。检查 Release 的五个包、`SHA256SUMS`、发布说明与已知限制。
+- [ ] 从 GitHub Release 下载产物，重新校验哈希并验证安装。更新 Homebrew tap 后检查下载、校验和安装。
 
 ## 审计策略
 
-CNB PR 与 main push 均执行 `cargo-audit`，失败即为该流水线失败；PR 缓存未命中可能增加安装时间。合并前确认 PR 的具体提交检查通过，合并后还需确认 main push 的检查通过。CI 的安全审计不替代新公告出现后的再次检查。
+GitHub Actions 的 Linux `check` 在 PR 和 `main` push 上执行 `cargo-audit`，审计失败会使检查失败。合并前核对 PR 的检查结果，合并后核对 `main` 上候选 SHA 的检查结果。发布前若出现新的安全公告，重新执行审计。
+
+## 候选验收（2026-11-22）
+
+候选取自 GitHub `main` 的 `b22df177bdf933208003bb087599d278ad93cce9`，工作区版本为 `0.9.0`。[该提交的 CI](https://github.com/lengyuqu/ifg/actions/runs/44882595879) 中 Linux `check`、Windows 检查和固定基线 Docker E2E 全部通过。
+
+### 五平台候选产物
+
+[手动打包运行](https://github.com/lengyuqu/ifg/actions/runs/44933381875) 的 `headSha` 与候选一致，`unix`、`windows` 和 `checksums` 成功，`publish` 已跳过。本轮未创建 Git tag 或正式 Release。
+
+[候选制品](https://github.com/lengyuqu/ifg/actions/runs/44933381875/artifacts/14719411833) 已下载至 `dist/github-b22df17/packages/`。四个 tar.gz 和一个 Windows ZIP 均匹配合并后的 `SHA256SUMS`，归档内包含对应架构的二进制及 man 页。
+
+| 目标平台 | 运行验证 |
+|---|---|
+| macOS arm64 | 本机解包后验证 `ifg --version` 和 Bash 补全。 |
+| macOS x86_64 | GitHub Intel macOS runner 原生解包后验证 `ifg --version` 和 man 页。 |
+| Linux arm64、x86_64 | 分别在对应架构的 Alpine 3.21 容器验证 `ifg --version`、Bash 补全及 man 页。 |
+| Windows x86_64 | GitHub Windows runner 原生解包后验证 `ifg.exe --version` 和 man 页，本地复核 ZIP 完整性。浏览器、终端外观、GUI 编辑器及 SmartScreen 仍待实机交互验收。 |
+
+### 新版 IronForge 兼容性
+
+从 IronForge 提交 `6542845284ba2db347e6ad319706c832939c25b3` 的 `git archive` 构建 Linux arm64 镜像 `sha256:6846efa2b3ff42f0e89116340cffb40682c2ca04d1f3090d0a3373680e926da1`。隔离实例健康，服务端版本为 `0.2.0`，能力接口回报相同构建提交及 `build_dirty=false`。客户端在候选 SHA 的干净检出上构建，测试使用临时容器、临时数据和测试账号。
+
+| 场景 | 结果 |
+|---|---|
+| 常规 E2E 与 fork 镜像专项 | `scripts/e2e-docker.sh` 的 11 项通过。`--fork-mirror` 的 1 项通过，删除测试 fork 的源分支和源仓库后，仍可从目标仓库镜像恢复同一 head SHA。 |
+| `commit create` | dry-run 后分支未移动，实际写入产生新提交。旧 SHA 被拒为 `REF_ADVANCED`，分支仍停在新提交。 |
+| `commit apply-patch`、`cherry-pick`、`revert` | Git 中可读到补丁后的文件内容，撤销后的 tree 与原始 tree 相同。 |
+| `pr readiness`、`pr update-branch` | 无冲突 PR 可合并，dry-run 后 head 未移动，实际更新后可从 head 读到 base 的新增文件。 |
+| `branch delete` | dry-run 保留测试分支，确认删除后远端引用消失。 |
+| `context index`、`symbols`、`map` | 对指定提交建立索引后，找到预期函数和源文件。 |
+| Agent 账号与令牌 | 创建、查看、列表通过。限定仓库和分支的令牌可创建、列出和撤销。密钥文件权限为 `0600`，创建响应不含密钥。 |
+| 草稿命名空间 | 创建和列表通过，续期后到期时间延长，关闭后进入 `expiring`。 |
+| 通知偏好 | 全局静音与单仓库显式开启同时保存，重新读取后均生效。 |
+
+从 GitHub 下载的 macOS arm64 候选包解包后，用其中的 `ifg` 在同一镜像的临时实例上重复执行新增命令验收，8 组全部通过。本地证据位于 `dist/github-b22df17/`，包含镜像构建、两次 E2E、新增命令及候选包验证日志。
 
 ## Unreleased 验收（2026-11-10）
 
