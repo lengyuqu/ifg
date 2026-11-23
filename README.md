@@ -1,3 +1,5 @@
+**简体中文** | [English](README.en.md)
+
 # ifg
 
 IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
