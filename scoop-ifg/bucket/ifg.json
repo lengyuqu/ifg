@@ -4,7 +4,7 @@
     "architecture": {
         "64bit": {
             "url": "https://github.com/lengyuqu/ifg/releases/download/v0.9.1/ifg-0.9.1-x86_64-pc-windows-msvc.zip",
-            "hash": "PENDING_RELEASE"
+            "hash": "2101006a21ededba8ee2ab6ec84bc1e808b033468176ab6df25f8fd86d4e937a"
         }
     },
     "bin": "ifg.exe",
