@@ -250,7 +250,7 @@ IRONFORGE_IDEMPOTENCY_KEY="retry-42" ifg -R alice/demo pr merge 7 --squash
 这些命令要求较新的 IronForge（已验证 `65428452`；固定基线 `7d27c2d` 不含这些接口，旧服务端返回 404）。
 
 - `ifg agent …` 管理你名下的 agent 账号（`list`、`create`、`view`、`edit`、`token list|create|revoke`）。必须用你本人的登录：agent 自己的令牌管不了 agent，另一人的 agent 与不存在的 agent 一样返回 404。停用（`edit --deactivate`）后其令牌立刻失效，`--activate` 可恢复；服务端没有删除 agent 的接口。
-- `agent token create` 的令牌只有创建时可见：ifg 把它写入 `--token-file`（新建、权限 0600，已存在的文件绝不覆盖），不会打印到终端或日志，`--json` 里也没有 `token` 字段而是 `token_file`。令牌只能带仓库类 scope，默认 `repo:write`；`--allow-repo` 限定仓库，`--allow-ref` 进一步限定可写分支（需要 `--allow-repo`）。服务端拒绝请求时不会留下空文件。令牌已创建但写文件失败时，错误信息给出撤销命令。
+- `agent token create` 的令牌只有创建时可见：ifg 把它写入 `--token-file`（新建、仅属主可访问：Unix `0600` / Windows 受保护 DACL，已存在的文件绝不覆盖），不会打印到终端或日志，`--json` 里也没有 `token` 字段而是 `token_file`。令牌只能带仓库类 scope，默认 `repo:write`；`--allow-repo` 限定仓库，`--allow-ref` 进一步限定可写分支（需要 `--allow-repo`）。服务端拒绝请求时不会留下空文件。令牌已创建但写文件失败时，错误信息给出撤销命令。
 - `ifg draft …` 管理仓库的草稿命名空间：`create PREFIX --ttl 2h`（前缀形如 `agent/<id>/`，段必须是你自己或你名下 agent；时长 1 分钟到 30 天，支持 `90s`、`30m`、`12h`、`7d`）、`extend ID --by 1d`（只能延长，上限为创建时 TTL 的 4 倍）、`close ID`（立即停止接收推送，宽限期后删除分支，需确认）、`list`。
 - `notifications prefs set` 默认改全局设置；只有显式传 `-R OWNER/NAME` 才作用于该仓库（不会从 git remote 推断，避免全局改动变成仓库级）。事件名先对照服务端目录检查，拼错会列出可用的名字而不是悄悄存一条无效设置。
 - 这些写命令不支持 `--idempotency-key`（服务端没把对应路由列为支持幂等键）。`agent token revoke` 与 `draft close` 登记为破坏性命令，需 `--yes` 或交互确认。
@@ -291,7 +291,7 @@ ifg -R owner/repo collab rules --ref main --path src
 ifg -R owner/repo collab overview --sections awaiting_me,in_progress --limit 10
 ```
 
-会话文件含仅展示一次的密钥，绑定服务端 URL 和仓库，Unix 创建权限为 `0600`；不要提交或分享，保留该文件可在新进程中恢复会话。当前安全文件存储仅支持 Unix；Windows 上需要会话凭据的操作尚不可用。任务更新和交接接受/取消需传入最新 `--expected-version`；消息与交接的 `--key` 由调用方生成并在重试同一请求时复用，不同请求不能复用。任务、会话和交接列表返回 `next_cursor`；消息列表使用 `next_after_seq` 和 `--after-seq` 翻页。协作命令默认输出 JSON，可用 `--template` 格式化。
+会话文件含仅展示一次的密钥，绑定服务端 URL 和仓库，Unix 创建权限为 `0600`，Windows 以受保护 DACL 仅授予属主（等价 `0600`）；不要提交或分享，保留该文件可在新进程中恢复会话。加载时复核文件仅属主可访问，被放宽或调包的文件会被拒绝。任务更新和交接接受/取消需传入最新 `--expected-version`；消息与交接的 `--key` 由调用方生成并在重试同一请求时复用，不同请求不能复用。任务、会话和交接列表返回 `next_cursor`；消息列表使用 `next_after_seq` 和 `--after-seq` 翻页。协作命令默认输出 JSON，可用 `--template` 格式化。
 
 `question view` 返回上下文及 `context_freshness`；回答时应先检查上下文，再明确传入读取到的版本和哈希，服务端会拒绝过期上下文。`task claim` 以会话身份接管空闲或已离线任务，活跃的原负责人可能导致拒绝；`task reassign` 以用户身份操作且不得携带会话文件。两者都要求调用方提供看到的任务版本、原负责人和幂等键；无负责人时省略 `--expected-owner`。问答与接管列表使用 `next_cursor` 翻页。
 

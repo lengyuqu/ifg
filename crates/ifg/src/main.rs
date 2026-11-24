@@ -14,6 +14,7 @@ mod git;
 mod input;
 mod keyring;
 mod output;
+mod secure_file;
 mod template;
 mod time;
 mod version;

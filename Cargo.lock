@@ -846,6 +846,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "windows-sys 0.61.2",
  "wiremock",
 ]
 
@@ -853,6 +854,7 @@ dependencies = [
 name = "ifg-client"
 version = "0.9.0"
 dependencies = [
+ "httpdate",
  "reqwest",
  "serde",
  "serde_json",

@@ -1,6 +1,7 @@
 //! CLI tests for collaboration work packages, dependencies and decisions, plus
 //! session heartbeat and end. Session credentials come from a private session
-//! file, so the file-based tests are Unix-only like the session storage.
+//! file; the helper sets POSIX mode bits, so these tests stay Unix-only
+//! (Windows session storage itself is supported).
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};

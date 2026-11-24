@@ -102,10 +102,19 @@ impl RetryPolicy {
     }
 }
 
-/// `Retry-After` as delta seconds; HTTP dates are not supported.
+/// `Retry-After` as delta seconds or an HTTP-date (RFC 7231). A date is
+/// converted to the delay from now until that instant, floored at zero so a
+/// past date retries immediately rather than underflowing.
 fn parse_retry_after(value: &str) -> Option<Duration> {
-    let secs: u64 = value.trim().parse().ok()?;
-    Some(Duration::from_secs(secs))
+    let value = value.trim();
+    if let Ok(secs) = value.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+    let when = httpdate::parse_http_date(value).ok()?;
+    Some(
+        when.duration_since(SystemTime::now())
+            .unwrap_or(Duration::ZERO),
+    )
 }
 
 /// Pseudo-random extra delay in `[0, base/2)`, seeded from the wall clock so
@@ -697,6 +706,19 @@ mod tests {
         assert_eq!(parse_retry_after("2"), Some(Duration::from_secs(2)));
         assert_eq!(parse_retry_after("0"), Some(Duration::from_secs(0)));
         assert_eq!(parse_retry_after("soon"), None);
+    }
+
+    #[test]
+    fn retry_after_accepts_http_dates() {
+        let now = SystemTime::now();
+        let future = httpdate::fmt_http_date(now + Duration::from_secs(120));
+        let delay = parse_retry_after(&future).expect("future date parses");
+        assert!(delay <= Duration::from_secs(120));
+        assert!(delay >= Duration::from_secs(115), "delay was {delay:?}");
+        // A date already in the past retries immediately, never underflows.
+        let past = httpdate::fmt_http_date(now - Duration::from_secs(120));
+        assert_eq!(parse_retry_after(&past), Some(Duration::ZERO));
+        assert_eq!(parse_retry_after("not-a-date"), None);
     }
 
     #[test]

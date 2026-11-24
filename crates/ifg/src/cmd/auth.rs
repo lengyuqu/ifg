@@ -39,7 +39,7 @@ fn read_token(with_token: bool) -> Result<String, AppError> {
         std::io::stdin()
             .read_to_string(&mut buffer)
             .map_err(|e| AppError::Other(format!("could not read token from stdin: {e}")))?;
-        Ok(buffer.trim().to_string())
+        Ok(clean_token(&buffer))
     } else if std::io::stdin().is_terminal() {
         // Interactive: never echo the token (§5.3). Ctrl-C leaves the
         // terminal in its original state — rpassword restores it.
@@ -54,8 +54,15 @@ fn read_token(with_token: bool) -> Result<String, AppError> {
         std::io::stdin()
             .read_to_string(&mut buffer)
             .map_err(|e| AppError::Other(format!("could not read token from stdin: {e}")))?;
-        Ok(buffer.trim().to_string())
+        Ok(clean_token(&buffer))
     }
+}
+
+/// Windows PowerShell 5.1 prepends a UTF-8 BOM to piped stdin. `trim` keeps
+/// U+FEFF (it is not Unicode whitespace), which would corrupt the token, so
+/// strip the BOM first.
+fn clean_token(raw: &str) -> String {
+    super::strip_bom(raw).trim().to_string()
 }
 
 async fn login(cli: &Cli, with_token: bool) -> Result<(), AppError> {
@@ -445,7 +452,7 @@ fn git_credential(action: &str) -> Result<(), AppError> {
 fn credential_answer(config: &Config, request: &str) -> Option<String> {
     let mut protocol: Option<&str> = None;
     let mut host: Option<&str> = None;
-    for line in request.lines() {
+    for line in super::strip_bom(request).lines() {
         match line.split_once('=') {
             Some(("protocol", value)) => protocol = Some(value),
             Some(("host", value)) => host = Some(value),
@@ -510,6 +517,24 @@ mod tests {
     fn plain_http_hosts_still_work_when_configured_as_http() {
         let config = config_with("http://localhost:8080");
         let answer = credential_answer(&config, "protocol=http\nhost=localhost:8080\n").unwrap();
+        assert!(answer.contains("password=ifp_secret\n"));
+    }
+
+    #[test]
+    fn token_from_powershell_pipe_strips_utf8_bom() {
+        // Windows PowerShell 5.1 prepends EF BB BF to piped stdin; the BOM
+        // must not become part of the token (it used to cause HTTP 401).
+        assert_eq!(clean_token("\u{FEFF}ifp_abc123\r\n"), "ifp_abc123");
+        assert_eq!(clean_token("\u{FEFF}ifp_abc123"), "ifp_abc123");
+        assert_eq!(clean_token("ifp_abc123\n"), "ifp_abc123");
+        assert_eq!(clean_token("  ifp_abc123  \r\n"), "ifp_abc123");
+    }
+
+    #[test]
+    fn git_credential_request_with_bom_still_matches() {
+        let config = config_with("https://forge.example.com");
+        let answer =
+            credential_answer(&config, "\u{FEFF}protocol=https\nhost=forge.example.com\n").unwrap();
         assert!(answer.contains("password=ifp_secret\n"));
     }
 }

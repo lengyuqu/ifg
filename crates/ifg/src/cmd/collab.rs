@@ -2,9 +2,7 @@
 //! and repository, and are never printed or accepted as command-line flags.
 use std::path::Path;
 
-#[cfg(unix)]
-use ifg_client::Secret;
-use ifg_client::{collab_segment, Method, SessionCredentials};
+use ifg_client::{collab_segment, Method, Secret, SessionCredentials};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -29,26 +27,13 @@ fn session_path(path: Option<&Path>) -> Result<&Path, AppError> {
     path.ok_or_else(|| AppError::Usage("this operation requires --session-file".into()))
 }
 
-#[cfg(unix)]
 fn create_private(path: &Path) -> Result<std::fs::File, AppError> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|e| {
-            AppError::Io(format!(
-                "cannot create session file {}: {e}",
-                path.display()
-            ))
-        })
-}
-#[cfg(not(unix))]
-fn create_private(_path: &Path) -> Result<std::fs::File, AppError> {
-    Err(AppError::Other(
-        "secure session file storage is not yet supported on this platform".into(),
-    ))
+    crate::secure_file::create_private(path).map_err(|e| {
+        AppError::Io(format!(
+            "cannot create session file {}: {e}",
+            path.display()
+        ))
+    })
 }
 
 fn load_session(path: &Path, host: &str, repo: &str) -> Result<SessionCredentials, AppError> {
@@ -68,52 +53,49 @@ fn load_session(path: &Path, host: &str, repo: &str) -> Result<SessionCredential
             ));
         }
     }
-    #[cfg(not(unix))]
-    {
-        let _ = (host, repo);
-        Err(AppError::Other(
-            "secure session file storage is not yet supported on this platform".into(),
-        ))
-    }
+    let file = std::fs::File::open(path)
+        .map_err(|e| AppError::Io(format!("cannot open session file: {e}")))?;
+    // Verify privacy on the open handle (Windows DACL / Unix mode), so a file
+    // swapped or loosened after the path check is refused before its secret
+    // is read.
+    crate::secure_file::assert_private_open_file(&file)
+        .map_err(|e| AppError::Auth(format!("session file is not private: {e}")))?;
     #[cfg(unix)]
     {
-        use std::io::Read;
         use std::os::unix::fs::MetadataExt;
-        let file = std::fs::File::open(path)
-            .map_err(|e| AppError::Io(format!("cannot open session file: {e}")))?;
         let opened = file
             .metadata()
             .map_err(|e| AppError::Io(format!("cannot inspect session file: {e}")))?;
         if !opened.is_file()
             || opened.dev() != metadata.dev()
             || opened.ino() != metadata.ino()
-            || opened.mode() & 0o077 != 0
             || opened.nlink() != 1
         {
             return Err(AppError::Auth(
                 "session file changed or is not private".into(),
             ));
         }
-        let mut bytes = Vec::new();
-        file.take(16 * 1024)
-            .read_to_end(&mut bytes)
-            .map_err(|e| AppError::Io(format!("cannot read session file: {e}")))?;
-        let stored: StoredSession = serde_json::from_slice(&bytes)
-            .map_err(|_| AppError::Auth("invalid session file".into()))?;
-        if stored.host != host
-            || stored.repo != repo
-            || stored.id.is_empty()
-            || stored.secret.is_empty()
-        {
-            return Err(AppError::Auth(
-                "session file does not match this host and repository".into(),
-            ));
-        }
-        Ok(SessionCredentials::new(
-            stored.id,
-            Secret::new(stored.secret),
-        ))
     }
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    file.take(16 * 1024)
+        .read_to_end(&mut bytes)
+        .map_err(|e| AppError::Io(format!("cannot read session file: {e}")))?;
+    let stored: StoredSession = serde_json::from_slice(&bytes)
+        .map_err(|_| AppError::Auth("invalid session file".into()))?;
+    if stored.host != host
+        || stored.repo != repo
+        || stored.id.is_empty()
+        || stored.secret.is_empty()
+    {
+        return Err(AppError::Auth(
+            "session file does not match this host and repository".into(),
+        ));
+    }
+    Ok(SessionCredentials::new(
+        stored.id,
+        Secret::new(stored.secret),
+    ))
 }
 
 fn query(path: &str, params: &[(&str, Option<String>)]) -> String {
@@ -146,7 +128,7 @@ fn read_conditions_body(source: &str) -> Result<Value, AppError> {
         std::fs::read_to_string(source)
             .map_err(|e| AppError::Io(format!("cannot read {source}: {e}")))?
     };
-    let value: Value = serde_json::from_str(&text)
+    let value: Value = serde_json::from_str(super::strip_bom(&text))
         .map_err(|e| AppError::Usage(format!("condition file is not valid JSON: {e}")))?;
     if !value.is_object() {
         return Err(AppError::Usage(
@@ -852,4 +834,19 @@ pub async fn run(command: &CollabCommand, file: Option<&Path>, cli: &Cli) -> Res
         .await?;
     show(cli, &value);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn conditions_body_with_utf8_bom_parses() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all("\u{FEFF}{\"conditions\":[]}".as_bytes())
+            .unwrap();
+        let value = read_conditions_body(file.path().to_str().unwrap()).unwrap();
+        assert!(value.is_object());
+    }
 }

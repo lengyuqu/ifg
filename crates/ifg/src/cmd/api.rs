@@ -197,7 +197,8 @@ fn read_json_body(file: &str) -> Result<Value, AppError> {
         std::fs::read_to_string(file)
             .map_err(|e| AppError::Other(format!("could not read {file}: {e}")))?
     };
-    serde_json::from_str(&text).map_err(|e| AppError::Other(format!("invalid JSON in {file}: {e}")))
+    serde_json::from_str(super::strip_bom(&text))
+        .map_err(|e| AppError::Other(format!("invalid JSON in {file}: {e}")))
 }
 
 #[cfg(test)]
@@ -242,5 +243,15 @@ mod tests {
         ]);
         assert_eq!(body["name"], "demo");
         assert_eq!(body["flag"], "false");
+    }
+
+    #[test]
+    fn json_body_with_utf8_bom_parses() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all("\u{FEFF}{\"name\":\"demo\"}".as_bytes())
+            .unwrap();
+        let value = read_json_body(file.path().to_str().unwrap()).unwrap();
+        assert_eq!(value["name"], "demo");
     }
 }

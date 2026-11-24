@@ -336,6 +336,24 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
      `windows-latest` job 构建，再与 macOS/Linux 产物合并 `SHA256SUMS`。
    - CI 增加 `windows-latest` job（fmt/clippy/test），不跑 audit 与 e2e。
 
+- **Windows 安全文件存储 + `unsafe` 例外（2026-11-24）**：
+   - 协作会话文件与 agent 令牌文件此前在 Windows 报「not yet supported」；
+     现统一走 `crates/ifg/src/secure_file.rs`，两平台都保证「仅属主可访问」。
+     Unix 仍用 `0600`（`create_new` + `mode(0o600)`）；Windows 无 POSIX 位，
+     等价物是**受保护 DACL**：SDDL `O:<sid>D:P(A;;GA;;;<sid>)`，只授予进程
+     令牌属主完全控制，`SE_DACL_PROTECTED` 断开继承，在 `CreateFileW` 经
+     `SECURITY_ATTRIBUTES` **原子**生效（不存在短暂人人可读的窗口）。
+   - 读取侧 `assert_private_open_file` 在**已打开句柄**上复核同一性质
+     （`GetSecurityInfo` + 属主/DACL 校验，逐条 ACE 必须为属主的允许 ACE），
+     被调包或放宽的文件在读到密钥前即拒绝；Unix 侧另查 `mode & 0o077`。
+   - **`unsafe_code` 由 `forbid` 改为 `deny`**（workspace `Cargo.toml`）：
+     `forbid` 无法被 `allow` 覆盖，而 Win32 安全 API 必须 `unsafe`。例外**仅**
+     作用于 `secure_file.rs` 的 `#[cfg(windows)] mod win`（`#[allow(unsafe_code)]`），
+     每个 `unsafe` 块带 SAFETY 注释，Unix 路径零 `unsafe`，其余 crate 仍受 `deny` 约束。
+     直接调 `windows-sys`（不引 `windows` 高层 crate），把 unsafe 面收敛到一个已审计模块。
+   - `Retry-After` 同时支持 delta-seconds 与 HTTP-date（`httpdate` crate，
+     `ifg-client/src/http.rs`）：过期日期回退为立即重试（`Duration::ZERO`），不会下溢。
+
 - **v0.7 决策（2026-11-04）**：
    - `ifg doctor`：一条命令自检 host 来源 / 令牌存在 / 账号身份 / `repo` scope /
      服务端版本（对比 MIN_SERVER_VERSION）/ WS 握手 / 仓库可读 / git 凭据助手。

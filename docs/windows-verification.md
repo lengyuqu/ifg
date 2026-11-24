@@ -229,9 +229,32 @@ Test-Path "$env:TEMP\ifg-pkg\man\ifg.1"
 
 | 项 | 命令 | 预期 |
 |---|---|---|
-| 协作会话文件 | `& $ifg -R alice/demo collab --session-file "$env:TEMP\s.json" session start --name A --client codex` | 报 `secure session file storage is not yet supported on this platform` |
 | 分页器默认 | `$env:PAGER` 未设置时跑长列表 | 直出，不调用 `less` |
 | 未签名 exe | 首次运行 | 可能出现 SmartScreen / 杀软告警 |
+
+> 协作会话文件/agent 令牌文件的安全存储已在 Windows 实现（受保护 DACL，仅属主可访问），不再是限制；见 V10。
+
+## V10 安全文件存储（仅属主可访问）
+
+协作会话文件与 agent 令牌文件在 Windows 上以**受保护 DACL** 创建，仅当前用户可访问（等价 Unix `0600`）。需要已登录的测试 host 与一个可访问仓库（同 V2 前置）。
+
+```powershell
+$session = Join-Path $env:TEMP ('ifg-session-' + [guid]::NewGuid().ToString('N') + '.json')
+& $ifg -R alice/demo collab --session-file $session session start --name A --client codex
+icacls $session
+```
+
+**预期**：`session start` 成功（不再报 `not yet supported on this platform`）；`icacls` 只列出当前用户一条 `(F)`，无 `Everyone`、`BUILTIN\Users`、`NT AUTHORITY\Authenticated Users` 等其他主体，也无继承项（受保护 DACL）。
+
+```powershell
+# 读取侧复核：放宽权限后必须拒绝加载
+icacls $session /grant 'Everyone:(R)' | Out-Null
+& $ifg -R alice/demo collab --session-file $session session heartbeat
+```
+
+**预期**：报 `session file is not private`，在读到密钥前拒绝被放宽的会话文件。
+
+结束时删除临时会话文件：`Remove-Item $session -Force`。
 
 ## 结果记录
 
@@ -249,6 +272,7 @@ Test-Path "$env:TEMP\ifg-pkg\man\ifg.1"
 | V7 编辑器 | ☐ 通过 ☐ 失败 | |
 | V8 发布产物 | ☐ 通过 ☐ 失败 | |
 | V9 已知限制 | ☐ 符合 ☐ 不符 | |
+| V10 安全文件存储 | ☐ 通过 ☐ 失败 | icacls 仅属主 |
 
 ## 失败回报模板
 

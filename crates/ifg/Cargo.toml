@@ -30,11 +30,22 @@ tempfile = { workspace = true }
 # are reached through the `keyring` crate, which calls the platform API
 # directly: the PAT never becomes a process argument. The macOS `security`
 # CLI would need `-w <token>`, which any local process can read with `ps`.
-# `unsafe_code = "forbid"` applies to this workspace, not to dependencies.
+# `unsafe_code = "deny"` applies to this workspace, not to dependencies.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 keyring = { version = "3", default-features = false, features = [
     "windows-native",
     "apple-native",
+] }
+
+# Owner-only secret files on Windows (secure_file.rs): a protected DACL via
+# the Win32 security API. The unsafe is confined to that one audited module.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
 ] }
 
 [dev-dependencies]

@@ -36,6 +36,14 @@ use crate::config::Config;
 use crate::context::{self, ResolvedHost};
 use crate::error::AppError;
 
+/// Strip a leading UTF-8 BOM (U+FEFF) from input text. Windows PowerShell 5.1
+/// prepends one to piped stdin and Windows editors often save UTF-8 files with
+/// it; `trim` keeps U+FEFF (it is not Unicode whitespace) and `serde_json`
+/// rejects it, so every stdin/file body reader normalizes it away first.
+pub(crate) fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{FEFF}').unwrap_or(s)
+}
+
 /// Leaf commands that accept `--json` / `--template`, by clap command path.
 /// A group path covers every leaf under it. `view` commands also accept the
 /// flags, except with `--web`, which `validate_output` checks on its own.
@@ -437,6 +445,16 @@ mod tests {
     use super::*;
     use crate::error::EXIT_USAGE;
     use clap::{CommandFactory, FromArgMatches};
+
+    #[test]
+    fn strip_bom_removes_only_a_leading_utf8_bom() {
+        assert_eq!(strip_bom("\u{FEFF}ifp_abc\r\n"), "ifp_abc\r\n");
+        assert_eq!(strip_bom("\u{FEFF}{\"a\":1}"), "{\"a\":1}");
+        assert_eq!(strip_bom("ifp_abc"), "ifp_abc");
+        assert_eq!(strip_bom(""), "");
+        // A BOM that is not at the very start is left untouched.
+        assert_eq!(strip_bom("x\u{FEFF}y"), "x\u{FEFF}y");
+    }
 
     fn parsed(args: &[&str]) -> (Cli, ArgMatches) {
         let matches = Cli::command().try_get_matches_from(args).unwrap();

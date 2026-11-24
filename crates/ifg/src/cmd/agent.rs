@@ -155,7 +155,12 @@ async fn create_token(
 ) -> Result<Value, AppError> {
     use std::io::Write;
 
-    let mut file = create_private(path)?;
+    let mut file = crate::secure_file::create_private(path).map_err(|error| {
+        AppError::Io(format!(
+            "cannot create token file {} (it must not exist yet): {error}",
+            path.display()
+        ))
+    })?;
     let mut value = match agents.create_token_raw(username, request).await {
         Ok(value) => value,
         Err(error) => {
@@ -188,29 +193,6 @@ async fn create_token(
         )));
     }
     Ok(value)
-}
-
-#[cfg(unix)]
-fn create_private(path: &Path) -> Result<std::fs::File, AppError> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|error| {
-            AppError::Io(format!(
-                "cannot create token file {} (it must not exist yet): {error}",
-                path.display()
-            ))
-        })
-}
-
-#[cfg(not(unix))]
-fn create_private(_path: &Path) -> Result<std::fs::File, AppError> {
-    Err(AppError::Other(
-        "secure token file storage is not yet supported on this platform".into(),
-    ))
 }
 
 /// A field as sanitized text; `—` when absent or null.

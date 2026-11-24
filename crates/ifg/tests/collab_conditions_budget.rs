@@ -1,7 +1,7 @@
 //! CLI tests for completion conditions, completion status, budgets, usage,
 //! repository rules and the overview. Writes carry session credentials from a
-//! private session file, so the file-based tests are Unix-only like the
-//! session storage.
+//! private session file; the helper below sets POSIX mode bits, so these
+//! file-based tests stay Unix-only (Windows session storage itself is supported).
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};

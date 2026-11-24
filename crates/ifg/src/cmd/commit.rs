@@ -223,7 +223,7 @@ fn read_source(source: &str, what: &str) -> Result<String, AppError> {
             MAX_INPUT_BYTES / (1024 * 1024)
         )));
     }
-    Ok(text)
+    Ok(super::strip_bom(&text).to_string())
 }
 
 /// Read and check the `--files` document: a non-empty JSON array of objects.
@@ -275,5 +275,15 @@ mod tests {
         assert_eq!(short(&value, "a"), "0123456789ab");
         assert!(!short(&value, "b").contains('\u{1b}'));
         assert_eq!(short(&value, "missing"), "—");
+    }
+
+    #[test]
+    fn files_input_with_utf8_bom_parses() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all("\u{FEFF}[{\"operation\":\"create\"}]".as_bytes())
+            .unwrap();
+        let value = read_files(file.path().to_str().unwrap()).unwrap();
+        assert_eq!(value.as_array().unwrap().len(), 1);
     }
 }

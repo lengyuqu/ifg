@@ -14,15 +14,17 @@ fn content(body: &Option<String>, file: &Option<String>) -> Result<String, AppEr
     let file = file
         .as_deref()
         .ok_or_else(|| AppError::Usage("provide --body or --file".into()))?;
-    if file == "-" {
+    let text = if file == "-" {
         let mut text = String::new();
         std::io::stdin()
             .read_to_string(&mut text)
             .map_err(|e| AppError::Io(format!("cannot read stdin: {e}")))?;
-        Ok(text)
+        text
     } else {
-        std::fs::read_to_string(file).map_err(|e| AppError::Io(format!("cannot read {file}: {e}")))
-    }
+        std::fs::read_to_string(file)
+            .map_err(|e| AppError::Io(format!("cannot read {file}: {e}")))?
+    };
+    Ok(super::strip_bom(&text).to_string())
 }
 
 fn structured(cli: &Cli, value: &Value) {
@@ -145,4 +147,19 @@ pub async fn run(command: &WikiCommand, cli: &Cli) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn content_file_with_utf8_bom_is_stripped() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all("\u{FEFF}# Title\nbody".as_bytes()).unwrap();
+        let path = file.path().to_str().unwrap().to_string();
+        let text = content(&None, &Some(path)).unwrap();
+        assert_eq!(text, "# Title\nbody");
+    }
 }
