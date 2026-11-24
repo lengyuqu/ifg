@@ -4,7 +4,7 @@
 
 The command-line client for IronForge: work with repositories, issues, PRs, CI and releases from the terminal over the REST API, the way GitHub's `gh` and Gitea's `tea` do for those services.
 
-> Status: v0.9.0 is released: the full `auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` command set, with streaming upload/download, SHA-256 verification, the git credential helper, terminal-aware output (color / pager / relative time) and shell completions.
+> Status: v0.9.1 is released: the full `auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` command set, with streaming upload/download, SHA-256 verification, the git credential helper, terminal-aware output (color / pager / relative time) and shell completions.
 
 Unlike IronForge's own `ironforge` binary, `ifg` never touches the database and does no operations work; it calls the public API with a personal access token (PAT) only, and can be installed on any machine.
 
@@ -20,13 +20,22 @@ brew tap lengyuqu/ifg https://github.com/lengyuqu/homebrew-ifg.git
 brew install lengyuqu/ifg/ifg
 ```
 
+Scoop (Windows; requires publishing the Windows zip asset to the GitHub Release first):
+
+```powershell
+scoop bucket add ifg https://github.com/lengyuqu/scoop-ifg.git
+scoop install ifg
+```
+
+The bucket manifest and sync script live in this repo at `scoop-ifg/bucket/ifg.json` and `scripts/bump-scoop.sh`; the bucket contents must be pushed separately to `lengyuqu/scoop-ifg`.
+
 SSH clone: `ifg repo clone OWNER/NAME --ssh` (`ssh://git@HOST:2222/...`; override the port with `IRONFORGE_SSH_PORT`).
 
 Manual installation:
 
 ```bash
 # Download the tar.gz for your architecture and the SHA256SUMS from the same Release
-archive='ifg-0.9.0-<target>.tar.gz'  # replace with the actual file name
+archive='ifg-0.9.1-<target>.tar.gz'  # replace with the actual file name
 if awk -v f="$archive" '$2 == f { print; n++ } END { if (n != 1) exit 1 }' SHA256SUMS > "$archive.sha256" &&
    shasum -a 256 -c "$archive.sha256"; then
   tar xzf "$archive" && sudo mv ifg /usr/local/bin/
@@ -38,7 +47,7 @@ fi
 Windows (PowerShell):
 
 ```powershell
-$archive = 'ifg-0.9.0-x86_64-pc-windows-msvc.zip'
+$archive = 'ifg-0.9.1-x86_64-pc-windows-msvc.zip'
 $entries = @(Get-Content .\SHA256SUMS | Where-Object { $_ -match ('^[0-9a-fA-F]{64}\s+\*?' + [regex]::Escape($archive) + '$') })
 if ($entries.Count -ne 1) { throw 'no unique checksum entry found; not installing' }
 $expected = ($entries[0] -split '\s+')[0]
@@ -340,6 +349,7 @@ scripts/e2e.sh      # end-to-end: needs a reachable IronForge instance (default 
                     # CI runs it on a self-hosted runner; see docs/ci-e2e-runner.md
 scripts/release.sh  # release artifacts: four-target tar.gz + Windows zip + SHA256SUMS (run with `--windows` on Windows for the Windows part)
 scripts/bump-tap.sh <version> <formula>  # sync the Homebrew formula after a release (reads SHA256SUMS)
+scripts/bump-scoop.sh <version> <manifest>  # sync the Scoop manifest after a release (reads SHA256SUMS)
 scripts/gen-man.sh                       # regenerate man/ (check.sh verifies it is up to date)
 ```
 

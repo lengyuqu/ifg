@@ -1,0 +1,28 @@
+{
+    "$schema": "https://schema.scoop.sh/scoop-apps.json/latest",
+    "version": "0.9.1",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/lengyuqu/ifg/releases/download/v0.9.1/ifg-0.9.1-x86_64-pc-windows-msvc.zip",
+            "hash": "PENDING_RELEASE"
+        }
+    },
+    "bin": "ifg.exe",
+    "homepage": "https://github.com/lengyuqu/ifg",
+    "license": "MIT",
+    "description": "IronForge CLI client: manage repos, issues, PRs, CI and releases via REST API",
+    "checkver": {
+        "github": "https://github.com/lengyuqu/ifg"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/lengyuqu/ifg/releases/download/v$version/ifg-$version-x86_64-pc-windows-msvc.zip"
+            }
+        }
+    },
+    "notes": [
+        "Credentials are stored in the OS keychain or %APPDATA%\\ironforge\\hosts.toml.",
+        "Register the git credential helper with: git config --global credential.https://YOUR-FORGE.helper '!ifg.exe auth git-credential'"
+    ]
+}

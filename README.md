@@ -4,7 +4,7 @@
 
 IronForge 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
 
-> 状态：v0.9.0 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
+> 状态：v0.9.1 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
 
 与 IronForge 自带的 `ironforge` 二进制不同，`ifg` 不连数据库、不做运维，只用个人访问令牌（PAT）调用公开 API，可以装在任何机器上。
 
@@ -20,13 +20,22 @@ brew tap lengyuqu/ifg https://github.com/lengyuqu/homebrew-ifg.git
 brew install lengyuqu/ifg/ifg
 ```
 
+Scoop（Windows，需先发布 Windows zip 资产到 GitHub Release）：
+
+```powershell
+scoop bucket add ifg https://github.com/lengyuqu/scoop-ifg.git
+scoop install ifg
+```
+
+bucket 的 manifest 与同步脚本在本仓库的 `scoop-ifg/bucket/ifg.json` 和 `scripts/bump-scoop.sh`；bucket 内容需另行推送到独立仓库 `lengyuqu/scoop-ifg`。
+
 SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端口可用 `IRONFORGE_SSH_PORT` 覆盖）。
 
 手动安装：
 
 ```bash
 # 下载对应架构的 tar.gz 与同一 Release 的 SHA256SUMS
-archive='ifg-0.9.0-<target>.tar.gz'  # 替换为实际文件名
+archive='ifg-0.9.1-<target>.tar.gz'  # 替换为实际文件名
 if awk -v f="$archive" '$2 == f { print; n++ } END { if (n != 1) exit 1 }' SHA256SUMS > "$archive.sha256" &&
    shasum -a 256 -c "$archive.sha256"; then
   tar xzf "$archive" && sudo mv ifg /usr/local/bin/
@@ -38,7 +47,7 @@ fi
 Windows（PowerShell）：
 
 ```powershell
-$archive = 'ifg-0.9.0-x86_64-pc-windows-msvc.zip'
+$archive = 'ifg-0.9.1-x86_64-pc-windows-msvc.zip'
 $entries = @(Get-Content .\SHA256SUMS | Where-Object { $_ -match ('^[0-9a-fA-F]{64}\s+\*?' + [regex]::Escape($archive) + '$') })
 if ($entries.Count -ne 1) { throw '找不到唯一的校验记录，停止安装' }
 $expected = ($entries[0] -split '\s+')[0]
@@ -340,6 +349,7 @@ scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 loca
                     # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
 scripts/release.sh  # 发布产物：四架构 tar.gz + Windows zip + SHA256SUMS（Windows 部分需在 Windows 上运行 `--windows`）
 scripts/bump-tap.sh <version> <formula>  # 发版后同步 Homebrew formula（读 SHA256SUMS）
+scripts/bump-scoop.sh <version> <manifest>  # 发版后同步 Scoop manifest（读 SHA256SUMS）
 scripts/gen-man.sh                       # 重新生成 man/（check.sh 会校验是否最新）
 ```
 
