@@ -20,14 +20,14 @@ brew tap lengyuqu/ifg https://github.com/lengyuqu/homebrew-ifg.git
 brew install lengyuqu/ifg/ifg
 ```
 
-Scoop（Windows，需先发布 Windows zip 资产到 GitHub Release）：
+Scoop（Windows）：
 
 ```powershell
 scoop bucket add ifg https://github.com/lengyuqu/scoop-ifg.git
 scoop install ifg
 ```
 
-bucket 的 manifest 与同步脚本在本仓库的 `scoop-ifg/bucket/ifg.json` 和 `scripts/bump-scoop.sh`；bucket 内容需另行推送到独立仓库 `lengyuqu/scoop-ifg`。
+两个包管理仓库：`lengyuqu/homebrew-ifg`（tap）与 `lengyuqu/scoop-ifg`（bucket）。manifest 源与发版同步脚本在本仓库的 `scoop-ifg/bucket/ifg.json`、`scripts/bump-scoop.sh` 和 `scripts/bump-tap.sh`。
 
 SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端口可用 `IRONFORGE_SSH_PORT` 覆盖）。
 

@@ -20,14 +20,14 @@ brew tap lengyuqu/ifg https://github.com/lengyuqu/homebrew-ifg.git
 brew install lengyuqu/ifg/ifg
 ```
 
-Scoop (Windows; requires publishing the Windows zip asset to the GitHub Release first):
+Scoop (Windows):
 
 ```powershell
 scoop bucket add ifg https://github.com/lengyuqu/scoop-ifg.git
 scoop install ifg
 ```
 
-The bucket manifest and sync script live in this repo at `scoop-ifg/bucket/ifg.json` and `scripts/bump-scoop.sh`; the bucket contents must be pushed separately to `lengyuqu/scoop-ifg`.
+Package repos: `lengyuqu/homebrew-ifg` (tap) and `lengyuqu/scoop-ifg` (bucket). The manifest source and release sync scripts live in this repo at `scoop-ifg/bucket/ifg.json`, `scripts/bump-scoop.sh` and `scripts/bump-tap.sh`.
 
 SSH clone: `ifg repo clone OWNER/NAME --ssh` (`ssh://git@HOST:2222/...`; override the port with `IRONFORGE_SSH_PORT`).
 
