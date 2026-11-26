@@ -1004,7 +1004,7 @@ async fn checkout(
     // after merge, the usual case for re-checkouts — fall back to the
     // server's refs/pull/<n>/head mirror.
     let branch_error = match clone_url {
-        Some(url) => fetch_ref(ctx, &url, &branch).err(),
+        Some(url) => fetch_ref(ctx, &url, &format!("refs/heads/{branch}")).err(),
         None => Some(AppError::Other(
             "fork head repository is unavailable".into(),
         )),
@@ -1047,16 +1047,13 @@ async fn checkout(
 /// `git fetch <url> <refspec>` with the PAT passed through GIT_CONFIG_* so it
 /// never lands in argv or a stored remote URL.
 fn fetch_ref(ctx: &super::CommandContext, url: &str, refspec: &str) -> Result<(), AppError> {
-    // The ref comes from the server's PR row: only a single source ref is
-    // ever needed. A `:dst` would write into an arbitrary local ref and a
-    // leading `+` would force-overwrite it; a leading `-` becomes an option.
     if !safe_fetch_ref(refspec) {
         return Err(AppError::Other(format!(
-            "refusing to fetch an unsafe ref from the server: {refspec}"
+            "refusing to fetch an unsafe ref from the server: {refspec:?}"
         )));
     }
     let mut fetch = crate::git::command();
-    fetch.args(["fetch", url, refspec]);
+    fetch.args(["fetch", "--", url, refspec]);
     if let Some(token) = &ctx.host.token {
         let existing = std::env::var("GIT_CONFIG_COUNT").ok();
         for (key, value) in crate::git::bearer_header_env(token.expose(), existing.as_deref()) {
@@ -1076,21 +1073,10 @@ fn fetch_ref(ctx: &super::CommandContext, url: &str, refspec: &str) -> Result<()
     }
 }
 
-/// Validate a server-supplied git ref before passing it to `git fetch`.
-/// Only a single source ref is accepted — no destination, force flag,
-/// option-like prefix, glob, or character git rejects in a refname.
+/// Allow exactly one fully qualified source ref. Git validates the ref name
+/// without interpreting it as a fetch refspec or expanding a wildcard.
 fn safe_fetch_ref(reference: &str) -> bool {
-    !reference.is_empty()
-        && !reference.starts_with('-')
-        && !reference.contains("..")
-        && !reference.contains("@{")
-        && !reference.ends_with(".lock")
-        && !reference.chars().any(|c| {
-            matches!(
-                c,
-                ':' | '+' | '\\' | ' ' | '\t' | '\n' | '\r' | '\0' | '~' | '^' | '?' | '*' | '['
-            )
-        })
+    reference.starts_with("refs/") && git_success(&["check-ref-format", reference]).is_ok()
 }
 
 /// Whether a local branch with this name exists.
@@ -1129,8 +1115,12 @@ mod tests {
     use super::{safe_fetch_ref, short_merge_sha};
 
     #[test]
-    fn fetch_ref_accepts_plain_branches_and_pull_mirrors() {
-        for reference in ["main", "feature/foo", "pr-123", "refs/pull/42/head"] {
+    fn fetch_ref_accepts_qualified_branches_and_pull_mirrors() {
+        for reference in [
+            "refs/heads/main",
+            "refs/heads/feature/c++",
+            "refs/pull/42/head",
+        ] {
             assert!(safe_fetch_ref(reference), "{reference}");
         }
     }
@@ -1148,19 +1138,19 @@ mod tests {
             "",
             "-x",
             "+x:refs/heads/main",
-            "main:refs/heads/main",
+            "refs/heads/main:refs/heads/main",
             "HEAD:refs/heads/main",
-            "a b",
-            "a..b",
-            "a@{b",
-            "a.lock",
-            "a\\b",
-            "a\nb",
-            "a~1",
-            "a^",
-            "a?",
-            "a*",
-            "a[1]",
+            "refs/heads/a b",
+            "refs/heads/a..b",
+            "refs/heads/a@{b",
+            "refs/heads/a.lock",
+            "refs/heads/a\\b",
+            "refs/heads/a\nb",
+            "refs/heads/a~1",
+            "refs/heads/a^",
+            "refs/heads/a?",
+            "refs/heads/a*",
+            "refs/heads/a[1]",
         ] {
             assert!(!safe_fetch_ref(reference), "{reference}");
         }

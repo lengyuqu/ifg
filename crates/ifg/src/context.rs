@@ -124,9 +124,9 @@ pub fn resolve_host(
             let url = normalize_url(&env_url);
             reject_host_mismatch(Some(remote), &url).map_err(|_| {
                 crate::error::AppError::Usage(format!(
-                    "IRONFORGE_URL points at {url} but the target repository is on {}; \
+                    "IRONFORGE_URL does not match the target repository at {}; \
                      unset it or pass a matching --host",
-                    remote.host
+                    remote.server_address()
                 ))
             })?;
             let token = env_pat.or_else(|| token_from_url(config, &url));
@@ -140,9 +140,8 @@ pub fn resolve_host(
             return Ok(resolved);
         }
         return Err(crate::error::AppError::Other(format!(
-            "no configured host matches {}; run `ifg auth login --host https://{}` \
-             (refusing to use another instance)",
-            remote.host, remote.host
+            "no configured host matches {}; run `ifg auth login --host <API URL>` for this instance",
+            remote.server_address()
         )));
     }
 
@@ -194,9 +193,8 @@ fn reject_host_mismatch(
         return Ok(());
     }
     Err(crate::error::AppError::Usage(format!(
-        "the target repository is on {} but this host is {url}; pass a matching --host \
-         or drop the explicit URL",
-        remote.host
+        "the selected host does not match the target repository at {}; pass a matching --host",
+        remote.server_address()
     )))
 }
 
@@ -214,8 +212,8 @@ fn from_configured_host(
     };
     if matches.next().is_some() {
         return Err(crate::error::AppError::Other(format!(
-            "multiple configured hosts match SSH remote {}; select one with --host",
-            remote.host
+            "multiple configured hosts match remote {}; select one with --host",
+            remote.server_address()
         )));
     }
     Ok(Some(ResolvedHost {
@@ -226,10 +224,11 @@ fn from_configured_host(
 }
 
 pub(crate) fn remote_matches_url(remote: &git::Remote, entry_url: &str) -> bool {
-    if !remote.is_ssh {
-        return config::entry_matches_url(entry_url, &remote.host);
-    }
-    let Ok(ssh) = url::Url::parse(&format!("ssh://{}", remote.host)) else {
+    let authority = match &remote.server {
+        git::RemoteServer::Http(base) => return config::same_base_url(base, entry_url),
+        git::RemoteServer::Ssh(authority) => authority,
+    };
+    let Ok(ssh) = url::Url::parse(&format!("ssh://{authority}")) else {
         return false;
     };
     let Ok(api) = url::Url::parse(entry_url) else {
@@ -280,22 +279,21 @@ pub fn resolve_repo(
     resolved_host: &ResolvedHost,
 ) -> Result<RepoContext, crate::error::AppError> {
     if let Some(repo_arg) = repo_arg {
-        if is_url(repo_arg)
-            || repo_arg.starts_with("ssh://")
-            || (repo_arg.contains(':') && git::parse_remote_url(repo_arg).is_some())
-        {
-            let remote = crate::git::parse_remote_url(repo_arg).ok_or_else(|| {
-                crate::error::AppError::Usage(format!(
-                    "cannot parse '{repo_arg}' as an IronForge repository URL \
-                     (expected https://host/git/OWNER/NAME)"
-                ))
-            })?;
+        if let Some(remote) = git::parse_remote_url(repo_arg) {
+            reject_host_mismatch(Some(&remote), &resolved_host.url)?;
             validate_repo_component(&remote.owner, "owner")?;
             validate_repo_component(&remote.name, "repository name")?;
             return Ok(RepoContext {
                 owner: remote.owner,
                 name: remote.name,
             });
+        }
+        if repo_arg.contains("://") {
+            return Err(crate::error::AppError::Usage(
+                "invalid IronForge repository URL; expected https://host[/base]/git/OWNER/NAME \
+                 or an SSH remote"
+                    .into(),
+            ));
         }
         let Some((owner, name)) = repo_arg.split_once('/') else {
             return Err(crate::error::AppError::Usage(format!(

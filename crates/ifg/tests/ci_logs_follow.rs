@@ -13,12 +13,16 @@ use assert_cmd::Command;
 use serde_json::json;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
 
 #[derive(Clone)]
-struct Script {
-    /// `(chunk, delay before sending)`
-    frames: Vec<(String, u64)>,
-    close_after: bool,
+enum Script {
+    Stream {
+        /// `(chunk, delay before sending)`
+        frames: Vec<(String, u64)>,
+        close_after: bool,
+    },
+    StallHandshake,
 }
 
 fn log_frame(chunk: &str) -> tokio_tungstenite::tungstenite::Message {
@@ -96,12 +100,21 @@ async fn spawn_server(
                 if head.to_ascii_lowercase().contains("upgrade: websocket") {
                     let index = connections.fetch_add(1, Ordering::SeqCst);
                     let script = scripts.get(index).or_else(|| scripts.last()).cloned();
+                    if matches!(script, Some(Script::StallHandshake)) {
+                        // Keep the connection open without answering the upgrade.
+                        let _ = stream.read_to_end(&mut Vec::new()).await;
+                        return;
+                    }
                     let mut ws = match tokio_tungstenite::accept_async(stream).await {
                         Ok(ws) => ws,
                         Err(_) => return,
                     };
-                    if let Some(script) = script {
-                        for (chunk, delay) in script.frames {
+                    if let Some(Script::Stream {
+                        frames,
+                        close_after,
+                    }) = script
+                    {
+                        for (chunk, delay) in frames {
                             if delay > 0 {
                                 tokio::time::sleep(Duration::from_millis(delay)).await;
                             }
@@ -112,7 +125,7 @@ async fn spawn_server(
                                 return;
                             }
                         }
-                        if script.close_after {
+                        if close_after {
                             let _ = ws.close(None).await;
                             return;
                         }
@@ -179,8 +192,57 @@ fn command(url: &str, home: &TempDir) -> Command {
     cmd.env("IRONFORGE_URL", url)
         .env("IRONFORGE_PAT", "ifp_test")
         .env("XDG_CONFIG_HOME", home.path())
-        .args(["-R", "a/r", "ci", "logs", "1", "--follow"]);
+        .args(["-R", "a/r", "ci", "logs", "1", "--follow"])
+        .timeout(Duration::from_secs(20));
     cmd
+}
+
+#[tokio::test]
+async fn polling_filters_new_log_text_and_preserves_the_original_offset() {
+    let server = MockServer::start().await;
+    let initial = "first\r\nsecond";
+    Mock::given(path("/api/v1/repos/a/r/pipelines/1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(pipeline_body("running", initial), "application/json"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/api/v1/repos/a/r/pipelines/1/jobs/7"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            job_body("success", "first\r\nsecond\r\nlast\tline"),
+            "application/json",
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let result = run_logs(server.uri(), TempDir::new().unwrap()).await;
+    assert_eq!(result.stdout, b"first\nsecond\nlast\tline");
+    assert!(String::from_utf8_lossy(&result.stderr).contains("falling back to polling"));
+}
+
+#[tokio::test]
+async fn reconciled_log_tail_is_filtered_without_changing_the_original_prefix() {
+    let url = spawn_server(
+        "first\r\nsecond",
+        "first\r\nsecond\nthird\r\nline\r\nlast\tline",
+        vec![Script::Stream {
+            frames: vec![("third\r\nline".to_string(), 0)],
+            close_after: false,
+        }],
+    )
+    .await;
+    let result = run_logs(url, TempDir::new().unwrap()).await;
+    assert_eq!(result.stdout, b"first\nsecond\nthird\nline\nlast\tline");
+}
+
+#[tokio::test]
+async fn stalled_websocket_handshake_falls_back_to_polling() {
+    let url = spawn_server("first", "first\nlast", vec![Script::StallHandshake]).await;
+    let result = run_logs(url, TempDir::new().unwrap()).await;
+    assert_eq!(result.stdout, b"first\nlast");
+    assert!(String::from_utf8_lossy(&result.stderr).contains("falling back to polling"));
 }
 
 /// The terminal status is polled before the last frame arrives (1.2 s later).
@@ -191,7 +253,7 @@ async fn last_frame_after_the_quiet_window_is_recovered() {
     let url = spawn_server(
         "alpha",
         "alpha\nbeta\nomega",
-        vec![Script {
+        vec![Script::Stream {
             frames: vec![("beta".to_string(), 0), ("omega".to_string(), 3200)],
             close_after: false,
         }],
@@ -217,11 +279,11 @@ async fn replayed_chunks_keep_the_separator_and_cursor() {
         "alpha",
         "alpha\nbeta\nomega",
         vec![
-            Script {
+            Script::Stream {
                 frames: vec![("beta".to_string(), 0)],
                 close_after: true,
             },
-            Script {
+            Script::Stream {
                 frames: vec![("omega".to_string(), 0)],
                 close_after: false,
             },
@@ -247,7 +309,7 @@ async fn multiline_cjk_chunk_is_not_repeated() {
     let url = spawn_server(
         "第一行",
         final_log,
-        vec![Script {
+        vec![Script::Stream {
             frames: vec![("第二行\n第三行".to_string(), 0)],
             close_after: false,
         }],
@@ -274,7 +336,7 @@ async fn inconsistent_final_log_is_an_error() {
     let url = spawn_server(
         "alpha",
         "alpha\nzeta",
-        vec![Script {
+        vec![Script::Stream {
             frames: vec![("beta".to_string(), 0)],
             close_after: false,
         }],

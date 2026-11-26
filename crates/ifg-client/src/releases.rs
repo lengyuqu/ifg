@@ -262,11 +262,24 @@ impl Releases<'_> {
         path: &std::path::Path,
         content_type: &str,
     ) -> Result<Value, Error> {
-        use tokio_util::io::ReaderStream;
-
         let file = tokio::fs::File::open(path)
             .await
             .map_err(|e| Error::Config(format!("could not open {}: {e}", path.display())))?;
+        self.upload_open_file_raw(release_id, path, content_type, file)
+            .await
+    }
+
+    /// Stream an already-open file. `path` supplies the asset's filename,
+    /// allowing callers to open their attachments before creating the release.
+    pub async fn upload_open_file_raw(
+        &self,
+        release_id: i64,
+        path: &std::path::Path,
+        content_type: &str,
+        file: tokio::fs::File,
+    ) -> Result<Value, Error> {
+        use tokio_util::io::ReaderStream;
+
         // Default 8 KiB chunks make large assets do thousands of syscalls.
         let body = reqwest::Body::wrap_stream(ReaderStream::with_capacity(file, 64 * 1024));
         let filename = path

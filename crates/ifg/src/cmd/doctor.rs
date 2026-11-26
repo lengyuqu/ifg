@@ -373,29 +373,8 @@ async fn scope_check(ctx: &crate::cmd::CommandContext, username: &str) -> Check 
 /// 404. 401 means "the token works over HTTP but not here" — exactly what
 /// `ci logs --follow` would report as "streaming unavailable".
 async fn streaming_check(ctx: &crate::cmd::CommandContext) -> Check {
-    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-
-    let base = ctx
-        .host
-        .url
-        .replacen("https://", "wss://", 1)
-        .replacen("http://", "ws://", 1);
-    let url = format!("{base}/api/v1/ws/job/0?since=0");
-    let Ok(mut request) = url.as_str().into_client_request() else {
-        return Check::warn(
-            "streaming",
-            "could not build the WebSocket URL",
-            "report this: it is a client bug",
-        );
-    };
-    if let Some(token) = &ctx.host.token {
-        let header = format!("Bearer {}", token.expose());
-        if let Ok(value) = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&header) {
-            request.headers_mut().insert("authorization", value);
-        }
-    }
-    match tokio_tungstenite::connect_async(request).await {
-        Ok((mut socket, _)) => {
+    match super::ci::connect_job_log(&ctx.host, 0, 0).await {
+        Ok(mut socket) => {
             let _ = socket.close(None).await;
             Check::ok("streaming", "WebSocket available")
         }

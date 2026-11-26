@@ -2,6 +2,8 @@
 //! Downloads stream to a `.part` file, hash SHA-256 while writing, and only
 //! rename on a matching checksum.
 
+use std::path::Path;
+
 use futures_util::StreamExt;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -217,10 +219,17 @@ async fn create(
         is_draft: Some(draft),
         is_prerelease: Some(prerelease),
     };
+    // Open every attachment before publishing the release. Upload directly
+    // from these handles so a later path lookup cannot invalidate the check.
+    let mut attachments = Vec::with_capacity(files.len());
+    for file in files {
+        let path = Path::new(file);
+        attachments.push((path, open_attachment(path).await?));
+    }
     let releases = ctx.client.releases(&repo.owner, &repo.name);
     if cli.json || cli.template.is_some() {
         let mut value = releases.create_raw(&options).await?;
-        if !files.is_empty() {
+        if !attachments.is_empty() {
             let id = value["id"].as_i64().ok_or_else(|| {
                 AppError::Other("created release response lacks id; cannot upload assets".into())
             })?;
@@ -230,9 +239,14 @@ async fn create(
                 "Created release {} ({id}); uploading assets",
                 output::sanitize(tag)
             );
-            let mut assets = Vec::with_capacity(files.len());
-            for file in files {
-                assets.push(upload_asset(ctx, repo, id, file).await?);
+            let mut assets = Vec::with_capacity(attachments.len());
+            for (path, file) in attachments {
+                let content_type = guess_content_type(path);
+                assets.push(
+                    releases
+                        .upload_open_file_raw(id, path, &content_type, file)
+                        .await?,
+                );
             }
             value["assets"] = Value::Array(assets);
         }
@@ -245,8 +259,8 @@ async fn create(
     let release = releases.create(&options).await?;
     output::line!("Created release {} ({})", release.tag_name, release.id);
 
-    for file in files {
-        upload_file(ctx, repo, release.id, file).await?;
+    for (path, file) in attachments {
+        upload_file(&releases, release.id, path, file).await?;
     }
     Ok(())
 }
@@ -268,48 +282,40 @@ async fn upload(
         .await?
         .ok_or_else(|| not_found(tag))?;
     for file in files {
-        upload_file(ctx, repo, release.id, file).await?;
+        let path = Path::new(file);
+        upload_file(&releases, release.id, path, open_attachment(path).await?).await?;
     }
     Ok(())
 }
 
 async fn upload_file(
-    ctx: &super::CommandContext,
-    repo: &RepoContext,
+    releases: &ifg_client::Releases<'_>,
     release_id: i64,
-    file: &str,
+    path: &Path,
+    file: tokio::fs::File,
 ) -> Result<(), AppError> {
-    let value = upload_asset(ctx, repo, release_id, file).await?;
+    let content_type = guess_content_type(path);
+    let value = releases
+        .upload_open_file_raw(release_id, path, &content_type, file)
+        .await?;
     let asset: ifg_client::Asset = serde_json::from_value(value)
         .map_err(|e| AppError::Other(format!("could not decode uploaded asset: {e}")))?;
     output::line!(
         "Uploaded {} ({} bytes, {})",
         asset.filename,
         asset.size,
-        guess_content_type(std::path::Path::new(file))
+        content_type
     );
     Ok(())
 }
 
-/// Return the server's asset fields unchanged so machine modes can attach
-/// upload results without losing fields unknown to the display DTO.
-async fn upload_asset(
-    ctx: &super::CommandContext,
-    repo: &RepoContext,
-    release_id: i64,
-    file: &str,
-) -> Result<Value, AppError> {
-    let path = std::path::Path::new(file);
+async fn open_attachment(path: &Path) -> Result<tokio::fs::File, AppError> {
     if !path.is_file() {
-        return Err(AppError::Usage(format!("{file} is not a file")));
+        return Err(AppError::Usage(format!("{} is not a file", path.display())));
     }
-    let content_type = guess_content_type(path);
-    let value = ctx
-        .client
-        .releases(&repo.owner, &repo.name)
-        .upload_file_raw(release_id, path, &content_type)
-        .await?;
-    Ok(value)
+    tokio::fs::File::open(path)
+        .await
+        .map_err(|error| read_error(&path.display().to_string(), &error))
 }
 
 async fn download(

@@ -1,9 +1,11 @@
-//! `ifg ci …` (design doc §4.5). Log streaming is polling (§7.1 option A):
-//! the WebSocket job endpoint only accepts session JWTs, not PATs — the
-//! CLI re-reads the job every 2s and prints the increment.
+//! `ifg ci …` (design doc §4.5). Follow job logs over WebSocket, with HTTP
+//! polling as a fallback.
+
+use std::io;
+use std::time::Duration;
 
 use serde_json::Value;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Error as WebSocketError};
 
 use super::bootstrap;
 use crate::cli::{CiCommand, Cli};
@@ -12,7 +14,8 @@ use crate::error::AppError;
 use crate::output;
 
 const DEFAULT_LIMIT: u64 = 30;
-const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const WS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn run(command: &CiCommand, cli: &Cli) -> Result<(), AppError> {
     let ctx = bootstrap(cli)?;
@@ -365,33 +368,30 @@ fn job_log_ws_url(host_url: &str, job_id: i64, since_lines: usize) -> String {
     format!("{base}/api/v1/ws/job/{job_id}?since={since_lines}")
 }
 
-/// Stream a job log over `/api/v1/ws/job/{id}` until the job is terminal.
-///
-/// Returns `false` when streaming is not available (older server, refused
-/// handshake, or a connection that dies before the job finishes) so the
-/// caller can fall back to polling.
 type JobLogSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// Open the job-log socket, resuming at `since_lines` (line-based). `None`
-/// when the handshake fails — the caller treats that as "streaming
-/// unsupported" and polls instead.
-async fn connect_job_log(
+/// Open the job-log socket at `since_lines`, with a deadline covering the
+/// connection and handshake so a stalled upgrade can fall back to polling.
+pub(super) async fn connect_job_log(
     host: &crate::context::ResolvedHost,
     job_id: i64,
     since_lines: usize,
-) -> Option<JobLogSocket> {
+) -> Result<JobLogSocket, WebSocketError> {
     let url = job_log_ws_url(&host.url, job_id, since_lines);
-    let mut request = url.as_str().into_client_request().ok()?;
+    let mut request = url.as_str().into_client_request()?;
     if let Some(token) = &host.token {
         let header = format!("Bearer {}", token.expose());
-        let value = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&header).ok()?;
+        let value = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&header)?;
         request.headers_mut().insert("authorization", value);
     }
-    tokio_tungstenite::connect_async(request)
-        .await
-        .ok()
-        .map(|(socket, _)| socket)
+    let (socket, _) = tokio::time::timeout(
+        WS_HANDSHAKE_TIMEOUT,
+        tokio_tungstenite::connect_async(request),
+    )
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "WebSocket handshake timed out"))??;
+    Ok(socket)
 }
 
 /// Advance the line cursor after a chunk: the server appends each chunk as
@@ -472,7 +472,7 @@ async fn follow_websocket(
 ) -> Result<FollowOutcome, AppError> {
     use futures_util::StreamExt;
 
-    let Some(mut socket) = connect_job_log(&ctx.host, job_id, printed_lines).await else {
+    let Ok(mut socket) = connect_job_log(&ctx.host, job_id, printed_lines).await else {
         return Ok(FollowOutcome::Unavailable);
     };
 
@@ -540,8 +540,11 @@ async fn follow_websocket(
         );
         tokio::time::sleep(delay).await;
         match connect_job_log(&ctx.host, job_id, lines_seen).await {
-            Some(resumed) => socket = resumed,
-            None => continue,
+            Ok(resumed) => socket = resumed,
+            Err(WebSocketError::Io(error)) if error.kind() == io::ErrorKind::TimedOut => {
+                return Ok(FollowOutcome::Interrupted(chars_seen));
+            }
+            Err(_) => continue,
         }
     }
 }
@@ -563,21 +566,23 @@ fn blocked_hint(repo: &RepoContext, pipeline: i64, job: &ifg_client::Job) -> Str
     )
 }
 
-/// Print the whole log; returns how many chars were printed.
+/// Log offsets count the server's original characters, including any controls
+/// stripped at the point of display.
 fn print_log(log: &Option<String>) -> usize {
-    match log {
-        Some(log) if !log.is_empty() => {
-            output::text!("{}", output::sanitize(log));
+    let log = log.as_deref().unwrap_or_default();
+    print_log_text(log);
+    log.chars().count()
+}
 
-            output::flush();
-            log.chars().count()
-        }
-        _ => 0,
+fn print_log_text(text: &str) {
+    if !text.is_empty() {
+        output::text!("{}", output::sanitize(text));
+        output::flush();
     }
 }
 
 /// Print one appended chunk exactly as the server accumulates the log:
-/// `existing_log + "\n" + chunk`. Returns the number of characters written.
+/// `existing_log + "\n" + chunk`. Returns the number of original characters.
 ///
 /// The separator matters: the server inserts a newline before every chunk once
 /// the log is non-empty, so the cursor has to count it. Skipping it shifted the
@@ -589,9 +594,8 @@ fn print_chunk(chunk: &str, printed_prefix: &mut String) -> usize {
         printed_prefix.push('\n');
         written += 1;
     }
-    output::text!("{}", output::sanitize(chunk));
+    print_log_text(chunk);
     printed_prefix.push_str(chunk);
-    output::flush();
     written + chunk.chars().count()
 }
 
@@ -623,10 +627,7 @@ async fn reconcile_tail(
             "server log does not match the printed prefix; the tail cannot be verified".into(),
         )
     })?;
-    if !rest.is_empty() {
-        output::text!("{rest}");
-        output::flush();
-    }
+    print_log_text(rest);
     Ok(())
 }
 
@@ -636,16 +637,11 @@ fn increment(log: &str, printed_chars: usize) -> String {
     log.chars().skip(printed_chars).collect()
 }
 
-/// Print the part of `log` beyond `printed` chars; returns that length.
+/// Print the part of `log` beyond `printed` original chars; returns that length.
 fn print_increment(log: &Option<String>, printed: usize) -> usize {
     let Some(log) = log else { return 0 };
     let rest = increment(log, printed);
-    if rest.is_empty() {
-        return 0;
-    }
-    output::text!("{rest}");
-
-    output::flush();
+    print_log_text(&rest);
     rest.chars().count()
 }
 

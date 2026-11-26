@@ -24,9 +24,52 @@ fn config(server: &MockServer, url: &str) -> TempDir {
 fn command(home: &TempDir) -> Command {
     let mut cmd = Command::cargo_bin("ifg").unwrap();
     cmd.env("XDG_CONFIG_HOME", home.path())
+        .env_remove("IRONFORGE_CONFIG_DIR")
         .env_remove("IRONFORGE_URL")
         .env_remove("IRONFORGE_PAT");
     cmd
+}
+
+#[tokio::test]
+async fn explicit_repository_url_rejects_another_http_instance_before_requesting() {
+    let server = MockServer::start().await;
+    let root = server.uri();
+    let home = config(&server, &root);
+    let repository = format!("{root}/git/alice/demo.git");
+    let https_repository = repository.replacen("http://", "https://", 1);
+    for (selected, target) in [
+        (format!("{root}/alternate"), repository.as_str()),
+        (root, https_repository.as_str()),
+    ] {
+        command(&home)
+            .env("IRONFORGE_URL", &selected)
+            .args(["repo", "view", target, "--json"])
+            .assert()
+            .code(2);
+        command(&home)
+            .args(["--host", &selected, "-R", target, "repo", "view", "--json"])
+            .assert()
+            .code(2);
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn repository_url_under_a_deployment_path_uses_its_configured_host() {
+    let server = MockServer::start().await;
+    let base = format!("{}/forge", server.uri());
+    let home = config(&server, &base);
+    let target = format!("{base}/git/alice/demo.git");
+    Mock::given(path("/forge/api/v1/repos/alice/demo"))
+        .and(header("authorization", "Bearer ifp_stored"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"name":"demo"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    command(&home)
+        .args(["repo", "view", &target, "--json"])
+        .assert()
+        .success();
 }
 
 #[tokio::test]

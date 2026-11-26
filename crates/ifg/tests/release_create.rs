@@ -68,6 +68,26 @@ async fn json_create_with_an_asset_outputs_one_complete_document() {
 }
 
 #[tokio::test]
+async fn missing_attachment_refuses_to_create_a_release() {
+    let server = MockServer::start().await;
+    let home = TempDir::new().unwrap();
+    let existing = home.path().join("asset.bin");
+    let missing = home.path().join("missing.bin");
+    std::fs::write(&existing, [0, 1, 255]).unwrap();
+    for flags in [&[][..], &["--json"][..]] {
+        let result = command(&server, &home)
+            .args(flags)
+            .arg(&existing)
+            .arg(&missing)
+            .assert()
+            .code(2);
+        assert!(result.get_output().stdout.is_empty());
+        assert!(String::from_utf8_lossy(&result.get_output().stderr).contains("missing.bin"));
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn template_create_without_assets_renders_the_response() {
     let server = MockServer::start().await;
     let home = TempDir::new().unwrap();

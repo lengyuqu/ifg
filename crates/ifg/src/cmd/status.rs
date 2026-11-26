@@ -19,12 +19,17 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
     let pulls = ctx.client.pulls(&repo.owner, &repo.name);
     // Keep raw resource fields for JSON and templates, including fields added
     // by newer servers that the display DTOs do not declare yet.
-    // Bounded scan: `status` only needs the PR for the current branch, not
-    // every open PR in a busy repository.
-    let prs = pulls.list_raw(Some("open")).limit(200).collect().await?;
-    let matching = prs.into_iter().find(|pr| {
-        pr["head_branch"].as_str() == Some(branch.as_str()) && pr["head_repo_id"].is_null()
-    });
+    let mut pages = pulls.list_raw(Some("open"));
+    let matching = loop {
+        let Some(page) = pages.next_page().await? else {
+            break None;
+        };
+        if let Some(pr) = page.data.into_iter().find(|pr| {
+            pr["head_branch"].as_str() == Some(branch.as_str()) && pr["head_repo_id"].is_null()
+        }) {
+            break Some(pr);
+        }
+    };
 
     // Pipelines have no server-side filter (`Ci::list`), so scan pages until
     // five runs for this branch are found. A single 20-row page used to hide

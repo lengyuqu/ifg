@@ -189,9 +189,20 @@ fn load_with_keyring(
     }
     let insecure = has_group_or_other_permissions(path);
     let text = fs::read_to_string(path)?;
-    let mut config: Config = toml::from_str(&text).map_err(|e| ConfigError::Parse {
-        path: path.to_path_buf(),
-        message: e.to_string(),
+    let mut config: Config = toml::from_str(&text).map_err(|error| {
+        // Parser diagnostics can contain the original line or value, including
+        // a PAT. Use only the position supplied by the parser.
+        let message = if let Some(span) = error.span() {
+            let prefix = &text.as_bytes()[..span.start.min(text.len())];
+            let line = prefix.iter().filter(|&&byte| byte == b'\n').count() + 1;
+            format!("invalid TOML configuration on line {line}")
+        } else {
+            "invalid TOML configuration".into()
+        };
+        ConfigError::Parse {
+            path: path.to_path_buf(),
+            message,
+        }
     })?;
     if insecure {
         eprintln!(
@@ -337,11 +348,6 @@ pub fn host_key_for_url(url: &str) -> Option<String> {
         Some(port) if port != default_port => Some(format!("{host}:{port}")),
         _ => Some(host),
     }
-}
-
-/// Whether the resolved (or given) host name matches this entry.
-pub fn entry_matches_url(entry_url: &str, host_name: &str) -> bool {
-    host_key_for_url(entry_url).as_deref() == Some(host_name)
 }
 
 /// Stored credentials belong to one HTTP origin and deployment base path.
@@ -519,22 +525,6 @@ mod tests {
             Some("127.0.0.1:8080".into())
         );
         assert_eq!(host_key_for_url("not a url"), None);
-    }
-
-    #[test]
-    fn entry_matches_by_host_key() {
-        assert!(entry_matches_url(
-            "https://forge.example.com",
-            "forge.example.com"
-        ));
-        assert!(entry_matches_url(
-            "https://forge.example.com:8443/forge/",
-            "forge.example.com:8443"
-        ));
-        assert!(!entry_matches_url(
-            "https://other.example.com",
-            "forge.example.com"
-        ));
     }
 
     #[cfg(unix)]

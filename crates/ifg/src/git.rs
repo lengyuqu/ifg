@@ -27,44 +27,65 @@ pub fn matches_branch_ref(reference: &str, branch: &str) -> bool {
 /// A repository location parsed from a git remote URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
-    /// `host` or `host:port`, for matching configured hosts.
-    pub host: String,
-    /// SSH ports are independent of the HTTP API port.
-    pub is_ssh: bool,
+    pub server: RemoteServer,
     pub owner: String,
     pub name: String,
 }
 
-/// Parse an IronForge remote URL. HTTP(S) clones carry the `/git/` prefix —
-/// a GitHub-style `https://host/owner/name` URL is NOT an IronForge remote
-/// and returns `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteServer {
+    /// The HTTP API base URL, including the deployment path and excluding credentials.
+    Http(String),
+    /// The SSH authority. Its port is independent of the HTTP API port.
+    Ssh(String),
+}
+
+impl Remote {
+    pub fn server_address(&self) -> &str {
+        match &self.server {
+            RemoteServer::Http(base) => base,
+            RemoteServer::Ssh(authority) => authority,
+        }
+    }
+}
+
+/// Parse an IronForge remote URL. HTTP(S) clones have `/git/OWNER/NAME`
+/// after the deployment path.
 ///
 /// Supported forms:
-/// - `https://[user[:token]@]host[:port]/git/<owner>/<name>[.git]`
+/// - `https://[user[:token]@]host[:port][/base]/git/<owner>/<name>[.git]`
 /// - `ssh://[user@]host[:port]/<owner>/<name>[.git]`
 /// - `[user@]host:<owner>/<name>[.git]` (scp syntax)
 pub fn parse_remote_url(raw: &str) -> Option<Remote> {
     let raw = raw.trim();
 
-    if let Some(rest) = raw
-        .strip_prefix("https://")
-        .or_else(|| raw.strip_prefix("http://"))
-    {
-        let (authority, path) = rest.split_once('/')?;
-        // IronForge HTTP remotes carry the `/git/` path prefix; a
-        // GitHub-style `host/owner/name` URL is not one of ours.
-        let path = path.strip_prefix("git/")?;
-        return from_authority_and_path(strip_credentials(authority), path, false);
-    }
-    if let Some(rest) = raw.strip_prefix("ssh://") {
-        let rest = strip_credentials(rest);
-        let (authority, path) = rest.split_once('/')?;
-        return from_authority_and_path(authority, path, true);
+    if let Some((scheme, rest)) = raw.split_once("://") {
+        return match scheme.to_ascii_lowercase().as_str() {
+            "http" | "https" => parse_http_remote(raw),
+            "ssh" => {
+                let (authority, path) = rest.split_once('/')?;
+                parse_ssh_remote(strip_credentials(authority), path)
+            }
+            _ => None,
+        };
     }
     // scp syntax: credentials, then a single ':' separating host and path.
     let rest = strip_credentials(raw);
     let (authority, path) = rest.split_once(':')?;
-    from_authority_and_path(authority, path, true)
+    parse_ssh_remote(authority, path)
+}
+
+fn parse_http_remote(raw: &str) -> Option<Remote> {
+    let url = url::Url::parse(raw).ok()?;
+    if url.query().is_some() || url.fragment().is_some() {
+        return None;
+    }
+    let mut suffix = url.path().trim_end_matches('/').rsplitn(3, '/');
+    let name = suffix.next()?;
+    let owner = suffix.next()?;
+    let base_path = suffix.next()?.strip_suffix("/git")?;
+    let base = format!("{}{base_path}", url.origin().ascii_serialization());
+    remote_with_repository(RemoteServer::Http(base), owner, name)
 }
 
 /// Drop `user[:password]@` from an authority string.
@@ -75,20 +96,23 @@ fn strip_credentials(authority: &str) -> &str {
     }
 }
 
-fn from_authority_and_path(authority: &str, path: &str, is_ssh: bool) -> Option<Remote> {
+fn parse_ssh_remote(authority: &str, path: &str) -> Option<Remote> {
     let authority = authority.trim();
     if authority.is_empty() {
         return None;
     }
     let path = path.trim_end_matches('/');
     let (owner, name) = path.split_once('/')?;
+    remote_with_repository(RemoteServer::Ssh(authority.to_string()), owner, name)
+}
+
+fn remote_with_repository(server: RemoteServer, owner: &str, name: &str) -> Option<Remote> {
     let name = name.strip_suffix(".git").unwrap_or(name);
     if owner.is_empty() || name.is_empty() {
         return None;
     }
     Some(Remote {
-        host: authority.to_string(),
-        is_ssh,
+        server,
         owner: owner.to_string(),
         name: name.to_string(),
     })
@@ -313,7 +337,7 @@ mod tests {
     #[test]
     fn https_with_git_prefix() {
         let remote = parse("https://forge.example.com/git/alice/demo.git").unwrap();
-        assert_eq!(remote.host, "forge.example.com");
+        assert_eq!(remote.server_address(), "https://forge.example.com");
         assert_eq!(remote.owner, "alice");
         assert_eq!(remote.name, "demo");
     }
@@ -328,10 +352,18 @@ mod tests {
     fn https_with_custom_port_and_credentials() {
         let remote =
             parse("https://alice:ifp_secret@forge.example.com:8443/git/alice/demo.git").unwrap();
-        assert_eq!(remote.host, "forge.example.com:8443");
+        assert_eq!(remote.server_address(), "https://forge.example.com:8443");
         assert_eq!(remote.owner, "alice");
         // The PAT embedded in the URL must not leak into the parsed remote.
         assert!(!format!("{remote:?}").contains("ifp_secret"));
+    }
+
+    #[test]
+    fn https_keeps_the_deployment_path() {
+        let remote = parse("https://Forge.example.com:443/team/git/git/demo.git").unwrap();
+        assert_eq!(remote.server_address(), "https://forge.example.com/team");
+        assert_eq!(remote.owner, "git");
+        assert_eq!(remote.name, "demo");
     }
 
     #[test]
@@ -343,7 +375,7 @@ mod tests {
     #[test]
     fn ssh_url_form() {
         let remote = parse("ssh://git@git.example.com:2222/alice/demo.git").unwrap();
-        assert_eq!(remote.host, "git.example.com:2222");
+        assert_eq!(remote.server_address(), "git.example.com:2222");
         assert_eq!(remote.owner, "alice");
         assert_eq!(remote.name, "demo");
     }
@@ -351,13 +383,13 @@ mod tests {
     #[test]
     fn ssh_url_without_port() {
         let remote = parse("ssh://git@git.example.com/alice/demo").unwrap();
-        assert_eq!(remote.host, "git.example.com");
+        assert_eq!(remote.server_address(), "git.example.com");
     }
 
     #[test]
     fn scp_syntax() {
         let remote = parse("git@git.example.com:alice/demo.git").unwrap();
-        assert_eq!(remote.host, "git.example.com");
+        assert_eq!(remote.server_address(), "git.example.com");
         assert_eq!(remote.owner, "alice");
         assert_eq!(remote.name, "demo");
     }
@@ -365,7 +397,7 @@ mod tests {
     #[test]
     fn scp_syntax_without_user() {
         let remote = parse("git.example.com:alice/demo.git").unwrap();
-        assert_eq!(remote.host, "git.example.com");
+        assert_eq!(remote.server_address(), "git.example.com");
     }
 
     #[test]

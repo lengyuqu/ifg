@@ -29,7 +29,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(result.stdout).unwrap().trim().to_string()
 }
 
-async fn checkout_case(deleted: bool, enriched: bool, mirror: bool) {
+async fn checkout_case(branch: &str, deleted: bool, enriched: bool, mirror: bool) {
     let server = MockServer::start().await;
     let root = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
@@ -47,18 +47,18 @@ async fn checkout_case(deleted: bool, enriched: bool, mirror: bool) {
     );
     git(&work, &["remote", "add", "fork", fork.to_str().unwrap()]);
     git(&work, &["push", "target", "main"]);
-    git(&work, &["checkout", "-b", "feature"]);
+    git(&work, &["checkout", "-b", branch]);
     git(&work, &["commit", "--allow-empty", "-m", "head"]);
-    git(&work, &["push", "fork", "feature"]);
+    git(&work, &["push", "fork", branch]);
     if mirror {
         git(&work, &["push", "target", "HEAD:refs/pull/1/head"]);
     }
     if deleted {
-        git(&work, &["push", "fork", ":feature"]);
+        git(&work, &["push", "fork", &format!(":{branch}")]);
     } else {
         // The source branch is fresher than the mirror and must win.
         git(&work, &["commit", "--allow-empty", "-m", "new source head"]);
-        git(&work, &["push", "fork", "feature"]);
+        git(&work, &["push", "fork", branch]);
     }
     let expected = git(&work, &["rev-parse", "HEAD"]);
     git(&work, &["checkout", "main"]);
@@ -78,7 +78,7 @@ async fn checkout_case(deleted: bool, enriched: bool, mirror: bool) {
     Mock::given(path("/api/v1/repos/alice/demo/pulls/1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id":1,"repo_id":1,"number":1,"title":"Fork PR","state":"open","author_id":1,
-            "head_branch":"feature","base_branch":"main","head_repo_id":2,
+            "head_branch":branch,"base_branch":"main","head_repo_id":2,
             "head_repo_owner":if enriched {Some("bob")} else {None},
             "head_repo_name":if enriched {Some("fork")} else {None}
         })))
@@ -109,20 +109,25 @@ async fn checkout_case(deleted: bool, enriched: bool, mirror: bool) {
 
 #[tokio::test]
 async fn deleted_fork_branch_uses_the_target_mirror() {
-    checkout_case(true, true, true).await;
+    checkout_case("feature", true, true, true).await;
 }
 
 #[tokio::test]
 async fn deleted_fork_repository_does_not_require_head_enrichment() {
-    checkout_case(true, false, true).await;
+    checkout_case("feature", true, false, true).await;
 }
 
 #[tokio::test]
 async fn live_fork_branch_is_preferred_over_a_stale_mirror() {
-    checkout_case(false, true, true).await;
+    checkout_case("feature", false, true, true).await;
+}
+
+#[tokio::test]
+async fn live_fork_branch_with_plus_signs_can_be_fetched_without_a_mirror() {
+    checkout_case("feature/c++", false, true, false).await;
 }
 
 #[tokio::test]
 async fn older_servers_without_a_fork_mirror_fail_explicitly() {
-    checkout_case(true, true, false).await;
+    checkout_case("feature", true, true, false).await;
 }

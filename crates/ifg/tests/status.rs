@@ -144,6 +144,44 @@ async fn empty_status_uses_null_pull_and_empty_runs() {
 }
 
 #[tokio::test]
+async fn status_finds_the_current_branch_after_two_full_pr_pages() {
+    let server = MockServer::start().await;
+    let home = TempDir::new().unwrap();
+    let work = checkout();
+    for (page_no, data) in [
+        (1, vec![json!({"head_branch": "other"}); 100]),
+        (
+            2,
+            vec![json!({"head_branch": "feature", "head_repo_id": 2}); 100],
+        ),
+        (3, vec![json!({"head_branch": "feature", "number": 201})]),
+    ] {
+        Mock::given(path("/api/v1/repos/alice/demo/pulls"))
+            .and(query_param("state", "open"))
+            .and(query_param("page", page_no.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": data,
+                "pagination": {"page":page_no,"per_page":100,"total":201,"total_pages":3,
+                               "has_next":page_no < 3,"has_prev":page_no > 1}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(path("/api/v1/repos/alice/demo/pipelines"))
+        .respond_with(page(vec![], 1, false))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = command(&server, &home, &work)
+        .arg("--json")
+        .assert()
+        .success();
+    let value: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(value["pull"]["number"], 201);
+}
+
+#[tokio::test]
 async fn status_continues_to_later_pages_and_limits_matches_to_five() {
     let server = MockServer::start().await;
     let home = TempDir::new().unwrap();

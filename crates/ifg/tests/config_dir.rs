@@ -65,6 +65,37 @@ fn write_hosts(
     let _ = mode;
 }
 
+#[test]
+fn invalid_config_reports_the_location_without_the_value() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("hosts.toml");
+    let marker = "fixture-value";
+    std::fs::write(
+        &file,
+        format!("[hosts.forge]\nurl = 'https://forge.example.invalid'\ntoken = '{marker}\n"),
+    )
+    .unwrap();
+
+    let result = ifg(dir.path(), dir.path())
+        .env("IRONFORGE_CONFIG_DIR", dir.path())
+        .args(["auth", "status", "--json"])
+        .assert()
+        .failure();
+    assert!(result.get_output().stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&result.get_output().stderr);
+    assert!(
+        !stderr.contains(marker),
+        "the diagnostic included a config value"
+    );
+    assert!(stderr.contains("hosts.toml"), "{stderr}");
+    assert!(stderr.contains("line 3"), "{stderr}");
+    let report: Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
+    assert!(report["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("line 3"));
+}
+
 /// Every file and directory below `root`, relative and sorted. Empty when
 /// `root` does not exist.
 fn tree(root: &Path) -> Vec<String> {
