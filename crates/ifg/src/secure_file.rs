@@ -197,10 +197,13 @@ mod win {
                 null_mut(),
             )
         };
+        // Capture CreateFileW's error before LocalFree: the free call may
+        // overwrite the thread's last-error code with its own result.
+        let create_error = (handle == INVALID_HANDLE_VALUE).then(last_error);
         // SAFETY: sd was allocated by ConvertStringSecurityDescriptor… above.
         unsafe { LocalFree(sd) };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(last_error());
+        if let Some(error) = create_error {
+            return Err(error);
         }
         // SAFETY: handle is a fresh, exclusively-owned file handle; transferring
         // it to File means File will close it exactly once.

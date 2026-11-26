@@ -794,11 +794,17 @@ async fn merge(
         Some(sha) => output::line!(
             "Merged {repo}#{number} ({}): {}",
             outcome.strategy.as_deref().unwrap_or(strategy.as_str()),
-            &sha[..sha.len().min(12)]
+            short_merge_sha(&sha)
         ),
         None => output::line!("Merged {repo}#{number}."),
     }
     Ok(())
+}
+
+/// Shorten a server-supplied SHA on character boundaries. Byte slicing can
+/// panic when the server returns multi-byte UTF-8.
+fn short_merge_sha(sha: &str) -> String {
+    sha.chars().take(12).collect()
 }
 
 fn parse_strategy(name: &str) -> MergeStrategy {
@@ -1041,11 +1047,12 @@ async fn checkout(
 /// `git fetch <url> <refspec>` with the PAT passed through GIT_CONFIG_* so it
 /// never lands in argv or a stored remote URL.
 fn fetch_ref(ctx: &super::CommandContext, url: &str, refspec: &str) -> Result<(), AppError> {
-    // The refspec comes from the server's PR row; git would read a leading
-    // `-` as an option instead of a ref.
-    if refspec.starts_with('-') {
+    // The ref comes from the server's PR row: only a single source ref is
+    // ever needed. A `:dst` would write into an arbitrary local ref and a
+    // leading `+` would force-overwrite it; a leading `-` becomes an option.
+    if !safe_fetch_ref(refspec) {
         return Err(AppError::Other(format!(
-            "refusing to fetch a refspec that parses as an option: {refspec}"
+            "refusing to fetch an unsafe ref from the server: {refspec}"
         )));
     }
     let mut fetch = crate::git::command();
@@ -1067,6 +1074,23 @@ fn fetch_ref(ctx: &super::CommandContext, url: &str, refspec: &str) -> Result<()
             String::from_utf8_lossy(&output.stderr).trim()
         )))
     }
+}
+
+/// Validate a server-supplied git ref before passing it to `git fetch`.
+/// Only a single source ref is accepted — no destination, force flag,
+/// option-like prefix, glob, or character git rejects in a refname.
+fn safe_fetch_ref(reference: &str) -> bool {
+    !reference.is_empty()
+        && !reference.starts_with('-')
+        && !reference.contains("..")
+        && !reference.contains("@{")
+        && !reference.ends_with(".lock")
+        && !reference.chars().any(|c| {
+            matches!(
+                c,
+                ':' | '+' | '\\' | ' ' | '\t' | '\n' | '\r' | '\0' | '~' | '^' | '?' | '*' | '['
+            )
+        })
 }
 
 /// Whether a local branch with this name exists.
@@ -1097,5 +1121,48 @@ fn git_success(args: &[&str]) -> Result<(), AppError> {
             args.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{safe_fetch_ref, short_merge_sha};
+
+    #[test]
+    fn fetch_ref_accepts_plain_branches_and_pull_mirrors() {
+        for reference in ["main", "feature/foo", "pr-123", "refs/pull/42/head"] {
+            assert!(safe_fetch_ref(reference), "{reference}");
+        }
+    }
+
+    #[test]
+    fn merge_sha_truncates_on_character_boundaries() {
+        assert_eq!(short_merge_sha("0123456789abcdef"), "0123456789ab");
+        assert_eq!(short_merge_sha("0123456789a中def"), "0123456789a中");
+        assert_eq!(short_merge_sha("中文"), "中文");
+    }
+
+    #[test]
+    fn fetch_ref_rejects_refspecs_and_git_options() {
+        for reference in [
+            "",
+            "-x",
+            "+x:refs/heads/main",
+            "main:refs/heads/main",
+            "HEAD:refs/heads/main",
+            "a b",
+            "a..b",
+            "a@{b",
+            "a.lock",
+            "a\\b",
+            "a\nb",
+            "a~1",
+            "a^",
+            "a?",
+            "a*",
+            "a[1]",
+        ] {
+            assert!(!safe_fetch_ref(reference), "{reference}");
+        }
     }
 }

@@ -63,7 +63,7 @@ impl Config {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HostEntry {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,6 +72,17 @@ pub struct HostEntry {
     pub token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_protocol: Option<String>,
+}
+
+impl std::fmt::Debug for HostEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostEntry")
+            .field("url", &self.url)
+            .field("user", &self.user)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("git_protocol", &self.git_protocol)
+            .finish()
+    }
 }
 
 impl HostEntry {
@@ -365,6 +376,21 @@ fn has_group_or_other_permissions(_path: &std::path::Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_output_never_contains_the_token() {
+        let mut entry = HostEntry::new("https://forge.example.com");
+        entry.token = Some("ifp_supersecret".into());
+        let shown = format!("{entry:?}");
+        assert!(!shown.contains("supersecret"), "{shown}");
+        assert!(shown.contains("redacted"), "{shown}");
+        let config = Config {
+            hosts: BTreeMap::from([("forge".into(), entry)]),
+            ..Config::default()
+        };
+        let shown = format!("{config:?}");
+        assert!(!shown.contains("supersecret"), "{shown}");
+    }
 
     /// Exercise recovery against an actual native keychain entry. The write
     /// failure itself is represented by the same durable fallback state as

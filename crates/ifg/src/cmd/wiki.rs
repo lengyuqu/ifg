@@ -1,6 +1,5 @@
 //! Wiki commands; page updates replace content and have no server-side CAS.
 use serde_json::Value;
-use std::io::Read;
 
 use crate::cli::{Cli, WikiCommand};
 use crate::context::resolve_repo;
@@ -14,16 +13,7 @@ fn content(body: &Option<String>, file: &Option<String>) -> Result<String, AppEr
     let file = file
         .as_deref()
         .ok_or_else(|| AppError::Usage("provide --body or --file".into()))?;
-    let text = if file == "-" {
-        let mut text = String::new();
-        std::io::stdin()
-            .read_to_string(&mut text)
-            .map_err(|e| AppError::Io(format!("cannot read stdin: {e}")))?;
-        text
-    } else {
-        std::fs::read_to_string(file)
-            .map_err(|e| AppError::Io(format!("cannot read {file}: {e}")))?
-    };
+    let text = super::read_input(file, "wiki page")?;
     Ok(super::strip_bom(&text).to_string())
 }
 

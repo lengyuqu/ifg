@@ -24,8 +24,9 @@ pub enum Error {
         /// Server suggestion for the next step (`error.hint`), control
         /// characters removed.
         hint: Option<Box<str>>,
-        /// Structured extras (`error.details`), kept as the server sent them.
-        /// Boxed (with the two fields above) to keep `Error` small.
+        /// Structured extras (`error.details`), control characters removed
+        /// from every string. Boxed (with the two fields above) to keep
+        /// `Error` small.
         details: Option<Box<Value>>,
     },
     /// Connection, TLS or timeout failures.
@@ -131,7 +132,7 @@ pub(crate) fn api_error(status: u16, body: &[u8]) -> Error {
             request_id: envelope.error.request_id.map(|id| crate::sanitize(&id)),
             reason: sanitized_text(envelope.error.reason),
             hint: sanitized_text(envelope.error.hint),
-            details: envelope.error.details.map(Box::new),
+            details: envelope.error.details.map(|v| Box::new(sanitize_value(v))),
         },
         Err(_) => Error::Api {
             status,
@@ -151,6 +152,22 @@ fn sanitized_text(value: Option<Value>) -> Option<Box<str>> {
     match value {
         Some(Value::String(text)) => Some(crate::sanitize(&text).into_boxed_str()),
         _ => None,
+    }
+}
+
+/// Recursively strip control characters from every string in a JSON value.
+/// `details` is printed on the terminal in `--json` reports too, so it must
+/// obey the same sanitisation rule as `reason`/`hint`/`message`.
+fn sanitize_value(value: Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(crate::sanitize(&text)),
+        Value::Array(items) => Value::Array(items.into_iter().map(sanitize_value).collect()),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| (crate::sanitize(&key), sanitize_value(value)))
+                .collect(),
+        ),
+        other => other,
     }
 }
 
@@ -255,6 +272,20 @@ mod tests {
         assert_eq!(err.code(), Some("CONFLICT"));
         assert_eq!(err.reason(), None);
         assert_eq!(err.hint(), None);
+    }
+
+    #[test]
+    fn details_strings_are_sanitised_recursively() {
+        let body = "{\"error\":{\"message\":\"m\",\"details\":{\"k\\u001b[2J\":\"v\\u0007\",\
+            \"nested\":[\"x\\u202ey\"]}}}"
+            .as_bytes();
+        let err = api_error(409, body);
+        let Error::Api { details, .. } = &err else {
+            panic!("expected Api error, got {err:?}");
+        };
+        let details = details.as_deref().unwrap();
+        assert_eq!(details["k[2J"], "v");
+        assert_eq!(details["nested"][0], "xy");
     }
 
     #[test]

@@ -24,10 +24,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: install cargo-audit
-        run: cargo install cargo-audit --locked
+      # Prebuilt action: no per-run source build of cargo-audit.
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: checks (fmt, clippy, test, audit, dependency boundary)
+      - name: checks (fmt, clippy, test, dependency boundary)
         run: bash scripts/check.sh
 
   # Windows has no `cargo audit` (slow) and no live IronForge for e2e; this

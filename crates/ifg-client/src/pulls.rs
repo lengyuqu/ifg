@@ -227,22 +227,21 @@ impl Pulls<'_> {
         Ok(())
     }
 
+    fn list_path(&self, state: Option<&str>) -> String {
+        match state {
+            Some(state) => format!("{}?{}", self.pulls_path(), state_query(state)),
+            None => self.pulls_path(),
+        }
+    }
+
     /// List pull requests, optionally filtered by state (paginated).
     pub fn list(&self, state: Option<&str>) -> Paginator<PullRequest> {
-        let path = match state {
-            Some(state) => format!("{}?state={state}", self.pulls_path()),
-            None => self.pulls_path(),
-        };
-        self.client.paginate(&path)
+        self.client.paginate(self.list_path(state))
     }
 
     /// Raw JSON twin of [`Pulls::list`].
     pub fn list_raw(&self, state: Option<&str>) -> Paginator<Value> {
-        let path = match state {
-            Some(state) => format!("{}?state={state}", self.pulls_path()),
-            None => self.pulls_path(),
-        };
-        self.client.paginate(&path)
+        self.client.paginate(self.list_path(state))
     }
 
     /// `GET …/pulls/{number}`.
@@ -454,5 +453,24 @@ impl Pulls<'_> {
                 Some(&payload),
             )
             .await
+    }
+}
+
+/// Form-encode a state filter: an unencoded `&` would inject extra query
+/// parameters into the paginator's request.
+fn state_query(state: &str) -> String {
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query.append_pair("state", state);
+    query.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::state_query;
+
+    #[test]
+    fn list_state_is_form_encoded() {
+        assert_eq!(state_query("open"), "state=open");
+        assert_eq!(state_query("open&page=1"), "state=open%26page%3D1");
     }
 }

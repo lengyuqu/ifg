@@ -19,7 +19,9 @@ pub async fn run(cli: &Cli) -> Result<(), AppError> {
     let pulls = ctx.client.pulls(&repo.owner, &repo.name);
     // Keep raw resource fields for JSON and templates, including fields added
     // by newer servers that the display DTOs do not declare yet.
-    let prs = pulls.list_raw(Some("open")).collect().await?;
+    // Bounded scan: `status` only needs the PR for the current branch, not
+    // every open PR in a busy repository.
+    let prs = pulls.list_raw(Some("open")).limit(200).collect().await?;
     let matching = prs.into_iter().find(|pr| {
         pr["head_branch"].as_str() == Some(branch.as_str()) && pr["head_repo_id"].is_null()
     });

@@ -117,17 +117,7 @@ fn query(path: &str, params: &[(&str, Option<String>)]) -> String {
 /// check is that it parses as a JSON object; anything else is a usage error
 /// (exit 2) raised before any request.
 fn read_conditions_body(source: &str) -> Result<Value, AppError> {
-    let text = if source == "-" {
-        use std::io::Read;
-        let mut buffer = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buffer)
-            .map_err(|e| AppError::Io(format!("cannot read stdin: {e}")))?;
-        buffer
-    } else {
-        std::fs::read_to_string(source)
-            .map_err(|e| AppError::Io(format!("cannot read {source}: {e}")))?
-    };
+    let text = super::read_input(source, "conditions")?;
     let value: Value = serde_json::from_str(super::strip_bom(&text))
         .map_err(|e| AppError::Usage(format!("condition file is not valid JSON: {e}")))?;
     if !value.is_object() {

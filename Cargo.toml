@@ -12,7 +12,7 @@ version = "0.9.1"
 edition = "2021"
 license = "MIT"
 authors = ["Yu Qu <zdz945244799@yeah.net>"]
-repository = "https://git233.phynews.com:18443/aicodeing/ifg"
+repository = "https://github.com/lengyuqu/ifg"
 
 # The canonical OpenAPI snapshot and isolated Docker e2e use this image.
 # The commit below is reported by its capability endpoint (not an OCI label).
@@ -52,7 +52,9 @@ clap_complete = "4"
 clap_mangen = "0.2"
 comfy-table = "7"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+# D7: same system trust store as the HTTP client, so intranet CAs work for
+# `ci logs --follow` and `doctor` too.
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake", "rustls-tls-native-roots"] }
 rpassword = "7"
 sha2 = "0.10"
 
@@ -69,3 +71,9 @@ unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# Smaller distribution binaries without changing debug builds or test times.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

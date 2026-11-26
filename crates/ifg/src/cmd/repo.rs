@@ -40,7 +40,7 @@ pub async fn run(command: &RepoCommand, cli: &Cli) -> Result<(), AppError> {
                 && visibility.is_none()
                 && default_branch.is_none()
             {
-                return Err(AppError::Other(
+                return Err(AppError::Usage(
                     "provide at least one setting to change".into(),
                 ));
             }
@@ -179,7 +179,8 @@ async fn collaborators(
                 )));
             }
             if !*yes && !super::confirm(&format!("Remove {username} from {repo}?"))? {
-                return Err(AppError::Other("cancelled".into()));
+                output::line!("Aborted.");
+                return Ok(());
             }
             repos
                 .remove_collaborator(&repo.owner, &repo.name, user.id)
@@ -441,10 +442,12 @@ fn clone(
         format!("{}/git/{}.git", ctx.host.url, repo)
     };
     output::line!("Cloning {url}");
-    let status = crate::git::command()
-        .arg("clone")
-        .arg(&url)
-        .args(dir)
+    let mut command = crate::git::command();
+    command.arg("clone").arg("--").arg(&url);
+    if let Some(dir) = dir {
+        command.arg(dir);
+    }
+    let status = command
         .status()
         .map_err(|e| AppError::Other(format!("could not run git clone: {e}")))?;
     if !status.success() {

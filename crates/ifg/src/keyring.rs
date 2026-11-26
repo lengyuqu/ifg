@@ -61,11 +61,18 @@ pub fn delete(host_key: &str) -> Result<(), String> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn secret_tool_available() -> bool {
-    std::process::Command::new("sh")
-        .args(["-c", "command -v secret-tool >/dev/null 2>&1"])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    // `load` may be called once per configured host during startup; probing
+    // with a shell each time spawned a process per host. The backend cannot
+    // appear mid-process, so cache the answer.
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        std::process::Command::new("sh")
+            .args(["-c", "command -v secret-tool >/dev/null 2>&1"])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    })
 }
 
 /// Store (or replace) the token for `host_key`.

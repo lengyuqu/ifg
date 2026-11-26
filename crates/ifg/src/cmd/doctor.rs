@@ -401,9 +401,17 @@ async fn streaming_check(ctx: &crate::cmd::CommandContext) -> Check {
         }
         Err(error) => {
             let text = error.to_string();
-            if text.contains("404") {
+            // Match the structured HTTP status, not substrings of the error
+            // text (a proxy's HTML body could contain "404" with a 200).
+            let status = match &error {
+                tokio_tungstenite::tungstenite::Error::Http(response) => {
+                    Some(response.status().as_u16())
+                }
+                _ => None,
+            };
+            if status == Some(404) {
                 Check::ok("streaming", "WebSocket available")
-            } else if text.contains("401") || text.contains("403") {
+            } else if matches!(status, Some(401 | 403)) {
                 Check::fail(
                     "streaming",
                     text,

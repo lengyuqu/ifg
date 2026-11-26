@@ -524,26 +524,36 @@ fn short_date(iso: Option<&str>) -> String {
 }
 
 /// Tiny glob: `*` matches any run of characters; everything else literal.
+/// Greedy two-pointer match: O(pattern × text) worst case, no exponential
+/// backtracking on patterns like `*a*a*a*b`.
 fn glob_match(pattern: &str, text: &str) -> bool {
-    fn inner(pattern: &[char], text: &[char]) -> bool {
-        match (pattern.first(), text.first()) {
-            (None, None) => true,
-            (None, Some(_)) => false,
-            (Some(_), None) => false,
-            (Some('*'), _) => {
-                for skip in 0..=text.len() {
-                    if inner(&pattern[1..], &text[skip..]) {
-                        return true;
-                    }
-                }
-                false
-            }
-            (Some(p), Some(t)) => p == t && inner(&pattern[1..], &text[1..]),
-        }
-    }
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
-    inner(&pattern, &text)
+    let (mut p, mut t) = (0, 0);
+    // Position after the most recent `*`, and the text index it last matched.
+    let (mut star, mut retry) = (None, 0);
+    while t < text.len() {
+        if p < pattern.len() && (pattern[p] == '*' || pattern[p] == text[t]) {
+            if pattern[p] == '*' {
+                star = Some(p);
+                p += 1;
+                retry = t;
+            } else {
+                p += 1;
+                t += 1;
+            }
+        } else if let Some(s) = star {
+            p = s + 1;
+            retry += 1;
+            t = retry;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == '*' {
+        p += 1;
+    }
+    p == pattern.len()
 }
 
 fn guess_content_type(path: &std::path::Path) -> String {
@@ -633,14 +643,30 @@ async fn delete(
         .get_by_tag(tag)
         .await?
         .ok_or_else(|| not_found(tag))?;
-    if !yes
-        && !super::confirm(&format!(
-            "Delete release {} ({} assets) from {repo}?",
-            release.tag_name, release.tag_name
-        ))?
-    {
-        output::line!("Aborted.");
-        return Ok(());
+    if !yes {
+        // --no-input refuses before prompting; don't spend a request on a
+        // count that will never be shown. A failed lookup must not block the
+        // confirmation either — it is informational only.
+        let asset_count = if crate::input::enabled() {
+            None
+        } else {
+            releases
+                .assets(release.id)
+                .await
+                .ok()
+                .map(|assets| assets.len())
+        };
+        let question = match asset_count {
+            Some(count) => format!(
+                "Delete release {} ({count} assets) from {repo}?",
+                release.tag_name
+            ),
+            None => format!("Delete release {} from {repo}?", release.tag_name),
+        };
+        if !super::confirm(&question)? {
+            output::line!("Aborted.");
+            return Ok(());
+        }
     }
     releases.delete(release.id).await?;
     output::line!("Deleted release {}.", release.tag_name);
@@ -658,6 +684,8 @@ mod tests {
         assert!(glob_match("SHA256SUMS", "SHA256SUMS"));
         assert!(!glob_match("ifg-*", "other.txt"));
         assert!(glob_match("*", "anything"));
+        assert!(!glob_match("*a*a*a*b", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaac"));
+        assert!(glob_match("a*b*c", "abbbc"));
     }
 
     #[test]

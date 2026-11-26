@@ -120,10 +120,13 @@ fn parse_retry_after(value: &str) -> Option<Duration> {
 /// Pseudo-random extra delay in `[0, base/2)`, seeded from the wall clock so
 /// no `rand` dependency is needed.
 fn jitter(base: Duration) -> Duration {
+    // Full timestamp plus pid: subsec_nanos alone repeats with a ~1s period
+    // and correlates across processes started in the same tick.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
+        .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+        ^ (std::process::id() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
         | 1;
     let mut x = nanos;
     x ^= x << 13;
@@ -253,6 +256,14 @@ fn normalize_base_url(base_url: &str) -> Result<url::Url, Error> {
             "base URL must not carry a query or fragment".into(),
         ));
     }
+    // Credentials belong in IRONFORGE_PAT, never in a URL that is logged or
+    // shown in error messages. Reject userinfo outright so no secret can leak
+    // through `url.as_str()`.
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(Error::Config(
+            "base URL must not contain credentials; use IRONFORGE_PAT".into(),
+        ));
+    }
     let mut url = url;
     while url.path().len() > 1 && url.path().ends_with('/') {
         let trimmed = url.path().trim_end_matches('/').to_string();
@@ -265,7 +276,7 @@ fn normalize_base_url(base_url: &str) -> Result<url::Url, Error> {
 /// redundant `api/v1/` prefix are tolerated; the path may already carry a
 /// query string. Built by string concatenation and parsed once: `set_path`
 /// would percent-encode a query string embedded in the path.
-pub(crate) fn join_path(base: &url::Url, path: &str) -> url::Url {
+pub(crate) fn join_path(base: &url::Url, path: &str) -> Result<url::Url, Error> {
     let mut path = path.trim_start_matches('/');
     if let Some(rest) = path.strip_prefix("api/v1/") {
         path = rest;
@@ -276,7 +287,7 @@ pub(crate) fn join_path(base: &url::Url, path: &str) -> url::Url {
     }
     url.push_str("api/v1/");
     url.push_str(path);
-    url::Url::parse(&url).expect("base URL and path form a valid URL")
+    url::Url::parse(&url).map_err(|e| Error::Config(format!("invalid API path '{path}': {e}")))
 }
 
 impl Client {
@@ -383,7 +394,9 @@ impl Client {
     ) -> Result<Vec<u8>, Error> {
         let response = self.raw_response(method, path, body).await?;
         let bytes = response.bytes().await.map_err(Error::Transport)?;
-        Ok(bytes.to_vec())
+        // `Bytes -> Vec<u8>` hands over the buffer when it is uniquely owned,
+        // avoiding a second full copy for large `ifg api` responses.
+        Ok(bytes.into())
     }
 
     /// Issue a request and return the un-read `reqwest::Response` — for
@@ -427,7 +440,7 @@ impl Client {
         transfer: Transfer,
         session: Option<&crate::collab::SessionCredentials>,
     ) -> Result<reqwest::Response, Error> {
-        let url = join_path(&self.base, path);
+        let url = join_path(&self.base, path)?;
         let idempotent = matches!(method, reqwest::Method::GET | reqwest::Method::HEAD);
         // Only regular API writes carry the key; see `ClientBuilder::idempotency_key`.
         let keyed = match (&self.idempotency_key, transfer) {
@@ -572,7 +585,7 @@ impl Client {
         content_type: &str,
         extra_headers: &[(HeaderName, HeaderValue)],
     ) -> Result<reqwest::Response, Error> {
-        let url = join_path(&self.base, path);
+        let url = join_path(&self.base, path)?;
         let started = std::time::Instant::now();
         let mut request = self.http.request(method, url.clone());
         if let Some(token) = &self.token {
@@ -652,19 +665,19 @@ mod tests {
     fn join_path_appends_api_v1_and_tolerates_prefixes() {
         let base = url::Url::parse("https://forge.example.com").unwrap();
         assert_eq!(
-            join_path(&base, "users/me").as_str(),
+            join_path(&base, "users/me").unwrap().as_str(),
             "https://forge.example.com/api/v1/users/me"
         );
         assert_eq!(
-            join_path(&base, "/users/me").as_str(),
+            join_path(&base, "/users/me").unwrap().as_str(),
             "https://forge.example.com/api/v1/users/me"
         );
         assert_eq!(
-            join_path(&base, "/api/v1/users/me").as_str(),
+            join_path(&base, "/api/v1/users/me").unwrap().as_str(),
             "https://forge.example.com/api/v1/users/me"
         );
         assert_eq!(
-            join_path(&base, "repos?page=2").as_str(),
+            join_path(&base, "repos?page=2").unwrap().as_str(),
             "https://forge.example.com/api/v1/repos?page=2"
         );
     }
@@ -673,7 +686,7 @@ mod tests {
     fn join_path_keeps_sub_path_deployments() {
         let base = url::Url::parse("https://example.com/forge").unwrap();
         assert_eq!(
-            join_path(&base, "users/me").as_str(),
+            join_path(&base, "users/me").unwrap().as_str(),
             "https://example.com/forge/api/v1/users/me"
         );
     }
@@ -683,6 +696,8 @@ mod tests {
         assert!(normalize_base_url("ftp://x").is_err());
         assert!(normalize_base_url("not a url").is_err());
         assert!(normalize_base_url("https://x/?q=1").is_err());
+        assert!(normalize_base_url("https://user:pass@x").is_err());
+        assert!(normalize_base_url("https://user@x").is_err());
         let base = normalize_base_url("https://x/forge/").unwrap();
         assert_eq!(base.path(), "/forge");
     }

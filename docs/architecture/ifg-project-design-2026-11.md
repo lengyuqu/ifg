@@ -17,7 +17,7 @@
 | 端到端测试复用 `rg-http/tests/common`，或把测试放进 `rg-http/tests/` | 本仓库无法引用 IronForge 的测试私有模块 | 改为**黑盒**：启动真实 `ironforge serve` 二进制，经公开 API 引导出用户和 PAT（见 §7.3） |
 | crate 名沿用 `rg-` 前缀 | `rg-` 是 IronForge workspace 的命名空间 | 本仓库用 `ifg-` 前缀，草案 §10.2 的命名问题随之消失 |
 | 与服务端同步发布 | 两个仓库各自发版，CLI 可能连到更老或更新的服务端 | 新增版本协商与 API 契约快照（§6） |
-| 用 IronForge 的 Release 发布 CLI | 本仓库托管在 git233（Gitea），不是 IronForge 实例 | 发布走 git233 的 Release；IronForge 上的自举发布（用 `ifg release upload` 发 `ifg`）作为后续目标 |
+| 用 IronForge 的 Release 发布 CLI | 本仓库托管在 GitHub，不是 IronForge 实例 | 发布走 GitHub Release；IronForge 上的自举发布（用 `ifg release upload` 发 `ifg`）作为后续目标 |
 
 ---
 
@@ -281,7 +281,7 @@ HTTP 映射到 `localhost:8080`，SSH 映射到 `localhost:2222`，数据在命�
 
 - 目标平台：`aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-musl`、`aarch64-unknown-linux-musl`。Linux 用 musl 静态链接，配合 D7 的 rustls 即可不依赖系统 OpenSSL。
 - 没有 CI 时在本机构建：macOS 两个目标原生编译；Linux 目标用 `cargo zigbuild` 交叉编译，不需要 Docker 或 Linux 机器。打包成 `scripts/release.sh`，上 GitHub 后改由 Actions 调用。
-- 产物：`ifg-<version>-<target>.tar.gz` + `SHA256SUMS`，上传到仓库所在平台的 Release（目前是 git233，迁到 GitHub 后改为 GitHub Release）。
+- 产物：`ifg-<version>-<target>.tar.gz` + `SHA256SUMS`，上传到 GitHub Release。
 - 版本号：`ifg` 独立 semver；1.0 的机器输出兼容范围与服务端字段边界以 [JSON 兼容契约](../json-compatibility.md) 为准。
 - Homebrew tap 与 crates.io 发布放在 M4，发布前完成 D1 查重。
 

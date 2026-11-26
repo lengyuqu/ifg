@@ -186,17 +186,7 @@ fn string_body(fields: &[(String, String)]) -> Value {
 }
 
 fn read_json_body(file: &str) -> Result<Value, AppError> {
-    let text = if file == "-" {
-        use std::io::Read;
-        let mut buffer = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buffer)
-            .map_err(|e| AppError::Other(format!("could not read stdin: {e}")))?;
-        buffer
-    } else {
-        std::fs::read_to_string(file)
-            .map_err(|e| AppError::Other(format!("could not read {file}: {e}")))?
-    };
+    let text = super::read_input(file, "request body")?;
     serde_json::from_str(super::strip_bom(&text))
         .map_err(|e| AppError::Other(format!("invalid JSON in {file}: {e}")))
 }

@@ -267,7 +267,8 @@ impl Releases<'_> {
         let file = tokio::fs::File::open(path)
             .await
             .map_err(|e| Error::Config(format!("could not open {}: {e}", path.display())))?;
-        let body = reqwest::Body::wrap_stream(ReaderStream::new(file));
+        // Default 8 KiB chunks make large assets do thousands of syscalls.
+        let body = reqwest::Body::wrap_stream(ReaderStream::with_capacity(file, 64 * 1024));
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())

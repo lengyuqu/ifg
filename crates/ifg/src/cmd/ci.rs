@@ -567,7 +567,7 @@ fn blocked_hint(repo: &RepoContext, pipeline: i64, job: &ifg_client::Job) -> Str
 fn print_log(log: &Option<String>) -> usize {
     match log {
         Some(log) if !log.is_empty() => {
-            output::text!("{log}");
+            output::text!("{}", output::sanitize(log));
 
             output::flush();
             log.chars().count()
@@ -589,7 +589,7 @@ fn print_chunk(chunk: &str, printed_prefix: &mut String) -> usize {
         printed_prefix.push('\n');
         written += 1;
     }
-    output::text!("{chunk}");
+    output::text!("{}", output::sanitize(chunk));
     printed_prefix.push_str(chunk);
     output::flush();
     written + chunk.chars().count()

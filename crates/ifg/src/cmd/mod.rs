@@ -44,6 +44,33 @@ pub(crate) fn strip_bom(s: &str) -> &str {
     s.strip_prefix('\u{FEFF}').unwrap_or(s)
 }
 
+/// Maximum size of a text body read from stdin or `--file` (16 MiB). Bounded
+/// so a runaway pipe cannot exhaust memory; mirrors `commit`'s long-standing
+/// limit. `what` names the input in the error message.
+const MAX_INPUT_BYTES: u64 = 16 * 1024 * 1024;
+
+pub(crate) fn read_input(source: &str, what: &str) -> Result<String, AppError> {
+    use std::io::Read;
+    let mut text = String::new();
+    if source == "-" {
+        std::io::stdin()
+            .take(MAX_INPUT_BYTES + 1)
+            .read_to_string(&mut text)
+            .map_err(|e| AppError::Io(format!("cannot read stdin: {e}")))?;
+    } else {
+        std::fs::File::open(source)
+            .and_then(|file| file.take(MAX_INPUT_BYTES + 1).read_to_string(&mut text))
+            .map_err(|e| AppError::Io(format!("cannot read {source}: {e}")))?;
+    }
+    if text.len() as u64 > MAX_INPUT_BYTES {
+        return Err(AppError::Usage(format!(
+            "the {what} input is larger than {} MiB",
+            MAX_INPUT_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(text)
+}
+
 /// Leaf commands that accept `--json` / `--template`, by clap command path.
 /// A group path covers every leaf under it. `view` commands also accept the
 /// flags, except with `--web`, which `validate_output` checks on its own.
