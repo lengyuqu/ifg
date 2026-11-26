@@ -176,7 +176,7 @@ ifg auth token                                              # 能取回
 真正需要改的是 **helper 语法**：Windows 上
 `git config --global credential.helper 'ifg auth git-credential'` 会失败，必须写成
 `!ifg.exe auth git-credential`（或带完整路径 `!'C:/tools/ifg.exe' auth git-credential`）。
-README 的钥匙串/凭据段落（`README.md:87` 附近）要按平台给两种写法。
+README 的钥匙串/凭据段落（`README.zh-CN.md` 的「配置与凭据」一节）要按平台给两种写法。
 
 验收（PowerShell）：
 
@@ -257,8 +257,8 @@ cargo test -p ifg -p ifg-client
 4. 提交信息用 `git commit -F 文件`（消息里含 `${…}`、引号、反引号时，shell 会吃掉）
 5. PR 描述里贴：`cargo test` 摘要 + `ifg doctor` 输出 + 手测截图（终端）
 6. 需要同步更新的文档：
-   - `README.md`：发布产物段落（第 11 行，现写「macOS 与 Linux 四架构」）补 Windows 产物；
-     钥匙串段落（第 87 行）补 Windows 的凭据助手写法
+   - `README.zh-CN.md`（中文版；`README.md` 为英文版）：发布产物段落补 Windows 产物；
+     「配置与凭据」一节补 Windows 的凭据助手写法
    - `docs/architecture/ifg-project-design-2026-11.md`「已决事项」追加一条 Windows 决策
    - `docs/compatibility.md`（若已创建）里 Windows 的特殊行为（颜色默认关闭等）
 

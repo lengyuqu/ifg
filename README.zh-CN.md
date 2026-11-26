@@ -1,0 +1,381 @@
+**简体中文** | [English](README.md)
+
+# ifg
+
+[IronForge](https://github.com/lengyuqu/ironforge) 的命令行客户端：在终端里通过 REST API 操作仓库、Issue、PR、CI 和 Release，定位类似 GitHub 的 `gh`、Gitea 的 `tea`。
+
+> 状态：v0.9.1 已发布：`auth` / `api` / `repo` / `issue` / `pr` / `ci` / `release` 全套命令，含流式上传下载、SHA-256 校验、git credential helper、终端感知输出（颜色 / 分页器 / 相对时间）与命令补全。
+
+## IronForge 是什么？`ifg` 在其中的位置
+
+`ifg` 单独存在没有意义：它只是一个客户端，它要连的服务端是 **IronForge**——一个用 Rust 从零实现、以单个服务端二进制（外加静态 Web 资源）部署的自托管 Git 托管平台。如果你没接触过 IronForge，这一节就是下文所有内容缺的那块背景。
+
+**IronForge 是一个 Git 托管平台**，与 GitHub、GitLab、Gitea、Forgejo 同类：提供仓库（HTTP 与 SSH）、Issue、Pull Request 与代码评审、Wiki、Release 与包产物、CI/CD 流水线、组织与团队、通知、审计日志、代码搜索和 Web UI。它真正想解决的不是「再做一个 Gitea」，而是**为 AI Agent 编程而设计**：
+
+- **Agent 是一等主体。** Agent 是独立账号（`kind = agent`），归属某个人类所有者，权限不超过所有者；没有人类登录入口，不能批准 PR，也不能建仓库或组织。
+- **最小权限令牌。** PAT scope 阶梯 `repo:read` < `repo:collab` < `repo:write` < `repo`；令牌可收窄到指定仓库（`repos`）和分支模式（`refs`，如 `agent/*`）。
+- **可预览、可并发、可重试的写入。** 文件提交、PR 创建与合并支持 `dry_run`、`expected_sha`（分支已前进则返回 `409 REF_ADVANCED`）和 `Idempotency-Key`；批量提交让 N 个文件改动成为 **1 个 commit = 1 次 CI**。
+- **「改 → 推 → 看 CI → 修」的短闭环。** CI 长轮询等待、增量/尾部日志且失败 job 自带 `failure_summary`、仓库事件日志 + 长轮询（不需要公网 webhook 地址）、按 token 预算裁剪的 PR 聚合上下文。
+- **读代码省 token。** AI 友好端点（仓库摘要、分页文件树、代码搜索）、符号定义索引、带窗口的文件读取。
+- **多 Agent 协作。** 围绕任务的会话协作：消息、阻塞声明、交接、结构化提问与答复、不可变的决定记录、任务依赖、完成条件、断线恢复用的上下文包；人类通过 Web UI 介入。
+- **MCP 原生接入。** `ironforge-mcp` 把 API 暴露成 MCP 工具（stdio 与 streamable HTTP），编码 Agent 无需调用 shell 就能操作 IronForge。
+
+因此各部分的职责是：
+
+| 组件 | 角色 |
+|---|---|
+| **IronForge 服务端**（`ironforge serve`） | 平台本体：Git 存储、数据库、Web UI、REST API、CI runner。需要自托管部署与运维。 |
+| **`ironforge` 二进制** | 服务端/运维工具：`serve`、`migrate`、`backup`/`restore`、`create-user`、`create-repo`、`runner` 等，直接连数据库与磁盘。 |
+| **`ironforge-mcp` 二进制** | Model Context Protocol 服务：把 IronForge 的 API 以 MCP 工具形式提供给编码 Agent。 |
+| **`ifg`（本仓库）** | **面向人与脚本的命令行客户端**：同一套公开 REST API 之上的轻量纯 HTTP 客户端，相当于 GitHub 的 `gh`、Gitea 的 `tea`。 |
+
+**`ifg` 刻意不是什么。** 与 `ironforge` 二进制不同，`ifg` 不连数据库、不做运维（`serve`、`migrate`、`backup`、runner 都与它无关），也不需要装在服务端：它是一个便携可执行文件，只用个人访问令牌（PAT）调用公开 REST API，可以装在任何能访问服务端的笔记本、容器或 CI runner 上。它也不替代 Web UI 或 `ironforge-mcp`——它从终端覆盖同一套 API，适合脚本、CI 任务和快速排查。
+
+**使用它需要一个 IronForge 服务端。** 可以指向已有部署（`ifg auth login --host https://your-forge.example.com`），也可以自己起一个——单二进制与 Docker 部署方式见 [IronForge 仓库](https://github.com/lengyuqu/ironforge)。接好后用 `ifg doctor` 做端到端自检。
+
+## 安装
+
+发布产物：macOS（arm64/x86_64）与 Linux（musl 静态链接，arm64/x86_64）四架构 tar.gz、Windows（x86_64）zip，另附 `SHA256SUMS`，见
+[Releases](https://github.com/lengyuqu/ifg/releases)。
+
+Homebrew：
+
+```bash
+brew tap lengyuqu/ifg https://github.com/lengyuqu/homebrew-ifg.git
+brew install lengyuqu/ifg/ifg
+```
+
+Scoop（Windows）：
+
+```powershell
+scoop bucket add ifg https://github.com/lengyuqu/scoop-ifg.git
+scoop install ifg
+```
+
+两个包管理仓库：`lengyuqu/homebrew-ifg`（tap）与 `lengyuqu/scoop-ifg`（bucket）。manifest 源与发版同步脚本在本仓库的 `scoop-ifg/bucket/ifg.json`、`scripts/bump-scoop.sh` 和 `scripts/bump-tap.sh`。
+
+SSH 克隆：`ifg repo clone OWNER/NAME --ssh`（`ssh://git@HOST:2222/...`，端口可用 `IRONFORGE_SSH_PORT` 覆盖）。
+
+手动安装：
+
+```bash
+# 下载对应架构的 tar.gz 与同一 Release 的 SHA256SUMS
+archive='ifg-0.9.1-<target>.tar.gz'  # 替换为实际文件名
+if awk -v f="$archive" '$2 == f { print; n++ } END { if (n != 1) exit 1 }' SHA256SUMS > "$archive.sha256" &&
+   shasum -a 256 -c "$archive.sha256"; then
+  tar xzf "$archive" && sudo mv ifg /usr/local/bin/
+else
+  echo '校验失败或找不到唯一的校验记录，停止安装' >&2
+fi
+```
+
+Windows（PowerShell）：
+
+```powershell
+$archive = 'ifg-0.9.1-x86_64-pc-windows-msvc.zip'
+$entries = @(Get-Content .\SHA256SUMS | Where-Object { $_ -match ('^[0-9a-fA-F]{64}\s+\*?' + [regex]::Escape($archive) + '$') })
+if ($entries.Count -ne 1) { throw '找不到唯一的校验记录，停止安装' }
+$expected = ($entries[0] -split '\s+')[0]
+if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) { throw 'SHA-256 不匹配，停止安装' }
+Expand-Archive -LiteralPath $archive -DestinationPath C:\tools\ifg
+# 把 C:\tools\ifg 加入 PATH；升级前先退出正在运行的 ifg.exe
+```
+
+从源码（musl 交叉编译需 `zig` + `cargo-zigbuild`）：
+
+```bash
+scripts/release.sh   # 构建四架构产物到 dist/
+cargo install --git https://github.com/lengyuqu/ifg.git ifg
+```
+
+## 快速上手
+
+```bash
+ifg auth login --host https://your-forge.example.com   # 粘贴 Web 端创建的 PAT（不回显）
+ifg version                                            # 客户端 + 服务端版本
+ifg repo create demo --init
+ifg repo collaborators list -R yourname/demo            # 直接协作者及用户/记录 ID
+ifg repo collaborators add alice --permission read -R yourname/demo
+ifg repo collaborators set alice --permission write -R yourname/demo
+ifg repo collaborators remove alice -R yourname/demo   # 交互确认；脚本可加 --yes
+ifg issue list -R yourname/demo
+ifg pr checkout 12                                     # 同仓或 fork PR 都可用，重复执行会快进更新；分支已删时走 refs/pull
+ifg pr view 12 --comments                              # 含行内评审评论
+ifg pr create -t "标题"                                 # head 默认当前分支，未推送会拦截
+ifg pr edit 12 --title '新标题' --ready               # 修改标题并标记为可评审
+ifg pr close 12 && ifg pr reopen 12                    # 关闭、重新打开
+ifg pr comment 12 -b '请检查测试结果'                   # 提交普通评审评论
+ifg pr reviews 12                                      # 查看评审及普通评论
+ifg pr reviewers add 12 alice                          # 请求评审；也可 list / remove
+ifg pr checks 12                                       # 头提交的组合状态与各项检查；待定或失败时仍返回 0
+ifg pr merge 12 --squash --expected-head <SHA>         # 仅当头提交仍是已审查的完整 SHA 时合并；被推进时返回 409 REF_ADVANCED，不自动重试
+ifg pr readiness 12                                    # 合并前预检：冲突文件、保护规则、缺哪些检查；--json 里的 ready 为 true/false/null，退出码恒为 0
+ifg pr update-branch 12 --expected-head <SHA>          # 把基线分支合入 PR 头分支；头提交移动返回 409 REF_ADVANCED，有冲突返回 409 MERGE_CONFLICTS
+ifg commit create --branch main --expected-sha <SHA> -m '批量改动' --files ops.json   # 无需检出：一次提交多个文件改动（create/update/delete/move）
+git diff | ifg commit apply-patch --branch fix --expected-sha <SHA> --patch-file -   # 把统一 diff 作为一个提交
+ifg commit cherry-pick <SHA> --branch release --expected-sha <TIP> --dry-run          # 只预演；revert 同理
+ifg branch delete feature/old --expected-sha <SHA> --yes                              # 删分支（默认分支、受保护分支、有开放 PR 的分支会被服务端拒绝）
+ifg ci logs 7 --follow                                 # WebSocket 流式日志（断线自动续传；无 WS 时退回轮询）
+ifg ci run --ref refs/heads/main --wait --timeout 600  # 触发并等待；也可传提交 SHA
+ifg ci wait 7 --timeout 600                            # 等待已有流水线
+ifg events list -R yourname/demo --since 40            # 仓库事件：读一次 --since 之后的事件，next cursor 在 stderr
+ifg label create bug -c ff0000 -d "坏了"                # 标签
+ifg milestone create v1 --due 2026-12-31               # 里程碑
+ifg issue edit 3 --label bug --milestone v1 --assignee alice
+ifg doctor                                             # 一条命令自检：主机/令牌/权限/版本/流式
+ifg capabilities [-R yourname/demo] [--has wiki]         # 服务端契约版本与能力列表；--has 只返回退出码（0 有 / 1 无）
+ifg schema pr merge                                    # 命令树的 JSON 描述（参数、--json 支持、读写副作用）；无需登录
+ifg mcp config --client claude-code                    # 打印 MCP 客户端配置（不含令牌，需自行导出 IRONFORGE_PAT）
+ifg mcp doctor                                         # 自检 MCP 服务能否在本机使用（服务端声明、二进制、IRONFORGE_PAT）；不运行服务
+ifg status                                             # 当前分支的 PR + 最近流水线
+ifg search "登录 超时" --type issue                      # 全局搜索（repo / issue / wiki）
+ifg context repo                                       # AI 上下文：仓库摘要（--json 原样输出服务端对象）
+ifg context tree src --ref main                        # 文件树单页；带 --cursor 续页
+ifg context search "重试" --limit 10                    # 代码搜索（仅默认分支）
+ifg context map src --budget 2000                        # 仓库代码地图：按重要性排序的文件与声明（预算 64–32000 token，默认 4000）
+ifg context symbols Greeter                              # 符号定义查找（精确匹配在前，前缀候选标 [name_match]）
+ifg context symbols --path src/lib.rs                    # 列出某文件的全部声明
+ifg context index                                        # 重建默认分支的代码搜索与符号索引（需写权限）；--commit 指定提交或分支
+ifg context pr 12                                      # PR 上下文聚合对象（服务端默认预算）
+ifg context pr 12 --budget 2000                        # 指定服务端预算（token，500–50000）；不带则用服务端默认
+ifg context issues --state closed --limit 10           # AI 上下文：Issue 摘要列表（--state open|closed）
+ifg context prs --state merged                         # AI 上下文：PR 摘要列表（--state open|closed|merged）
+ifg notifications                                      # 通知列表；notifications count 只看未读
+ifg notifications prefs list                           # 通知偏好：默认值加上你显式设置的覆盖
+ifg notifications prefs set --event push --channel email --off   # 全局关闭；加 -R OWNER/NAME 只针对该仓库（--on 重新打开）
+ifg agent create bot --description "CI 助手"           # 创建名下的 agent 账号（<你>-agent-bot）
+ifg agent token create <你>-agent-bot --name ci --allow-repo me/demo --allow-ref 'agent/*' --token-file ./bot.token   # 令牌只写入新文件（0600），不打印
+ifg draft create agent/42/ --ttl 2h                    # 预留草稿分支目录：推送不触发 webhook/邮件，到期后自动清理
+ifg org list                                           # 组织；org members / add-member / remove-member
+ifg org create acme -d "Acme 团队"                      # 建组织，成员用 --role 指定
+ifg issue create --editor                              # 用 $EDITOR 写标题与正文
+ifg pr list -q '{{.number}} {{.title}}'                 # 轻量模板输出（列表逐行渲染）
+ifg issue view 3 -q '{{range .labels}}{{.}} {{end}}'    # range 遍历嵌套数组
+ifg api users/me --jq '.username' --jq-raw             # 使用系统 jq 处理 GET 响应
+ifg wiki create '使用说明' --file README.md -R yourname/demo
+ifg wiki view '使用说明' -R yourname/demo
+ifg wiki edit '使用说明' --file - -R yourname/demo      # 从 stdin 读取并替换页面内容
+ifg wiki edit '使用说明' --file page.md --expected-version '12:34' -R yourname/demo  # 使用之前读取的版本
+ifg repo edit -R yourname/demo --description "新描述" --visibility private --default-branch main
+ifg wiki history '使用说明' -R yourname/demo
+ifg wiki delete '使用说明' -R yourname/demo             # 交互确认；脚本可加 --yes
+ifg release create v1.0.0 -n "说明" dist/pkg.tar.gz     # 建 Release 并流式上传
+ifg release edit v1.0.0 -n "修订说明" --prerelease       # 改发布说明/标记
+ifg release download v1.0.0 -p 'pkg*'                   # SHA-256 校验后落盘
+git config --global credential.https://your-forge.example.com.helper "!ifg auth git-credential"   # git clone/push 免密
+```
+
+Wiki 编辑要求服务端支持版本保护。未指定 `--expected-version` 时，ifg 在提交前读取最新版本，仅保护这次读取之后的并发修改；若正文基于更早的读取，请从 `ifg wiki view --json` 保存版本并显式传入。`repo edit` 同样支持 `--expected-version`。旧版服务端不提供版本时，ifg 会拒绝无保护的更新。
+
+`pr comment` 提交的是带正文的普通评审（`action=comment`），不是文件行内评论；可通过 `pr reviews` 查看。行内评论仍由 `pr view --comments` 查看。
+
+`--editor` 支持带参数的 `VISUAL` 或 `EDITOR`，例如 `EDITOR='code --wait'`；含空格的程序路径需加引号，例如 `EDITOR='"/path with spaces/editor" --wait'`。命令直接启动程序而不经过 shell，不会展开变量、管道或重定向；可执行文件路径本身含空格时也可单独指定完整路径。
+
+`ifg api <path> --jq '<表达式>'` 使用 PATH 中的 `jq` 处理 GET 的 JSON 响应，`--jq-raw` 输出未加引号的字符串；缺少 jq、响应不是 JSON 或表达式出错时返回非零。`--paginate --jq` 将各页合并为数组后再执行表达式。该选项当前仅属于 `api` 子命令且仅支持 GET；其他子命令可继续使用 `--json | jq ...`。
+
+`ifg api` 默认输出服务端原始字节，不追加换行，**不做**终端控制字符清洗（它的用途是管道给 jq 或重定向到文件）。显式使用 `--json` 或 `--template` 时会解析 JSON，非 JSON 响应返回非零，合法空响应按 `null` 处理；模板对数组逐项渲染。其余子命令会剥离 `ESC` 等控制序列，避免仓库里的正文劫持终端；直接查看不受信任的原始响应时请走 `--jq` 或 `| cat -v`。
+
+`ifg status --json` 返回聚合对象：`repository` 为 `OWNER/NAME`，`branch` 为当前分支，`pull` 为匹配的 PR 原始对象（没有时为 `null`），`runs` 为最近最多 5 条分支流水线的原始对象数组，`scanned_runs` 为本次检查的流水线条数（最多扫描最近 500 条）。`--template` 可读取同一对象，例如 `ifg status -q '{{.branch}}: {{range .runs}}{{.id}} {{end}}'`。短分支名和 `refs/heads/` 格式都会匹配，同名 `refs/tags/` 不会计入。
+
+`ifg release create --json` 和 `--template` 都支持携带附件；指定附件时，结果对象的 `assets` 数组包含本次上传的附件原始字段。进度写入 stderr，stdout 只在全部成功后输出一次结果。若上传失败，命令返回非零，stderr 会保留已创建的 Release 编号，Release 和已上传的附件不会自动删除。
+
+CI 的取消、重试和审批、PR 评审、组织成员操作、通知操作、仓库设置修改和认证状态列表均支持 `--json` / `--template`。`notifications count --json` 返回 `{"unread_count": N}`。机器输出的 stdout 只含结果，其他提示不会混入其中。输出写入失败返回非零；管道消费者提前退出产生的 BrokenPipe 仍按正常结束处理。
+
+以下命令不支持结构化输出，携带 `--json` / `--template` 会在执行前返回用法错误：`auth login/logout/token/git-credential`、`repo clone/delete`、`pr checkout/diff`、`ci logs`、`release upload/download/delete`、`label delete`、`milestone delete`、`version` 和 `completions`，以及使用 `--web` 的命令。
+
+`pr checkout` 优先获取当前源分支；分支或 fork 已删除时，会从 PR **目标仓库**获取 `refs/pull/<编号>/head`。旧服务端若未发布 fork PR 镜像，命令会明确报错，需要保留源分支或升级服务端；固定基线仅为同仓 PR 提供镜像。
+
+Wiki 的 `edit` 替换整个页面，并使用服务端版本进行并发保护；正文基于较早读取时应显式传入当时的 `--expected-version`。固定基线已修复单条历史版本接口的跨仓库授权问题；`history` 列出当前授权仓库中该页面的历史。旧服务端可能仍受影响，应先更新部署。
+
+`ci run` 的 ref 由 IronForge 服务端解析，省略时使用服务端默认的 `refs/heads/main`。`ci runs --branch feature` 同时匹配短名和 `refs/heads/feature`，不会计入同名 tag；指定 `--branch refs/tags/feature` 则仅匹配该 tag。`ci wait` 或 `ci run --wait` 只有流水线成功才返回 0；失败、取消、人工门禁、未知状态和超时都返回非零。人工门禁可先用 `ci view` 查看作业并按服务端流程处理。触发成功后即使等待超时也不会取消流水线，流水线编号会输出到 stderr。
+
+仓库协作者权限为 `read`、`write` 或 `admin`；列表仅包含直接协作者，用户 ID 和协作者记录 ID 是不同的值。权限调整后会重新读取确认是否生效；旧版服务端可能存在更新未持久化的问题，CLI 会报错而不声称成功。
+
+凭据助手按主机配置，只对 IronForge 生效，不会替换其他站点已有的 helper（如 osxkeychain）。
+
+Windows 上 helper 必须写成 `.exe`（Git 不接受无扩展名的裸命令）：
+
+```powershell
+git config --global credential.https://your-forge.example.com.helper '!ifg.exe auth git-credential'
+```
+
+手册（man 页随归档一起发布，Homebrew 安装时自动放进 man1）：
+
+```bash
+man ifg            # 总览：全局开关、退出码、示例
+man ifg-pr         # 单命令：ifg pr ..., ifg org ..., ifg ci ...
+ifg help pr        # 同一份长描述，不装 man 也能看
+```
+
+命令补全：
+
+```bash
+ifg completions zsh  > ~/.zfunc/_ifg      # 或 bash / fish / powershell
+ifg completions bash > /etc/bash_completion.d/ifg
+```
+
+## 配置与凭据
+
+- 配置目录按优先级选择：`IRONFORGE_CONFIG_DIR`（非空时即为配置目录，`hosts.toml` 直接放在其中）> `$XDG_CONFIG_HOME/ironforge` > 平台默认（`$HOME/.config/ironforge`；Windows 为 `%APPDATA%\ironforge`）。空值视为未设置。配置文件为 `hosts.toml`（POSIX 的 0600 告警不适用于 Windows，权限由用户目录 ACL 控制）。写入是「临时文件 + 原子替换」，并对同目录的 `.hosts.toml.lock` 加排他锁，多个 `ifg auth` 并发执行不会互相覆盖
+- 同一台机器上的多个 Agent 可以各用一个配置目录；每个目录的令牌只保存在它自己的 `hosts.toml` 中（0600），请求只携带所用目录的令牌：
+
+  ```bash
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-a" ifg auth login --host https://forge.example.com --with-token
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-b" ifg auth login --host https://forge.example.com --with-token
+  IRONFORGE_CONFIG_DIR="$HOME/.ifg-agent-a" ifg -R owner/repo issue list
+  ```
+
+- 设置 `IRONFORGE_CONFIG_DIR` 时 ifg 不读写系统钥匙串，即使 `hosts.toml` 写有 `token_store = "keyring"`：钥匙串条目只按主机区分，两个配置目录会共用同一个令牌。此时令牌保存在该目录的 `hosts.toml` 中，`auth login` 会提示这一点
+- 仅环境变量凭据：同时设置 `IRONFORGE_URL` 与 `IRONFORGE_PAT` 时，命令不读取 `hosts.toml`、不探测钥匙串，也不创建配置目录或任何文件。适合无可写 HOME、无钥匙串的容器。此时 `--host` 须使用 URL 而不是配置中的名称；`auth login` 与 `auth logout` 仍然读写配置文件
+
+  ```bash
+  IRONFORGE_URL=https://forge.example.com IRONFORGE_PAT="$TOKEN" ifg api users/me
+  ```
+
+- `ifg auth status` 的 `source` 字段（表格的 SOURCE 列）给出凭据来源：`env`、`config-dir` 或 `default`；`config_dir` 给出读取配置文件的目录。令牌只以脱敏形式显示。`ifg doctor` 的 `config-dir` 检查项显示目录及是否可写；目录不可写只是告警，仅环境变量模式下也不影响凭据
+- 钥匙串（可选）：`token_store = "keyring"` 时优先将 PAT 保存到系统钥匙串（macOS 钥匙串 / Linux `secret-tool` / Windows 凭据管理器）；写入不可用时会告警并回退到配置文件。主机条目中显式保存的文件 PAT 优先于旧钥匙串条目，直到一次成功登录将 PAT 写入钥匙串并清除文件副本；从钥匙串读出的 PAT 不会随配置更新写回文件。macOS 与 Windows 直接调用系统凭据 API，token 不会出现在进程参数里
+- 配置凭据只会自动复用于相同协议、主机、有效端口和部署基础路径；覆盖为 HTTP 或另一部署路径时，不会自动携带原配置的 PAT。显式的 `IRONFORGE_PAT` 仍绑定到选定的目标。它覆盖配置时，`repo list` 会读取该令牌对应的用户名；缺少 `user` scope 时请显式指定 `repo list OWNER`
+- `--json` 的 1.x 兼容规则、服务端字段边界和聚合输出见 [JSON 兼容契约](docs/json-compatibility.md)。输出会重新序列化，并非原始字节
+- `-q/--template` 走轻量子集（`{{.field}}`、`{{.a.b}}`、`{{range .list}}…{{end}}`，列表自动逐项渲染）
+- 管道输出自动关闭颜色与相对时间；`pr diff` 在终端里上色并走分页器
+- Windows 终端：仅在 Windows Terminal / VS Code / mintty（`WT_SESSION`、`TERM_PROGRAM`、`TERM`）下启用颜色，传统 `cmd.exe` 等价 `--no-color`；分页器默认直出，可设 `PAGER` 覆盖
+
+## 非交互使用（脚本与 AI Agent）
+
+传入 `--no-input`，或设置 `IFG_NO_INPUT=1`（取值 `1` 或 `true`；命令行参数优先于环境变量），ifg 就不会等待人工输入。凡是需要人回答的地方，都会立即以用法错误退出（退出码 2），并在错误信息里指出应改用的参数：
+
+- 破坏性命令（`repo delete`、`repo collaborators remove`、`wiki delete`、`release delete`、`label delete`、`milestone delete`、`branch delete`；后者加 `--dry-run` 时不删除，也无需 `--yes`）没有 `--yes` 时拒绝执行，不删除任何内容。
+- `auth login` 不再读取无回显提示或隐式的 stdin；请使用 `auth login --with-token` 并通过管道传入 PAT。
+- `issue create --editor` 与 `pr create --editor` 不再启动 `$EDITOR`；请改用 `-t`/`-b`（以及 `issue create` 的 `--body-file`）。
+- 分页器不启动，输出直接打印。
+- ifg 启动的 git 子进程会设置 `GIT_TERMINAL_PROMPT=0`、清空 `GIT_ASKPASS`；若用户未设置 `GIT_SSH` 或 `GIT_SSH_COMMAND`，则使用 `ssh -o BatchMode=yes`。凭据缺失时 `git` 直接失败，不会挂起。注意：此时 `GIT_SSH_COMMAND` 会覆盖 git 配置里的 `core.sshCommand`，需要自定义 ssh 选项时请改用 `GIT_SSH_COMMAND` 环境变量。
+- 显式的 `--file -`、`--input -` 与 `auth login --with-token` 仍然读取 stdin。操作系统钥匙串自身弹出的解锁提示不受此开关控制。
+
+**`--no-input` 不等于 `--yes`**。它从不替调用方确认：破坏性命令仍需显式传入 `--yes` 才会执行，例如 `ifg --no-input repo delete OWNER/NAME --yes`。
+
+## 幂等写入（超时后安全重跑）
+
+写命令超时后，调用方不知道服务端是否已经执行。给命令加上 `--idempotency-key <KEY>`（或设置 `IRONFORGE_IDEMPOTENCY_KEY`，命令行参数优先），ifg 会把它作为 `Idempotency-Key` 请求头发送。同一个键重跑同一请求时，服务端返回第一次的结果，不会重复创建。
+
+- 键由调用方自己选择，ifg 从不生成。取值为 1 到 255 个字符，只能是 `A-Z`、`a-z`、`0-9`、`.`、`_`、`:`、`-`；格式错误直接以退出码 2 失败，且不发送任何请求。
+- 只有“一次调用只发一个写请求、且路由受服务端支持”的命令接受该参数，例如 `issue create/comment/close/reopen/edit`、`pr create/edit/close/reopen/comment/review/merge/update-branch/reviewers add|remove`、`commit create/apply-patch/cherry-pick/revert`、`branch delete`、`label`、`milestone`、`wiki` 的增改删，`release edit/delete` 与 `repo create`。`ifg schema` 中的 `accepts_idempotency_key` 列出了全部命令。
+- 其他命令（包括所有读命令、`release create`、`release upload`、`repo edit`、`ci`、`collab` 等）收到该参数时以退出码 2 拒绝，不发送任何请求。`release create` 会对每个附件各发一次请求，共用同一个键会被服务端以 `IDEMPOTENCY_KEY_REUSED` 拒绝。
+- 带键的写请求在连接中断、HTTP 5xx 和 429 时会用同一个键自动重试（沿用退出前的退避与重试次数设置，并遵守 `Retry-After`）。不带键的写请求从不自动重试。
+- 服务端拒绝时，错误对象的 `reason` 原样输出（例如 `IDEMPOTENCY_NOT_SUPPORTED`、`IDEMPOTENCY_KEY_REUSED`，后者为 409）。
+
+```sh
+ifg --idempotency-key "release-notes-v1" -R alice/demo issue comment 12 -b "shipped"
+IRONFORGE_IDEMPOTENCY_KEY="retry-42" ifg -R alice/demo pr merge 7 --squash
+```
+
+## 服务端提交与合并预检
+
+`commit` 和 `pr update-branch` 让服务端直接写提交，不需要本地检出。它们要求较新的 IronForge（固定基线 `7d27c2d` 不含这些接口，已验证的版本是 `65428452`）；旧服务端会返回 404。
+
+- 每个写命令都必须带 `--expected-sha`（`pr update-branch` 为 `--expected-head`）：调用方读到的完整 40 位 SHA，不接受缩写。分支已移动时服务端返回 409 `REF_ADVANCED` 且不写入，ifg 不自动重试；重新读取后再用新的 SHA 重试。服务端从不替你创建分支。
+- `--dry-run` 让服务端做完全部检查并返回预览，不写入；预览对象的形状不同于真实结果，`not_evaluated` 列出没有评估的副作用（webhook、CI、通知）。
+- `commit create --files` 接受 JSON 数组（`-` 读 stdin）：`{"operation":"create","path":…,"content":…}`、`{"operation":"update","path":…,"content":…,"sha":<读到的 blob>}`、`{"operation":"delete","path":…,"sha":…}`、`{"operation":"move","from":…,"to":…,"sha":…}`。要么全部落进一个提交，要么分支不动。
+- `commit apply-patch` 接受 `git diff` 形状的统一 diff（至多 1 MiB、500 个路径）；补丁里含密钥时服务端返回 422。
+- 通过 agent 令牌写入的提交以该 agent 署名（`<用户名>@agents.invalid`）。
+- `pr readiness` 与合并走同一套规则，所以预检结论和 `pr merge` 此刻的行为一致。它只回答“现在能不能合并”；合并队列位置、CODEOWNERS 请求和自动合并的效果不在评估范围内（`not_evaluated`）。
+
+## Agent 账号与草稿分支
+
+这些命令要求较新的 IronForge（已验证 `65428452`；固定基线 `7d27c2d` 不含这些接口，旧服务端返回 404）。
+
+- `ifg agent …` 管理你名下的 agent 账号（`list`、`create`、`view`、`edit`、`token list|create|revoke`）。必须用你本人的登录：agent 自己的令牌管不了 agent，另一人的 agent 与不存在的 agent 一样返回 404。停用（`edit --deactivate`）后其令牌立刻失效，`--activate` 可恢复；服务端没有删除 agent 的接口。
+- `agent token create` 的令牌只有创建时可见：ifg 把它写入 `--token-file`（新建、仅属主可访问：Unix `0600` / Windows 受保护 DACL，已存在的文件绝不覆盖），不会打印到终端或日志，`--json` 里也没有 `token` 字段而是 `token_file`。令牌只能带仓库类 scope，默认 `repo:write`；`--allow-repo` 限定仓库，`--allow-ref` 进一步限定可写分支（需要 `--allow-repo`）。服务端拒绝请求时不会留下空文件。令牌已创建但写文件失败时，错误信息给出撤销命令。
+- `ifg draft …` 管理仓库的草稿命名空间：`create PREFIX --ttl 2h`（前缀形如 `agent/<id>/`，段必须是你自己或你名下 agent；时长 1 分钟到 30 天，支持 `90s`、`30m`、`12h`、`7d`）、`extend ID --by 1d`（只能延长，上限为创建时 TTL 的 4 倍）、`close ID`（立即停止接收推送，宽限期后删除分支，需确认）、`list`。
+- `notifications prefs set` 默认改全局设置；只有显式传 `-R OWNER/NAME` 才作用于该仓库（不会从 git remote 推断，避免全局改动变成仓库级）。事件名先对照服务端目录检查，拼错会列出可用的名字而不是悄悄存一条无效设置。
+- 这些写命令不支持 `--idempotency-key`（服务端没把对应路由列为支持幂等键）。`agent token revoke` 与 `draft close` 登记为破坏性命令，需 `--yes` 或交互确认。
+
+## 多 Agent 协作
+
+固定基线的本地镜像 ID 和 OpenAPI 快照包含协作接口；不同部署应先确认其服务端具备这些接口。用户 PAT 用于身份和仓库权限；每个 Agent 还需要独立的会话凭据。会话名称和消息正文均是自报内容，不是安全身份或可信指令。
+
+```bash
+# 每个 Agent 使用各自的新文件；文件不会覆盖已有文件
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" session start --name 'Agent A' --client codex
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" session start --name 'Agent B' --client codex
+ifg -R owner/repo collab session list
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" task create --title '实现功能' --owner-session '<A 的会话 ID>'
+ifg -R owner/repo collab task list
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" message send '<任务 ID>' --key message-1 --body '已完成初步实现' --target-session '<B 的会话 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" handoff create '<任务 ID>' --key handoff-1 --to '<B 的会话 ID>' --summary '请继续验证'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" inbox
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" handoff accept '<交接 ID>' --expected-version '<交接版本>'
+# Agent 发起问题；不带 --session-file 时以用户身份操作
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-b.json" question ask '<任务 ID>' --key q-1 --title '选择方案' --body '请选择' --option 方案一 --option 方案二
+ifg -R owner/repo collab inbox --user
+ifg -R owner/repo collab question view '<问题 ID>'
+ifg -R owner/repo collab question answer '<问题 ID>' --key a-1 --expected-version '<版本>' --context-hash '<已查看的 context_hash>' --option-id o1
+ifg -R owner/repo collab task reassign '<任务 ID>' --key move-1 --expected-version '<任务版本>' --expected-owner '<原会话 ID>' --to '<新会话 ID>' --reason '用户重新分配'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" work-package create '<任务 ID>' --key wp-1 --goal '实现解析器' --commit '<完整提交 SHA>' --completed '解析器' --next-step '补充测试'
+ifg -R owner/repo collab work-package list '<任务 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" dependency add '<任务 ID>' '<前置任务 ID>' --key dep-1 --expected-graph-version '<dependency list 返回的 graph_version>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" decision create '<任务 ID>' --key dec-1 --title '采用方案一' --rationale '与问题答复一致'
+ifg -R owner/repo collab condition list '<任务 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" condition set '<任务 ID>' --file conditions.json   # 文件须含 client_request_id、expected_version、conditions；--file - 读取 stdin
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" condition confirm '<任务 ID>' '<条件 ID>' --key confirm-1 --note '已人工确认'
+ifg -R owner/repo collab task status '<任务 ID>'
+ifg -R owner/repo collab budget view '<任务 ID>'
+ifg -R owner/repo collab --session-file "$HOME/.ifg-agent-a.json" usage report '<任务 ID>' --key usage-1 --unit tokens --source ci --amount 1200 --period-start 2026-11-01T00:00:00Z --period-end 2026-11-02T00:00:00Z
+ifg -R owner/repo collab usage list '<任务 ID>' --unit tokens
+ifg -R owner/repo collab rules --ref main --path src
+ifg -R owner/repo collab overview --sections awaiting_me,in_progress --limit 10
+```
+
+会话文件含仅展示一次的密钥，绑定服务端 URL 和仓库，Unix 创建权限为 `0600`，Windows 以受保护 DACL 仅授予属主（等价 `0600`）；不要提交或分享，保留该文件可在新进程中恢复会话。加载时复核文件仅属主可访问，被放宽或调包的文件会被拒绝。任务更新和交接接受/取消需传入最新 `--expected-version`；消息与交接的 `--key` 由调用方生成并在重试同一请求时复用，不同请求不能复用。任务、会话和交接列表返回 `next_cursor`；消息列表使用 `next_after_seq` 和 `--after-seq` 翻页。协作命令默认输出 JSON，可用 `--template` 格式化。
+
+`question view` 返回上下文及 `context_freshness`；回答时应先检查上下文，再明确传入读取到的版本和哈希，服务端会拒绝过期上下文。`task claim` 以会话身份接管空闲或已离线任务，活跃的原负责人可能导致拒绝；`task reassign` 以用户身份操作且不得携带会话文件。两者都要求调用方提供看到的任务版本、原负责人和幂等键；无负责人时省略 `--expected-owner`。问答与接管列表使用 `next_cursor` 翻页。
+
+`condition set` 原样发送 `--file` 指定的 JSON 对象，因此文件须自带 `client_request_id`、`expected_version`（最近读取的版本，0 表示尚未定义）和 `conditions`；非对象或无效 JSON 返回用法错误且不发送请求。`condition confirm`、`usage report` 的 `--key` 为幂等键。预算和用量仅作参考，服务端不据此强制执行任何限制。
+
+## 文档
+
+- [ifg 项目设计](docs/architecture/ifg-project-design-2026-11.md)：结构、关键决策、内部设计、测试、发布与里程碑
+- [客户端 CLI 设计草案](docs/architecture/client-cli-design-2026-11.md)：命令设计、配置格式、输出约定、服务端缺口
+- [发布验收清单](docs/release-checklist.md)：GitHub CI、服务端兼容性、候选打包与发布验收
+- [Windows 验证清单](docs/windows-verification.md)：逐项可执行的实机验证（凭据后端、`--web`、路径编码、并发写、发布产物）
+
+## 许可证
+
+[MIT](LICENSE)，与 IronForge 一致。
+
+## 平台支持
+
+| 平台 | 状态 |
+|---|---|
+| macOS（arm64 / x86_64） | 已发布，CI + 本地 e2e 覆盖 |
+| Linux（musl，arm64 / x86_64） | 已发布 |
+| Windows（x86_64-msvc） | 已支持：构建 / 测试 / zip 产物，CI `windows-latest` 覆盖（e2e 仍只在 macOS） |
+
+平台实现和历史发布状态不代表每个新候选提交都已在所有平台验收；本轮 Unreleased 的具体提交、CI、原生凭据及产物证据见 [发布验收记录](docs/release-checklist.md)。
+
+Windows 已知限制：颜色仅在 Windows Terminal / VS Code / mintty 下启用；默认不启分页器（可用 `PAGER` 覆盖）；未签名 exe 可能触发杀软告警。带参数编辑器配置支持解析 Windows 路径，但尚需在 Windows 上实测。
+
+## 开发
+
+```bash
+scripts/check.sh    # fmt、clippy、test、audit、ifg-client 依赖边界（CI 同款）
+```
+
+Windows（PowerShell，无需 Git Bash）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
+```
+
+```bash
+bash scripts/e2e-docker.sh  # 用固定的本地镜像启动隔离实例，运行真实端到端测试
+# 使用明确支持 fork PR 镜像的较新镜像，单独验证源分支和 fork 删除后的恢复：
+IFG_E2E_IMAGE=<本地兼容镜像> bash scripts/e2e-docker.sh --fork-mirror
+scripts/e2e.sh      # 端到端：需要可达的 IronForge 实例（默认 localhost:8080）
+                    # CI 里跑在自托管 runner 上，配置见 docs/ci-e2e-runner.md
+scripts/release.sh  # 发布产物：四架构 tar.gz + Windows zip + SHA256SUMS（Windows 部分需在 Windows 上运行 `--windows`）
+scripts/bump-tap.sh <version> <formula>  # 发版后同步 Homebrew formula（读 SHA256SUMS）
+scripts/bump-scoop.sh <version> <manifest>  # 发版后同步 Scoop manifest（读 SHA256SUMS）
+scripts/gen-man.sh                       # 重新生成 man/（check.sh 会校验是否最新）
+```
+
+工具链版本固定在 `rust-toolchain.toml`（若设置了 `RUSTUP_TOOLCHAIN` 环境变量，它会覆盖该文件）。
